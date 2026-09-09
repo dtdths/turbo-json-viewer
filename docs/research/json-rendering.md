@@ -153,28 +153,33 @@ react-arborist 即「只渲染可见节点」的现成虚拟树（[README](https
 
 ## 5. 既有 JSON 查看器卡死根因对照
 
-> 注：本节在**时间盒内**完成（§5 专用子调研未能在期限内归位，主代理以受限检索补足）。机制细节为公开仓库/issue 可核对的事实 + 明确标注的（分析）推断；个别 viewer（jsoncrack、jsonhero）的大文件定量证据本环境未能深挖，列为「待补证」。结论方向不影响 §3 主推荐。
+> 注：本节由 §5 专用子调研完成（其环境与主调研相同：web_fetch 被沙箱 DNS 阻断，证据 = web_search 定位的 issue/PR **标题层面** + 代码库知识推断）。链接均已内联，**建议 spike 前逐条开链接复核**；机制类断言按（分析）标注。方向性结论不影响 §3 主推荐。
 
-**共性失败模式**（对照 §2.1 基线）：
-- **递归全树组件渲染**：把整棵展开树递归渲染成 React/组件树，全量子节点在展开瞬间进 DOM；无渲染层虚拟化 → 大数组展开 = 一次挂载海量 DOM 节点 + 布局重算，主线程长时间阻塞；
-- **交互即整树重渲**：展开/折叠触发整树或大子树重新 render（无 memo / 无行级隔离），深度与宽度同时放大成本；
-- **深层级**：递归组件 + 同步遍历在深嵌套（如万级深度）下逼近 JS 调用栈或同步遍历预算（分析）；
-- 反例（值得借鉴）：DevTools 控制台的**对象懒加载预览**——只按需取当前可见属性，而非物化整个子树（分析：DevTools 前端按需展开的对象预览是业界通行做法）。
+**共性失败模式**（对照 §2.1 基线；证据见下表各行）：
+- **展开即全量挂载**：expand 时把所有子项同步映射为 DOM/JSX——1M 元素数组 = 一次 render 挂 1M 行（react-json-view 系）；无窗口化；
+- **交互整树/整子树重渲、行无 memo**：任何状态变化（展开/折叠等）重渲其上方整棵子树；
+- **深层级 = 递归**：渲染层按嵌套深度递归（render 树/JSX 树），深文档逼近栈上限（jsoncrack [#41](https://github.com/AykutSarac/jsoncrack.com/issues/41) 直接栈溢出）；平台侧 Chromium 工具链 JSON 解析嵌套上限曾从 100 提到 200（[codereview 2570113002](https://codereview.chromium.org/2570113002)），深层级是平台级痛点；
+- **整文档同步构建**：jsonhero 全文件 parse+infer 进单一堆、jsoncrack 在 parse 之上叠加 O(元素数) 图构建与布局、DevTools Network 预览整包 pretty-print（O(body)，大响应被截断/慢（[chrometipsguide](https://chrometipsguide.com/chrome-devtools-json-truncated/)））——都是「先物化全部，再谈展示」；
+- **反例（值得借鉴）**：DevTools **Console 对象预览**不建全树——持有 RemoteObject 句柄、按需经 CDP `Runtime.getProperties` 取当前可见属性（有深度/条数截断预算，展开再取）（[HackerNoon](https://hackernoon.com/your-javascript-console-is-not-showing-the-whole-truth)、[devtools-frontend](https://chromium.googlesource.com/devtools/devtools-frontend/+/250c88b4d02da283cd0a96204b1592f59fda2fcb)）——与 CONTEXT「容器预览」同源：**预览不改变展开状态**。
 
 **逐个对照**：
 
-| Viewer | 渲染机制（证据/推断） | 大数组/深层级瓶颈 | 证据链接 |
+| Viewer | 渲染机制 | 大数组/深层级瓶颈 | 证据 |
 |---|---|---|---|
-| react-json-view（mac-s-g） | React 递归组件渲染整棵展开树；对象/数组按展开状态逐层递归 | 大对象场景明确被报慢、请求优化/虚拟化（官方 issue）；深层级递归渲染有栈/同步遍历风险（分析） | [issue #235: Optimization for very large json objects](https://github.com/mac-s-g/react-json-view/issues/235) |
-| @textea/json-viewer | react-json-view 的维护分支；引入 JSON 索引/路径机制（path/index 结构） | 索引/路径机制在大文档下有自身 bug 面（issue #419 的 PATH/index 报错即其例）；本体仍为递归树渲染（分析） | [issue #419: JSON Indexing issue leads to PATH error](https://github.com/TexteaInc/json-viewer/issues/419) |
-| react-json-view-lite | 轻量重构：宣称轻依赖、更快渲染（README 口径） | 渲染机制与大文档上限未见系统测量；递归树模型基本盘未变（分析） | [README（unpkg）](https://app.unpkg.com/react-json-view-lite@2.4.1/files/README.md#1) |
-| jsonhero（triggerdotdev/jsonhero-web） | 把 JSON 推断成对象模型再渲染为可浏览/搜索 UI（README：「browse, search and navigate at speed」） | 大文件走 schema 推断/建模管线；其规模上限与极端样本表现本环境未核实（待补证）；渲染层是否虚拟化未见明确证据（分析） | [仓库 README（镜像同源）](https://github.com/cccZone/jsonhero-web#1) |
-| jsoncrack（AykutSarac/jsoncrack.com） | 图/思维导图式可视化（非行式树）+ 编辑器 | 图布局在大 JSON 上的可交互上限与行式树不同维度；相关 perf 投诉未在时间盒内取到具体 issue（待补证） | [仓库](https://github.com/AykutSarac/jsoncrack.com) |
-| Chrome DevTools 网络预览 JSONView | DevTools 前端实现（RequestPreviewView.js）；JSONView 实现 Searchable、配「乐观解析器」 | 是 DevTools 面板层（受文件长度/浏览器层限制）；非通用树式查看器，无展开状态外部化 | [JSONView Searchable（Chromium code review）](http://codereview.chromium.org/1899893003/patch/300001/310011#1)｜[乐观 JSON 解析器](https://codereview.chromium.org/654083006/patch/20001/30004#1) |
-| Chrome 内置 JSON 文档视图 | 直接在标签页打开 .json 的折叠树视图（浏览器原生渲染，非 DevTools 前端） | 大文件/超大数组下的交互上限未在本环境核实；机制属另一实现层（分析） | —（待补证） |
-| Monaco（仅文本） | 按文本行虚拟化渲染 + 全文档 tokenize；无 JSON 结构树 | pretty 化的 50MB JSON = 百万级文本行 → 行模型/tokenize 成本；单行 minified 50MB = 超长行灾难；都落在「文本」而非「结构」维度（分析） | —（业界共识性机制，待补证） |
+| react-json-view（mac-s-g） | 递归 React 组件：每个值一层组件链、每行 = DOM 节点、展开即 map 全部子项 | 宽：展开全量挂载无窗口化；深：渲染按层递归；交互整子树重渲 | [#235 大对象优化请求](https://github.com/mac-s-g/react-json-view/issues/235)、[#340 invalid array length](https://github.com/mac-s-g/react-json-view/issues/340)、[页面冻结报告](https://stackoverflow.com/questions/78766617/how-to-prevent-a-react-component-from-freezing-the-page-after-loading)；~2022 起停更 → [Docusaurus 迁移 PR #9566](https://github.com/facebook/docusaurus/pull/9566)、[cuiloa #83](https://github.com/penumbra-zone/cuiloa/issues/83) |
+| @textea/json-viewer | react-json-view 分支 → v3 起重写（hooks/JSONPath 值访问）；**仍为完整递归 JSX 树，展开整挂（分析）** | 同前三件套；用字符串截断做缓解（[#90](https://github.com/TexteaInc/json-viewer/issues/90)、[#94](https://github.com/TexteaInc/json-viewer/issues/94)） | [v3 重写 commit](https://github.com/TexteaInc/json-viewer/commit/ebdde522ce173ccc418f44b041d914ee99f41076)、[集成方报慢 #23](https://github.com/yiisoft/yii-dev-panel/issues/23)、[#419 index/PATH 报错](https://github.com/TexteaInc/json-viewer/issues/419) |
+| react-json-view-lite | 更简的递归渲染、特性裁剪（README 口径） | 同一宽/深失败模式、仅常数因子更低（分析） | [repo](https://github.com/jorgenbuilder/react-json-view-lite) |
+| jsoncrack（AykutSarac/jsoncrack.com） | JSON → 图节点+边 + 布局（mind-map）；另有编辑器面板 | 在「全量物化」之上再叠加 O(元素) 图构建+布局 → 比纯 DOM 树更糟；深层级递归栈溢出 | [#41 stack overflow](https://github.com/AykutSarac/jsoncrack.com/issues/41)、[代码走读（编辑器 Monaco）](https://dev.to/tthroo/jsoncrack-codebase-analysis-part-43-liveeditor-3m95)、[v3 发布](https://github.com/AykutSarac/jsoncrack.com/releases/tag/v3.0.0) |
+| jsonhero-web（triggerdotdev） | parse + 推断成**类型化 schema 列模型**，渲染模型而非原始值 | 同类元素（如 1M 相同结构对象）schema 折叠成 1 行 → DOM 有界（优点）；但整文件一次性 parse+infer 进单堆（缺点）；深文档走递归遍历（分析） | [仓库](https://github.com/triggerdotdev/jsonhero-web)、[trigger.dev #346 大输出冻结](https://github.com/triggerdotdev/trigger.dev/issues/346)（基于 JSON Hero 的预览） |
+| Chrome DevTools | Network 预览：整包 pretty-print；Console：RemoteObject + 按需取属性（懒/截断预算） | 预览 O(body)；工具链 JSON 深度上限；Console 靠**不建全树**避免卡死（不是渲染更快） | 见上「反例」两链接 + [乐观解析器（Chromium code review）](https://codereview.chromium.org/654083006/patch/20001/30004#1) |
+| Monaco（仅文本） | 按文本行虚拟化（DOM 只含可见行）+ 懒逐行 tokenize | pretty 50MB ≈ 百万级行对象（内存/时间瓶颈）；minified 50MB = **单行** → 行虚拟化失效、整行 tokenize（经典病态）；与「结构树」无关 | [粘贴大 JSON 崩溃 #4238](https://github.com/microsoft/monaco-editor/issues/4238)、[tokenize 上限讨论](https://github.com/shikijs/shiki/issues/625)、[超长行崩溃（gitea #29708）](https://github.com/go-gitea/gitea/issues/29708) |
 
-**对照结论**：既有 viewer 卡死集中于「结构层无虚拟化 + 交互整树重渲 + 递归深度」三个根因；它们的问题不是「树形展示」本身，而是**没有把树拍平成行、没有把行与 DOM 解耦**。本文 §3 主推方案直接针对这三个根因设计；DevTools 控制台的懒预览与本文「容器预览」语义同源（CONTEXT：预览不改变展开状态），可作为交互范式参考。
+**架构性问题 vs 可廉价修复**（子调研划分，直接指导选型）：
+- **架构性（memo 救不了，需换渲染架构）**：展开全量挂载（rjv/textea/rjv-lite）；整文档单堆 parse/infer（jsonhero、jsoncrack 图构建）；O(body) 响应预览；递归/解析深度上限。
+- **可廉价修复（同一架构内）**：行级 `React.memo` + 稳定行身份（杀掉「整子树重渲」一类）；折叠数组摘要 + 惰性「再取 N 条」（DevTools Console 已验证的按需取属性模式）；字符串截断（textea #90）。
+- **行业佐证**：主流 DOM JSON viewer 无一做**行级树虚拟化**；厂商只能对未虚拟化视图做体量闸门——[langfuse 对大 trace 的 JSON IO 视图 size-gate PR #15155](https://github.com/langfuse/langfuse/pull/15155)。树行虚拟化仅有构件级现成物：[react-arborist](https://github.com/jameskerr/react-arborist)、[@rc-component/tree](https://openapps.pro/packages/rc-component-tree)。
+
+**对照结论**：既有 viewer 卡死集中在「结构层无虚拟化 + 交互整树重渲 + 递归深度 + 整文档先物化」四类；问题不是「树形展示」本身，而是**没有把树拍平成行、没有把行与 DOM 解耦、没有把展示从文档物化中分离**。本文 §3 主推方案逐条针对这些根因（Worker 物化 + 扁平可见行 + DOM 行虚拟化 + 懒/预览语义）；Console 式懒取与 jsonhero 式 schema 折叠作为「容器预览」的可选形态保留在后续设计空间。
 
 ## 6. 测量协议（spike 可复测口径）
 
@@ -204,7 +209,8 @@ react-arborist 即「只渲染可见节点」的现成虚拟树（[README](https
 标注分组；除本文「（分析）」外均为调研过程核对的权威页/仓库页：
 
 - **虚拟化库官方文档/仓库**：[react-window](https://github.com/bvaughn/react-window)｜[@tanstack/react-virtual API](https://tanstack.com/virtual/latest/docs/api/virtualizer.md) 与 [动态尺寸指南](https://tanstack.com/virtual/latest/docs/guides/measuring-dynamic-virtual-items)｜[react-virtuoso sticky/top-items](https://virtuoso.dev/react-virtuoso/virtuoso/top-items/)｜[react-arborist](https://github.com/jameskerr/react-arborist)（[v4 PR #235](https://github.com/jameskerr/react-arborist/pull/235)、[变高 #276](https://github.com/jameskerr/react-arborist/issues/276)）｜[rc-virtual-list](https://github.com/react-component/virtual-list)｜[react-component/tree](https://github.com/react-component/tree)｜[el-tree-v2](https://element-plus.org/en-US/component/tree-v2.html)｜[ag-grid DOM 虚拟化](https://www.ag-grid.com/javascript-data-grid/dom-virtualisation/) 与 [cell renderer](https://www.ag-grid.com/javascript-data-grid/component-cell-renderer/)｜[ariakit 组件 vs headless 讨论 #1930](https://github.com/ariakit/ariakit/discussions/1930)
-- **Canvas/数据网格**：[glide-data-grid README](https://app.unpkg.com/@glideapps/glide-data-grid@6.0.5/files/README.md)｜[Glide 工程博客](https://www.glideapps.com/blog/glide-data-grid-typescript)｜[渲染系统源码走读（次级）](https://deepwiki.com/glideapps/glide-data-grid/2.3-canvas-rendering-system)
+- **Canvas/数据网格**：[glide-data-grid README](https://app.unpkg.com/@glideapps/glide-data-grid@6.0.3/files/README.md)｜[Glide 工程博客](https://www.glideapps.com/blog/glide-data-grid-typescript)｜[渲染系统源码走读（次级）](https://deepwiki.com/glideapps/glide-data-grid/2.3-canvas-rendering-system)
+- **既有 viewer 证据（issue/PR 级链接已全部内联于 §5 表格与正文，如 react-json-view #235/#340、@textea #419/#90、jsoncrack #41、trigger.dev #346、monaco #4238、langfuse PR #15155、Chromium 深度上限 codereview 2570113002）**
 - **CSS 技巧与规格**：[web.dev content-visibility](https://web.dev/articles/content-visibility)（[源文件](https://github.com/GoogleChrome/web.dev/blob/e38618367501970200cca662a750a3a3e2afe2c9/src/site/content/en/blog/content-visibility/index.md)）｜[MDN content-visibility](https://developer.mozilla.org/en-US/docs/Web/CSS/content-visibility)｜[hermes-webui intrinsic-size fallback PR #5639](https://github.com/nesquena/hermes-webui/pull/5639)
 - **滚动锚定**：[MDN overflow-anchor](https://developer.mozilla.org/en-US/docs/Web/CSS/overflow-anchor)｜[css-scroll-anchoring-1](https://www.w3.org/TR/css-scroll-anchoring-1/)｜[csswg 显式锚定讨论](https://lists.w3.org/Archives/Public/public-css-archive/2022Dec/0228.html)
 - **性能口径/测量**：[web.dev Lighthouse DOM size](https://web.dev/articles/lighthouse-dom-size)｜[W3C Long Tasks](https://www.w3.org/TR/longtasks/)（[spec 工作稿](https://w3c.github.io/longtasks/)）｜[MDN PerformanceLongTaskTiming](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceLongTaskTiming)｜[Long Animation Frames](https://developer.chrome.com/docs/web-platform/long-animation-frames)｜[Puppeteer Chrome 扩展指南](https://pptr.dev/guides/chrome-extensions)｜[launch 选项 PR #13852](https://github.com/puppeteer/puppeteer/pull/13852)｜[Puppeteer+Chrome trace 自动化（中文）](https://www.shymean.com/article/frontend-performance-automation-puppeteer-chrome-trace)｜[Performance.getMetrics 解读](https://stackoverflow.com/questions/53723263)｜[MDN performance.memory](https://developer.mozilla.org/en-US/docs/Web/API/Performance/memory)
