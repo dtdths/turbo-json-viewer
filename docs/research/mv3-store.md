@@ -280,7 +280,7 @@
 
 ### 附带得到的两条产品级实测事实
 
-1. **性能（不经过 `textarea` 的路径）**：2MB 拖放首帧 **43.2ms**；**50MB 拖放首帧 193.6ms**（传输 36.1ms + worker `JSON.parse` 93.2ms + postMessage 往返 151.8ms + 解析→首帧 41.8ms），JS 堆 48MB，**296 万节点**。→ `JSON.parse` ≈565MB/s；**最大单项开销是 postMessage 往返而非解析**；WASM 解析器无必要（与 #14 结论一致）。
+1. **性能（不经过 `textarea` 的路径）**：2MB 拖放首帧 **43.2ms**；**50MB 拖放首帧 193.6ms**（传输 36.1ms + worker `JSON.parse` 93.2ms + postMessage 往返 151.8ms + 解析→首帧 41.8ms），JS 堆 48MB，**296 万节点**。→ `JSON.parse` ≈535 MiB/s（50 MiB ÷ 93.2ms）；**最大单项开销是 postMessage 往返而非解析**；WASM 解析器无必要（与 #14 结论一致）。
 2. **巨文本进 `textarea` ≈ 40 秒主线程阻塞**：把 9.96M 字符粘进 `<textarea>` 后，同一轮的"仅传输往返"报了 30,932ms、解析→首帧报了 41,648ms（而 50MB 走拖放的同类操作仅 36ms / 41.8ms）——伪影来源是 Chrome 渲染巨型文本节点。**产品硬约束：文档文本永不进入 DOM 文本节点/textarea。**
 
 ---
