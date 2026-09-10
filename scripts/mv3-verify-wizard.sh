@@ -853,9 +853,14 @@ drop.addEventListener('drop', async (e) => {
 
 // ── paste ────────────────────────────────────────────────────────────────
 $('paste').addEventListener('paste', async (e) => {
+  // Read the text straight off the event (~1ms) and preventDefault so Chrome never
+  // inserts it into the textarea. Without preventDefault, pasting ~10MB hangs the
+  // main thread for ~40s — the cost is *rendering* the giant text node, not the paste
+  // event itself. This is exactly the pattern the product's paste-to-import must use.
   const text = e.clipboardData ? e.clipboardData.getData('text') : '';
+  e.preventDefault();
   const t = performance.now();
-  rec('paste-event', text ? 'PASS' : 'FAIL', `paste event fired, clipboardData len=${text.length}`);
+  rec('paste-event', text ? 'PASS' : 'FAIL', `paste event fired, clipboardData len=${text.length}（已 preventDefault，文本未进入 DOM）`);
   if (!text) return;
   if (text.length > 200000) {
     runBench(text, `paste-${(text.length / 1048576).toFixed(1)}mb`, performance.now() - t);
