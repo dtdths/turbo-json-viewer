@@ -510,7 +510,10 @@ cat > "$EXT/page.html" <<'JSHTML'
     <button id="clip-gesture" class="primary">写剪贴板（用户手势）</button>
     <button id="clip-nogesture">写剪贴板（无手势，1.5s 后）</button>
     <button id="clip-read">读剪贴板（程序化，阴性对照）</button>
-    <div class="hint">写完手势那一条后，到下面的粘贴框按 Cmd/Ctrl+V，看是否粘贴出 <code>turbo-spike-ok</code>。</div>
+    <button id="clip-import" class="primary">从剪贴板导入（基准，不渲染全文）</button>
+    <div class="hint">写完手势那一条后，到下面的粘贴框按 Cmd/Ctrl+V，看是否粘贴出 <code>turbo-spike-ok</code>。
+      【从剪贴板导入】会用 <code>navigator.clipboard.readText()</code> 把剪贴板文本直接交给 Worker 解析——
+      全程不进入任何 DOM 文本节点，这才是产品真实导入路径的性能口径。</div>
   </section>
 
   <section>
@@ -788,6 +791,27 @@ $('clip-read').addEventListener('click', async () => {
   }
 });
 
+// The product's real import path: clipboard → JS memory → Worker. No DOM text node,
+// no textarea. (Pasting a big document into a <textarea> hangs the main thread for
+// tens of seconds — that artifact must never enter our numbers.)
+$('clip-import').addEventListener('click', async () => {
+  const t0 = performance.now();
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (e) {
+    rec('clip-import-read', 'FAIL', `readText() failed: ${e.name}: ${e.message}（剪贴板里有没有内容？）`);
+    return;
+  }
+  const readMs = performance.now() - t0;
+  rec('clip-import-read', 'PASS', `readText() 拿到 ${text.length} 字符 / ${(new Blob([text]).size / 1048576).toFixed(2)}MB，耗时 ${readMs.toFixed(1)}ms`);
+  if (text.length < 200000) {
+    warn(`剪贴板内容只有 ${text.length} 字符——基准需要大样本，请先让向导把 10MB 样本放进剪贴板。`);
+    return;
+  }
+  runBench(text, `clip-${(new Blob([text]).size / 1048576).toFixed(1)}mb`, readMs);
+});
+
 // ── file input ───────────────────────────────────────────────────────────
 $('pick').addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', async (e) => {
@@ -1034,16 +1058,24 @@ note "  ℹ 这一块同时验证了需实测项：blob: Worker 是否被 CSP �
 pause "按 Enter 进入剪贴板测试"
 
 # ── Stage 5 ───────────────────────────────────────────────────────────────
-stage "零权限剪贴板（三连测）"
-say "结论决定我们要不要声明 clipboardWrite（声明会带来安装警告）。"
-step "① 点【写剪贴板（用户手势）】— 期望：成功。"
-step "② 点【写剪贴板（无手势，1.5s 后）】— 期望：NotAllowedError（负面对照）。"
-step "③ 点【读剪贴板（程序化，阴性对照）】— 期望：NotAllowedError（我们没声明 clipboardRead）。"
-step "④ 回到【粘贴】框里按 Cmd/Ctrl+V — 看是否粘出 turbo-spike-ok（验证①真的写成功了）。"
-note "  粘贴框很大很显眼，就在「4 · 粘贴 / 拖放 大样本」那一节。"
-step "⑤ 再点【下载结果】(覆盖上一次的文件)，然后回来按 Enter。"
-pause "五项都做完后按 Enter"
-capture_results "零权限剪贴板（写/无手势写/程序化读/粘贴验证）"
+stage "零权限剪贴板 + 10MB 导入基准（修正版）"
+say "前半段决定要不要声明 clipboardWrite；后半段是验收线的真实口径。"
+step "① 点【写剪贴板（用户手势）】— 期望：成功（我们没声明任何剪贴板权限）。"
+step "② 点【写剪贴板（无手势，1.5s 后）】— 注意：点击后约 5 秒内仍算 transient activation，所以它可能也成功；这不是缺陷。"
+step "③ 点【读剪贴板（程序化，阴性对照）】— 同上，可能也成功。"
+step "④ 到【粘贴】框按 Cmd/Ctrl+V，看是否粘出 turbo-spike-ok（验证①真的写成功了）。"
+printf '\n'
+say "现在做 10MB 导入基准——走真实导入路径：剪贴板 → JS 内存 → Worker，全程不进 DOM 文本节点。"
+if copy_file_to_clipboard "$SAMPLES/10mb.json"; then
+  step "10MB 样本已放进系统剪贴板。"
+  step "⑤ 点【从剪贴板导入（基准，不渲染全文）】——这一步会记录 readText 耗时、仅传输往返、worker parse、首帧总计。"
+  note "  这是产品真实入口的性能口径：不碰 textarea，因此不会出现上次那种 ~40 秒伪影。"
+else
+  warn "无法写系统剪贴板（缺 pbcopy/xclip/wl-copy）——请改用拖放：把 10mb.json 拖到拖放区（标签会是 drop-10mb）。"
+fi
+step "⑥ 点【下载结果】，然后回来按 Enter。"
+pause "六步都做完后按 Enter"
+capture_results "零权限剪贴板 + 10MB 剪贴板导入基准"
 pause "按 Enter 进入文件读取测试"
 
 # ── Stage 6 ───────────────────────────────────────────────────────────────
@@ -1062,31 +1094,14 @@ write_env FILES_NOTE "$FILES_NOTE"
 {
   printf '\n## 文件读取人工观察\n\n```\n%s\n```\n' "${FILES_NOTE:-none}"
 } >> "$RESULTS"
-pause "按 Enter 进入 10MB 基准"
-
-# ── Stage 7 ───────────────────────────────────────────────────────────────
-stage "10MB 基准（粘贴 → 首帧）"
-say "这是验收线那条：10MB 文本粘贴后首帧 <800ms。"
-if copy_file_to_clipboard "$SAMPLES/10mb.json"; then
-  step "10MB 样本已放进系统剪贴板（Cmd+V 即可）。"
-else
-  warn "无法写系统剪贴板（缺 pbcopy/xclip/wl-copy）——请改用拖放：把 10mb.json 拖到页面拖放区。"
-fi
-step "回到探测页，点进【粘贴】框，按 Cmd/Ctrl+V。"
-note "  粘贴会立刻记录：paste 事件是否有数据、worker 内 parse 耗时、仅传输往返耗时、解析后到首帧的耗时、堆内存。"
-warn "粘贴 10MB 文本时页面可能短暂无响应——这正是我们要量化的东西，不要中途关页面。"
-note "  若粘贴框没反应，就直接把 10mb.json 拖到拖放区（同样会跑基准，标签带样本大小）。"
-step "跑完后点【下载结果】，回来按 Enter。"
-pause "基准跑完后按 Enter"
-capture_results "10MB 基准（粘贴/拖放 → parse → 首帧）"
 pause "按 Enter 进入 50MB 压力测试"
 
-# ── Stage 8 ───────────────────────────────────────────────────────────────
-stage "50MB 压力 + 归档"
-say "最后一个大样本。观察点：还能不能用、多久出结果、内存涨到多少。"
-step "把 50mb.json 从 Finder 拖到页面拖放区（比粘贴 50MB 更稳）。"
-warn "页面可能卡住几秒到几十秒；卡住本身就是结论，请记下大致时长。"
-ask STRESS_NOTE "50MB 的主观感受（如 '卡约 8 秒后出结果' / '标签页崩溃'）："
+# ── Stage 7 ───────────────────────────────────────────────────────────────
+stage "50MB 压力（拖放 → 首帧）"
+say "上界样本。观察点：还能不能用、多久出结果、内存涨到多少。"
+step "把 50mb.json 从 Finder 拖到页面拖放区（样本目录已打开）。"
+note "  会记录：拿到文本耗时、仅传输往返、worker parse、postMessage 往返、解析→首帧、堆内存。"
+ask STRESS_NOTE "50MB 的主观感受（如 '约 0.2 秒出结果' / '卡住几秒' / '标签页崩溃'）："
 write_env STRESS_NOTE "$STRESS_NOTE"
 {
   printf '\n## 50MB 主观观察\n\n```\n%s\n```\n' "${STRESS_NOTE:-（未填）}"
@@ -1095,6 +1110,9 @@ step "点【下载结果】，回来按 Enter。"
 pause "50MB 跑完后按 Enter"
 capture_results "50MB 压力（拖放 → parse → 首帧）"
 
+# ── Stage 8 ───────────────────────────────────────────────────────────────
+stage "归档与回填"
+say "汇总所有捕获，并输出待判断清单。"
 {
   printf '\n## 待人工判断的结论\n\n'
   printf '把下面的问句对着上面的捕获逐条回答，然后回复到 issue #15：\n\n'
@@ -1104,7 +1122,7 @@ capture_results "50MB 压力（拖放 → parse → 首帧）"
   printf -- '- `<a download>` 是否零权限落盘（向导能否自动读到 `~/Downloads/turbo-spike-results.txt`）？\n'
   printf -- '- 程序化文件选择器是否被拦（`programmatic-file-picker`）？\n'
   printf -- '- i18n 在浏览器 UI 语言下的回退结果（`i18n-default-locale`）？\n'
-  printf -- '- 10MB：`total_to_first_paint_ms`（`bench-paste-*` / `bench-drop-*`）是否 <800ms？瓶颈在 parse 还是在传输（对比 `bench-transfer-*` 那行）？\n'
+  printf -- '- 10MB 导入：`bench-clip-10.0mb` 的 `total_to_first_paint_ms` 是否 <800ms？瓶颈在 readText、传输、parse 还是 postMessage 往返？\n- （对照，仅历史参考）若有人误用 textarea 粘贴路径，会看到 ~40s 的 `bench-paste-*` ——那是 Chrome 渲染巨型文本节点的伪影，不是应用性能。\n'
   printf -- '- 50MB：还能用吗？数值与主观感受是否一致？\n'
 } >> "$RESULTS"
 
