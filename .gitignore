@@ -1,0 +1,6 @@
+# Wizard scratch: generated smoke extension, synthetic samples, captured results.
+# Nothing here belongs in version control (the 50MB sample alone would be fatal).
+.spike/
+
+# macOS
+.DS_Store
