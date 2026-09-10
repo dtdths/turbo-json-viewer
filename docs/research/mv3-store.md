@@ -251,6 +251,40 @@
 
 ---
 
+## 实测回填（issue #15 真机验证，2026-09-10）
+
+环境：macOS 26.6.2 · Apple M4（10 核）· 32GB · **Chrome 152.0.7977.83**。被测扩展只声明 `storage`，无内联脚本。原始记录：`.spike/results.md`（本地，未提交）。
+
+下表把上文各处【需实测】改写为实测结论：
+
+| 上文条目 | 实测结果 | 结论性质 |
+|---|---|---|
+| 扩展页 `eval()` / `new Function()` 是否被拦 | 均被拦：`EvalError: Evaluating a string as JavaScript violates … script-src 'self'`；`securitypolicyviolation` 事件 `directive=script-src blockedURI=eval disposition=enforce` | ✅ 确证 |
+| 扩展页对包内模块动态 `import()` | **可用**：`await import(chrome.runtime.getURL('mod.js'))` 成功 | ✅ 确证（原为预期） |
+| 包内文件创建 dedicated Worker | **可用**：`new Worker(chrome.runtime.getURL('worker.js'), {type:'module'})`，ping→pong 10.8ms | ✅ 确证 |
+| worker 内能否用 `chrome.*` | **不可用**：`typeof chrome === 'undefined'`；`typeof Worker === 'function'`（可嵌套建 worker）、`typeof SharedWorker === 'undefined'` | ✅ 确证（原仅为惯例） |
+| `blob:` Worker 是否被 CSP 拦 | **不可用**（2s 无响应），但**未捕获到 `worker-src` 违规事件**，未复现预期报错文本 | ⚠️ 部分（实践结论成立，directive 待补测） |
+| SharedWorker | **可用**：包内 `sworker.js` 正常收发 | ✅ 确证（原为未知） |
+| SW 内 `importScripts()`（module SW） | `NetworkError: … importScripts() of new scripts after service worker installation is not allowed.` | ✅ 实测 |
+| SW 内动态 `import()` | `TypeError: import() is disallowed on ServiceWorkerGlobalScope by the HTML specification` | ✅ 确证（原判断成立） |
+| SW 内建 Worker | `typeof Worker === 'undefined'`、`typeof SharedWorker === 'undefined'` | ✅ 确证 |
+| `chrome.storage.session` | 读写正常 | ✅ 确证 |
+| `storage.local` 配额 | `QUOTA_BYTES = 10485760`（10MB） | ✅ 确证 |
+| i18n 回退 | UI 语言 `zh-CN` → `getMessage('extName')` 返回中文条目；`default_locale=en` 回退链正常 | ✅ 确证 |
+| 编程读剪贴板（未声明 `clipboardRead`） | **成功**（`readText()` 返回内容）——阴性对照未按预期失败 | ⚠️ 受"点击后约 5s transient activation"影响，对照设计有缺陷；对"用户点按钮"的真实场景无影响 |
+| **零权限写剪贴板** | **成功**（点击回调内 `writeText()`，未声明 `clipboardWrite`） | ✅ 确证 → **不声明剪贴板权限** |
+| `<a download>` 零权限落盘 | **成功**（向导自动读到 `~/Downloads/turbo-spike-results.txt`） | ✅ 确证 → 导出不必声明 `downloads` |
+| 手动文件选择 / 拖放读取 | 均成功且无权限弹窗：2MB 手动 42ms、2MB 拖放 17ms、50MB 拖放拿到文本 115ms | ✅ 确证 |
+| 程序化 `input.click()` 打开选择器 | **证据矛盾**：`change` 未触发（未打开或被取消），但人工记录称弹出过对话框 | ❓ 待澄清 |
+| 装机会话权限警告 | 只声明 `storage` 时无剪贴板类警告 | ✅ 实测 |
+
+### 附带得到的两条产品级实测事实
+
+1. **性能（不经过 `textarea` 的路径）**：2MB 拖放首帧 **43.2ms**；**50MB 拖放首帧 193.6ms**（传输 36.1ms + worker `JSON.parse` 93.2ms + postMessage 往返 151.8ms + 解析→首帧 41.8ms），JS 堆 48MB，**296 万节点**。→ `JSON.parse` ≈565MB/s；**最大单项开销是 postMessage 往返而非解析**；WASM 解析器无必要（与 #14 结论一致）。
+2. **巨文本进 `textarea` ≈ 40 秒主线程阻塞**：把 9.96M 字符粘进 `<textarea>` 后，同一轮的"仅传输往返"报了 30,932ms、解析→首帧报了 41,648ms（而 50MB 走拖放的同类操作仅 36ms / 41.8ms）——伪影来源是 Chrome 渲染巨型文本节点。**产品硬约束：文档文本永不进入 DOM 文本节点/textarea。**
+
+---
+
 ## 关键出处（汇总）
 
 1. [Manifest – Content Security Policy | Chrome for Developers](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy)
