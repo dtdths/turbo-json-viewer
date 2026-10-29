@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer</title>
+<link rel="stylesheet" href="./page.css">
+</head>
+<body data-panel="none">
+
+<div class="app">
+  <nav class="activity" aria-label="活动栏">
+    <button class="actbtn is-active" type="button" data-panel-btn="doc" title="文档树" aria-label="文档树">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.4h3.2M3 7.2h6.4M3 11h9.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="12.6" cy="3.4" r="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="11.2" cy="11" r="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+    </button>
+    <button class="actbtn" type="button" data-panel-btn="search" title="搜索 ⌘K" aria-label="搜索">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.4 10.4 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    </button>
+    <span class="activity__spacer"></span>
+    <button class="actbtn" type="button" id="themeToggle" title="切换主题" aria-label="切换深色 / 亮色主题">
+      <svg class="ic-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M12.5 3.5l-1 1M4.5 11.5l-1 1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+      <svg class="ic-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.9 9.6A5.4 5.4 0 0 1 6.4 3.1 5.5 5.5 0 1 0 12.9 9.6Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+    </button>
+  </nav>
+
+  <div class="app__main">
+    <header class="toolbar">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="2.75" y="2.75" width="18.5" height="18.5" rx="6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 15.6V10.2M12 15.6V7.4M16 15.6v-3.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </span>
+        Turbo JSON Viewer <span class="brand__tag">BETA</span>
+      </div>
+
+      <button class="file-chip" type="button" id="fileChip" hidden>
+        <span id="fileName">—</span>
+        <span class="file-chip__meta" id="fileMeta"></span>
+      </button>
+
+      <span class="toolbar__spacer"></span>
+
+      <button class="btn" type="button" id="importBtn">导入</button>
+      <button class="btn" type="button" id="exportBtn" disabled title="导出在下一 slice 接入">导出</button>
+      <button class="iconbtn" type="button" id="railToggle" aria-pressed="true" title="右侧工作区" aria-label="折叠右侧工作区">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.2" y="3.2" width="11.6" height="9.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.4 3.4v9.2" stroke="currentColor" stroke-width="1.2" opacity=".6"/></svg>
+      </button>
+      <input type="file" id="fileInput" accept=".json,.ndjson,application/json" hidden>
+    </header>
+
+    <main class="workbench">
+      <aside class="side side--left" id="leftPanel" aria-label="左侧面板">
+        <div class="side__head">
+          <span class="side__title" id="panelTitle">搜索</span>
+          <span class="side__spacer"></span>
+          <button class="iconbtn" type="button" data-panel-close aria-label="关闭面板">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 4.6 6.8 6.8M11.4 4.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="panel panel--search" id="searchPanel"></div>
+      </aside>
+
+      <div class="tree-wrap">
+        <div class="tree" id="tree" role="tree" tabindex="0" aria-label="JSON 树视图"></div>
+      </div>
+
+      <aside class="rail" id="rail" aria-label="右侧工作区">
+        <div class="rail__head">
+          <span class="rail__title">工作区</span>
+          <span class="rail__spacer"></span>
+          <button class="iconbtn" type="button" id="railCollapse" aria-label="折叠右侧工作区">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9.5 4.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="rail__body">
+          <section class="module">
+            <header class="module__head"><span class="module__title">选中节点</span><span class="module__meta">只读</span></header>
+            <code class="sel__path" id="selPath">—</code>
+            <div class="sel__meta" id="selMeta"></div>
+          </section>
+          <section class="module">
+            <header class="module__head"><span class="module__title">JSON 地图</span><span class="module__meta">v1.1</span></header>
+            <div class="placeholder">按 #17 / ADR-0007 在后续 slice 接入</div>
+          </section>
+          <section class="module">
+            <header class="module__head"><span class="module__title">文档概要</span><span class="module__meta">采样</span></header>
+            <div class="placeholder" id="profilePlaceholder">导入后采样</div>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span class="status__item" id="statusRows">未打开文档</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item" id="statusSize">—</span>
+      <span class="status__spacer"></span>
+      <span class="status__path" id="statusPath"></span>
+      <span class="status__spacer"></span>
+      <span class="status__item" id="statusState">只读 · 原文件不变</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item" id="statusTheme">深色</span>
+    </footer>
+  </div>
+</div>
+
+<section class="empty" id="empty">
+  <div class="empty__inner">
+    <h1 class="empty__title">拖入 JSON，毫秒级开始查看</h1>
+    <p class="empty__sub">本地只读 · 数据不经过网络 · 50 MB 文档由 Worker 常驻</p>
+    <div class="dropzone" id="dropzone" role="button" tabindex="0">
+      <strong>拖放 JSON 文件到这里</strong>
+      <span class="dropzone__hint">或 <button class="linkbtn" type="button" id="pickBtn">选择文件</button> · <kbd>⌘V</kbd> 粘贴剪贴板</span>
+    </div>
+  </div>
+</section>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module" src="./page.js"></script>
+</body>
+</html>

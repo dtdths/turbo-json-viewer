@@ -2,5 +2,15 @@
 # Nothing here belongs in version control (the 50MB sample alone would be fatal).
 .spike/
 
+# Third-party sample (bejson baseline) — shape reference only, not source.
+.mock/
+
+# Build output
+dist/
+
+# Dependencies (benchmarks install their own, e.g. prototype/p1/bench/stack)
+node_modules/
+npm-cache/
+
 # macOS
 .DS_Store

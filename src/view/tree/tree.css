@@ -1,0 +1,234 @@
+/* ==========================================================================
+   view/tree/tree.css — 固定行高树视图（S3）
+   只引用 token 变量名；值来自 app 层统一引入的 tokens.css（dark 默认 + [data-theme]）。
+   硬约束：行内容单行（nowrap + ellipsis），行高恒定，缩进用 padding-left。
+   ========================================================================== */
+
+.tjv-tree {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  background: var(--bg-app, #0b0d12);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong, #2e3648) transparent;
+}
+.tjv-tree:focus-visible {
+  box-shadow: inset var(--focus-ring-inset, inset 0 0 0 1px #7c8cff);
+}
+
+.tjv-tree__spacer {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+}
+
+/* 行池容器：由 TreeView 创建并交给 renderer factory；行本身 absolute + style.top。
+   高度撑满 spacer，保证行绝对定位的坐标系与内容高度一致，且不额外的命中区。 */
+.tjv-tree__rows {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 100%;
+  pointer-events: none;
+}
+.tjv-tree__rows .row { pointer-events: auto; }
+
+/* ---------------- row（绝对定位，top 由 TreeView 写入） ---------------- */
+
+.tjv-tree .row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  height: var(--row-h, 24px);
+  flex: 0 0 var(--row-h, 24px);
+  padding-left: 10px;
+  padding-right: 88px;
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: var(--text-mono, 12.5px);
+  line-height: var(--row-h, 24px);
+  color: var(--text-2, #c6ccd9);
+  white-space: nowrap;
+  overflow: hidden;
+  contain: layout paint style;
+}
+.tjv-tree .row[hidden] { display: none; }
+
+.tjv-tree .row:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.045)); }
+
+.tjv-tree .row.is-selected { background: var(--bg-selected, rgba(124, 140, 255, 0.14)); }
+.tjv-tree .row.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent, #7c8cff);
+}
+
+.tjv-tree .row.is-hit { background: var(--hit-row, rgba(240, 196, 96, 0.045)); }
+.tjv-tree .row.is-hit.is-selected { background: var(--bg-selected, rgba(124, 140, 255, 0.14)); }
+.tjv-tree .row.is-current { box-shadow: inset 0 0 0 1px var(--hit-border, rgba(240, 196, 96, 0.42)); }
+
+/* ---------------- 缩进引导线 ---------------- */
+
+.tjv-tree .row__guides {
+  display: flex;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+.tjv-tree .row__guides i {
+  width: var(--row-indent, 16px);
+  border-left: 1px solid var(--border-subtle, #1a1f29);
+}
+
+/* ---------------- caret ---------------- */
+
+.tjv-tree .row__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: var(--row-h, 24px);
+  flex: 0 0 15px;
+  color: var(--faint, #737c8e);
+  cursor: pointer;
+}
+.tjv-tree .row__caret svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+  transition: transform var(--dur-fast, 110ms) var(--ease-out, cubic-bezier(0.2, 0, 0.2, 1));
+}
+.tjv-tree .row__caret.is-open svg { transform: rotate(90deg); }
+.tjv-tree .row__caret.is-leaf { visibility: hidden; cursor: default; }
+
+/* ---------------- key / colon / value ---------------- */
+
+.tjv-tree .row__key { color: var(--syntax-key, #a9b8d8); }
+.tjv-tree .row__key--idx { color: var(--syntax-index, #6f7a90); }
+.tjv-tree .row__colon {
+  margin: 0 5px 0 1px;
+  color: var(--syntax-punct, #737c8e);
+}
+.tjv-tree .row__value {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tjv-tree .tok-str { color: var(--syntax-string, #6fd3b5); }
+.tjv-tree .tok-num { color: var(--syntax-number, #e3b778); }
+.tjv-tree .tok-bool { color: var(--syntax-boolean, #b49cff); }
+.tjv-tree .tok-null { color: var(--syntax-null, #7b8496); font-style: italic; }
+.tjv-tree .tok-punct { color: var(--syntax-punct, #737c8e); }
+
+/* ---------------- count / preview ---------------- */
+
+.tjv-tree .row__count {
+  margin-left: 7px;
+  font-size: 11px;
+  color: var(--faint, #737c8e);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  flex: 0 0 auto;
+}
+.tjv-tree .row__count--arr { color: var(--muted, #8b93a7); }
+
+.tjv-tree .row__preview {
+  margin-left: 9px;
+  min-width: 0;
+  max-width: 620px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint, #737c8e);
+  font-size: 11.5px;
+  flex: 0 1 auto;
+}
+
+/* ---------------- 可选右对齐类型列（关闭时不占位） ---------------- */
+
+.tjv-tree .row__type {
+  position: absolute;
+  right: 16px;
+  width: 72px;
+  text-align: right;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint, #737c8e);
+  pointer-events: none;
+}
+
+/* ---------------- 行操作占位（app 层接管点击） ---------------- */
+
+.tjv-tree .row__actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-elevated, #1a1f2b);
+  border: 1px solid var(--border, #232937);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.35));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast, 110ms) var(--ease-out, ease-out);
+}
+.tjv-tree .row__actions[hidden] { display: none; }
+.tjv-tree .row:hover .row__actions,
+.tjv-tree .row.is-selected .row__actions,
+.tjv-tree .row:focus-within .row__actions { opacity: 1; pointer-events: auto; }
+
+.tjv-tree .row__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--muted, #8b93a7);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tjv-tree .row__action:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.045));
+  color: var(--text, #e7eaf0);
+}
+
+/* ---------------- 搜索命中高亮 ---------------- */
+
+.tjv-tree .row mark.row__hit {
+  background: var(--hit-bg, rgba(240, 196, 96, 0.18));
+  color: var(--hit-text, #f5d79c);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ---------------- stale：保留上一帧，只给一条细提示，不出空白 ---------------- */
+
+.tjv-tree.is-stale::before {
+  content: "";
+  position: sticky;
+  top: 0;
+  left: 0;
+  display: block;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent, #7c8cff), transparent);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tjv-tree .row__caret svg { transition: none; }
+  .tjv-tree .row__actions { transition: none; }
+}
