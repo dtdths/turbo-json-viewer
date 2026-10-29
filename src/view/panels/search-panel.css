@@ -1,0 +1,281 @@
+/* ==========================================================================
+   view/panels/search-panel — C · 工作台搜索面板
+   虚拟结果列表（44px 行）+ 查询框（32px/focus ring）+ 过滤 + 空态 + foot。
+   视觉 token 来自 view/styles/tokens.css；布局外框（.panel / .iconbtn）在 shell.css。
+   ========================================================================== */
+
+/* ---------------- panel shell ---------------- */
+
+.panel--search {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---------------- search head ---------------- */
+
+.csearch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  flex: 0 0 auto;
+}
+.csearch__box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  transition: border-color var(--dur-fast, 110ms) ease, box-shadow var(--dur-fast, 110ms) ease;
+}
+.csearch__box:focus-within {
+  border-color: var(--border-focus, var(--accent));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.csearch__box .ic {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.csearch__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono, 12.5px);
+}
+.csearch__input::placeholder {
+  color: var(--faint);
+}
+/* 焦点环由 .csearch__box:focus-within 承担，输入框自身不再叠一层 */
+.csearch__input:focus-visible {
+  box-shadow: none;
+  border-radius: 0;
+}
+.csearch__count {
+  flex: 0 0 auto;
+  font-size: var(--text-caption, 11px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.csearch__count b {
+  font-weight: 600;
+  color: var(--text-2);
+}
+.csearch__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.csearch__row .iconbtn {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-xs, 4px);
+}
+.csearch__row .iconbtn .ic {
+  width: 13px;
+  height: 13px;
+}
+.csearch__pos {
+  margin-left: auto;
+  font-size: var(--text-caption, 11px);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------------- filters ---------------- */
+
+.results__filters {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  color: var(--muted);
+  font-size: var(--text-caption, 11px);
+  white-space: nowrap;
+}
+.filter__count {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.filter:hover {
+  color: var(--text-2);
+  border-color: var(--border-strong);
+}
+.filter.is-on {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.filter.is-on .filter__count {
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* ---------------- virtual result list ---------------- */
+
+.results__scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.results__scroll:focus-visible {
+  box-shadow: var(--focus-ring-inset);
+  border-radius: 0;
+}
+.results__spacer {
+  position: relative;
+  width: 100%;
+}
+.results__window {
+  position: absolute;
+  inset: 0;
+}
+
+.result {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 12px 0 14px;
+  overflow: hidden;
+  text-align: left;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+/* [hidden] 必须压过 .result{display:flex}（行池复用靠 hidden 隐藏多余节点） */
+.result[hidden] {
+  display: none;
+}
+.result:hover {
+  background: var(--bg-hover);
+}
+.result.is-selected {
+  background: var(--bg-selected);
+  border-left-color: var(--accent);
+}
+.result__path {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+.result.is-selected .result__path {
+  color: var(--text);
+}
+.result__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+.result__field {
+  flex: 0 0 auto;
+  color: var(--faint);
+}
+.result__value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+.result__kind {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  line-height: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* 琥珀命中高亮（路径与值共用） */
+mark.result__hit {
+  padding: 0 1px;
+  border-bottom: 1px solid var(--hit-border);
+  border-radius: 2px;
+  background: var(--hit-bg);
+  color: var(--hit-text);
+}
+
+/* ---------------- empty state ---------------- */
+
+.results__empty {
+  padding: 16px 14px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.results__empty[hidden] {
+  display: none;
+}
+
+/* ---------------- foot ---------------- */
+
+.results__foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-micro, 10px);
+  color: var(--faint);
+  white-space: nowrap;
+}
+/* [hidden] 必须压过 .results__foot{display:flex} */
+.results__foot[hidden] {
+  display: none;
+}
+.results__foot span {
+  font-variant-numeric: tabular-nums;
+}
+.results__truncated {
+  color: var(--warn);
+}

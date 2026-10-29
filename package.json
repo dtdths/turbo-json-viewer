@@ -1,0 +1,24 @@
+{
+  "name": "turbo-json-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local read-only JSON viewer (Chrome MV3): worker-resident document, fixed-height row virtualization, search, expression, scratch subtree edit.",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "size": "node build.mjs --analyze",
+    "smoke": "node scripts/smoke.mjs .spike/samples/10mb.json",
+    "smoke:ext": "node scripts/smoke-extension.mjs .spike/samples/10mb.json",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

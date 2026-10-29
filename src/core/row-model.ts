@@ -1,0 +1,579 @@
+/**
+ * core/row-model — 固定行高可见行模型（ADR-0002）。
+ *
+ * IR = JSON.parse 值图（唯一真相源） + 展开集合。
+ * 每个 open 容器维护一份 Fenwick（子项**可见行数**前缀和），窗口按「下潜 O(depth·log n)」定位：
+ *   - 不建扁平行表；不建全局 parentMap；节点身份这里不需要（行只带路径）。
+ *   - 根永远 open；load 后 totalRows = 1 + 根容器子项数（顶层字段可见、容器默认折叠）。
+ *
+ * 关键不变量：
+ *   - 折叠时只释放该容器自己的 Fenwick，子容器的展开状态保留（重新展开后恢复）。
+ *   - 任何会让 totalRows 超过 rowBudget 的展开/替换都抛 TOO_MANY_ROWS，且不产生部分修改。
+ */
+import { CoreError } from '../protocol/errors';
+import { ROW_BUDGET } from '../protocol/versions';
+import type { JsonKind, Path, Row } from '../protocol/types';
+import { appendIndex, appendKey, parsePath, ROOT_PATH } from '../shared/path';
+
+/** JSON 容器（对象或数组）。标量（含 null）不是容器。 */
+export type Container = Record<string, unknown> | unknown[];
+
+/** 折叠容器摘要：取前 N 项、总长上限 C 字符。 */
+export const SUMMARY_ITEMS = 3;
+export const SUMMARY_CHARS = 90;
+/** 搜索命中预览上限（命中集可能 5 万条，预览必须短）。 */
+export const HIT_PREVIEW_CHARS = 80;
+
+export function isContainer(node: unknown): node is Container {
+  return typeof node === 'object' && node !== null;
+}
+
+export function isArrayContainer(node: Container): node is unknown[] {
+  return Array.isArray(node);
+}
+
+export function jsonKind(node: unknown): JsonKind {
+  if (node === null) return 'null';
+  switch (typeof node) {
+    case 'string':
+      return 'string';
+    case 'number':
+      return 'number';
+    case 'boolean':
+      return 'boolean';
+    case 'object':
+      return Array.isArray(node) ? 'array' : 'object';
+    default:
+      return 'null';
+  }
+}
+
+export function childCountOf(container: Container): number {
+  return Array.isArray(container) ? container.length : Object.keys(container).length;
+}
+
+/** 标量的 JSON 原文（字符串带引号/转义；数字用 JSON 规则）。 */
+export function scalarPreview(node: unknown): string {
+  if (node === null) return 'null';
+  switch (typeof node) {
+    case 'string':
+      return JSON.stringify(node);
+    case 'number':
+      return JSON.stringify(node);
+    case 'boolean':
+      return node ? 'true' : 'false';
+    default:
+      // JSON.parse 不会产生 undefined/function/symbol；防御性兜底成 null
+      return 'null';
+  }
+}
+
+/** 摘要里的单值短形态：容器用 `{…}` / `[…]`，不递归。 */
+export function inlinePreview(node: unknown): string {
+  if (!isContainer(node)) return scalarPreview(node);
+  const count = childCountOf(node);
+  if (Array.isArray(node)) return count > 0 ? '[…]' : '[]';
+  return count > 0 ? '{…}' : '{}';
+}
+
+/** 按字符截断（不切断代理对），超长补 `…`。 */
+export function truncateText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = Math.max(0, max - 1);
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1; // 别把 emoji 切成两半
+  return text.slice(0, end) + '…';
+}
+
+/** 折叠容器摘要：对象 `"k": v, …`；数组 `v, v, …`。 */
+export function summarizeContainer(node: Container): string {
+  const count = childCountOf(node);
+  if (count === 0) return Array.isArray(node) ? '[]' : '{}';
+  const n = Math.min(SUMMARY_ITEMS, count);
+  const parts: string[] = [];
+  if (Array.isArray(node)) {
+    for (let i = 0; i < n; i++) parts.push(inlinePreview(node[i]));
+  } else {
+    const keys = Object.keys(node);
+    for (let i = 0; i < n; i++) {
+      const key = keys[i] as string;
+      parts.push(JSON.stringify(key) + ': ' + inlinePreview(node[key]));
+    }
+  }
+  let out = parts.join(', ');
+  if (count > n) out += ', …';
+  return truncateText(out, SUMMARY_CHARS);
+}
+
+/** 行预览：标量 JSON 原文 / 空容器字面量 / 展开容器省略号 / 折叠容器摘要。 */
+export function previewOf(node: unknown, open: boolean): string {
+  if (!isContainer(node)) return scalarPreview(node);
+  const count = childCountOf(node);
+  if (count === 0) return Array.isArray(node) ? '[]' : '{}';
+  if (open) return Array.isArray(node) ? '[…]' : '{…}';
+  return summarizeContainer(node);
+}
+
+/** 命中预览：标量截断到 HIT_PREVIEW_CHARS；容器只给省略号形态。 */
+export function shortPreview(node: unknown): string {
+  if (!isContainer(node)) return truncateText(scalarPreview(node), HIT_PREVIEW_CHARS);
+  const count = childCountOf(node);
+  if (Array.isArray(node)) return count > 0 ? '[…]' : '[]';
+  return count > 0 ? '{…}' : '{}';
+}
+
+/* ------------------------------------------------------------------------- */
+/* Fenwick：子项可见行数前缀和                                                */
+/* ------------------------------------------------------------------------- */
+
+class Fenwick {
+  readonly size: number;
+  private readonly tree: Int32Array;
+
+  constructor(sizes: readonly number[]) {
+    this.size = sizes.length;
+    this.tree = new Int32Array(this.size + 1);
+    for (let i = 0; i < this.size; i++) this.add(i, sizes[i] as number);
+  }
+
+  total(): number {
+    let sum = 0;
+    for (let i = this.size; i > 0; i -= i & -i) sum += this.tree[i] as number;
+    return sum;
+  }
+
+  /** [0, count) 的前缀和 */
+  prefix(count: number): number {
+    let sum = 0;
+    for (let i = Math.min(Math.max(count, 0), this.size); i > 0; i -= i & -i) sum += this.tree[i] as number;
+    return sum;
+  }
+
+  add(index: number, delta: number): void {
+    if (delta === 0) return;
+    for (let i = index + 1; i <= this.size; i += i & -i) this.tree[i] = (this.tree[i] as number) + delta;
+  }
+
+  /** 最大的 slot，使 prefix(slot) <= target < prefix(slot + 1)；要求 0 <= target < total() */
+  lowerBound(target: number): number {
+    let pos = 0;
+    let rest = target;
+    let step = 1;
+    while (step * 2 <= this.size) step *= 2;
+    for (; step > 0; step >>= 1) {
+      const next = pos + step;
+      if (next <= this.size && (this.tree[next] as number) <= rest) {
+        pos = next;
+        rest -= this.tree[next] as number;
+      }
+    }
+    return pos;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* RowModel                                                                  */
+/* ------------------------------------------------------------------------- */
+
+export interface RowModelOptions {
+  /** 可见行预算（默认 ROW_BUDGET = 1,000,000）；测试可注入小值 */
+  rowBudget?: number;
+}
+
+export interface ToggleResult {
+  /** 该行在变更后的行号；-1 表示不可见 */
+  row: number;
+  changed: boolean;
+  totalRows: number;
+}
+
+export interface ExpandResult {
+  row: number;
+  changed: boolean;
+  totalRows: number;
+}
+
+export interface ReplaceResult {
+  row: number;
+  changed: boolean;
+  totalRows: number;
+}
+
+interface ChainEntry {
+  container: Container;
+  slot: number;
+  node: unknown;
+  path: Path;
+}
+
+export class RowModel {
+  /** 展开集合（根容器始终在此集合内）；Root 直接引用同一个 Set。 */
+  readonly expanded = new Set<Container>();
+
+  private readonly indexes = new Map<Container, Fenwick>();
+  private keysCache = new WeakMap<Container, string[]>();
+  private readonly rowBudget: number;
+  private rootValue: unknown;
+
+  constructor(rootValue: unknown, options: RowModelOptions = {}) {
+    this.rootValue = rootValue;
+    this.rowBudget = options.rowBudget ?? ROW_BUDGET;
+    if (isContainer(rootValue)) this.mountRoot(rootValue);
+  }
+
+  get value(): unknown {
+    return this.rootValue;
+  }
+
+  /** 根可见行 + 根下所有可见子树行。 */
+  get totalRows(): number {
+    if (!isContainer(this.rootValue)) return 1;
+    const rootIndex = this.indexes.get(this.rootValue);
+    return 1 + (rootIndex ? rootIndex.total() : 0);
+  }
+
+  get budget(): number {
+    return this.rowBudget;
+  }
+
+  /** 行窗口；越界/负数裁剪，不抛错。 */
+  window(start: number, count: number): Row[] {
+    const rows: Row[] = [];
+    if (!Number.isFinite(start) || !Number.isFinite(count) || count <= 0) return rows;
+    const total = this.totalRows;
+    const from = Math.max(0, Math.floor(start));
+    const to = Math.min(total, from + Math.floor(count));
+    for (let i = from; i < to; i++) {
+      const row = this.rowAt(i);
+      if (!row) break;
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /** 路径的可见行号；不在视图中（祖先折叠）或不存在 → -1。 */
+  rowOfPath(path: Path): number {
+    const chain = this.locateChain(path);
+    let row = 0;
+    for (let j = 0; j < chain.length; j++) {
+      const parent: unknown = j === 0 ? this.rootValue : (chain[j - 1] as ChainEntry).node;
+      if (!isContainer(parent)) return -1;
+      const index = this.indexes.get(parent);
+      if (!index) return -1; // 祖先折叠：不可见
+      row += 1 + index.prefix((chain[j] as ChainEntry).slot);
+    }
+    return row;
+  }
+
+  /** 展开/折叠一个容器。直接改该容器 Fenwick 并沿祖先链点更新。 */
+  toggle(path: Path, open: boolean): ToggleResult {
+    const chain = this.locateChain(path);
+    if (chain.length === 0) {
+      // 根永远 open，折叠根是 no-op
+      return { row: 0, changed: false, totalRows: this.totalRows };
+    }
+    const target = chain[chain.length - 1] as ChainEntry;
+    const node = target.node;
+    if (!isContainer(node)) {
+      throw new CoreError({ code: 'BAD_COMMAND', message: `toggle: not a container at ${path}` });
+    }
+    if (this.expanded.has(node) === open) {
+      return { row: this.rowOfPath(path), changed: false, totalRows: this.totalRows };
+    }
+
+    if (open) {
+      const { sizes, total } = this.measureChildren(node);
+      const next = this.totalRows + total;
+      if (next > this.rowBudget) throw this.tooManyRows(next);
+      this.expanded.add(node);
+      this.indexes.set(node, new Fenwick(sizes));
+      this.propagate(chain, chain.length - 1, total);
+    } else {
+      const index = this.indexes.get(node);
+      const delta = index ? -index.total() : 0;
+      this.indexes.delete(node);
+      this.expanded.delete(node);
+      this.propagate(chain, chain.length - 1, delta);
+    }
+    return { row: this.rowOfPath(path), changed: true, totalRows: this.totalRows };
+  }
+
+  /** 展开 path 上所有祖先容器（不含自身）；预算不足则回滚并抛 TOO_MANY_ROWS。 */
+  expandPath(path: Path): ExpandResult {
+    const chain = this.locateChain(path);
+    const before = this.totalRows;
+    const opened: { index: number; delta: number }[] = [];
+    try {
+      // 由深到浅打开：子节点先有索引，父节点建索引时读到的是最终尺寸
+      for (let j = chain.length - 2; j >= 0; j--) {
+        const node = (chain[j] as ChainEntry).node;
+        if (!isContainer(node) || this.expanded.has(node)) continue;
+        const { sizes, total } = this.measureChildren(node);
+        const next = this.totalRows + total;
+        if (next > this.rowBudget) throw this.tooManyRows(next);
+        this.expanded.add(node);
+        this.indexes.set(node, new Fenwick(sizes));
+        this.propagate(chain, j, total);
+        opened.push({ index: j, delta: total });
+      }
+    } catch (err) {
+      for (let i = opened.length - 1; i >= 0; i--) {
+        const { index: j, delta } = opened[i] as { index: number; delta: number };
+        const node = (chain[j] as ChainEntry).node as Container;
+        this.indexes.delete(node);
+        this.expanded.delete(node);
+        this.propagate(chain, j, -delta);
+      }
+      throw err;
+    }
+    return { row: this.rowOfPath(path), changed: this.totalRows !== before, totalRows: this.totalRows };
+  }
+
+  /**
+   * 子树整体替换（编辑语义，见 ADR-0006：S1 = 保留被替换节点自身展开态、子节点折叠）。
+   * 骨架 slice 未接 DocService，但行模型语义先落地，供编辑实现复用。
+   */
+  replaceNode(path: Path, value: unknown): ReplaceResult {
+    if (path === ROOT_PATH) {
+      this.releaseSubtree(this.rootValue);
+      this.expanded.clear();
+      this.indexes.clear();
+      this.keysCache = new WeakMap();
+      this.rootValue = value;
+      if (isContainer(value)) {
+        const { sizes, total } = this.measureChildren(value);
+        const next = 1 + total;
+        if (next > this.rowBudget) throw this.tooManyRows(next);
+        this.expanded.add(value);
+        this.indexes.set(value, new Fenwick(sizes));
+      }
+      return { row: 0, changed: true, totalRows: this.totalRows };
+    }
+
+    const chain = this.locateChain(path);
+    const target = chain[chain.length - 1] as ChainEntry;
+    if (value === target.node) {
+      // 同一个值图对象：没有结构变化，别让 release/rebuild 打乱展开态
+      return { row: this.rowOfPath(path), changed: false, totalRows: this.totalRows };
+    }
+    const oldSize = this.sizeOf(target.node);
+    const wasOpen = isContainer(target.node) && this.expanded.has(target.node);
+
+    // 先算新尺寸（不修改模型），预算不够直接抛
+    let newSize = 1;
+    let newSizes: number[] | null = null;
+    if (isContainer(value)) {
+      const measured = this.measureChildren(value);
+      newSizes = measured.sizes;
+      if (wasOpen) newSize = 1 + measured.total;
+    }
+    const delta = newSize - oldSize;
+    if (delta > 0) {
+      const next = this.totalRows + delta;
+      if (next > this.rowBudget) throw this.tooManyRows(next);
+    }
+
+    // 释放旧子树的状态，再写回值图
+    this.releaseSubtree(target.node);
+    if (Array.isArray(target.container)) {
+      target.container[target.slot] = value;
+    } else {
+      const keys = this.keysOf(target.container);
+      target.container[keys[target.slot] as string] = value;
+    }
+
+    // S1：被替换节点自身保留展开态，子节点默认折叠（新值来自 JSON.parse，天然无展开条目）
+    if (wasOpen && isContainer(value) && newSizes) {
+      this.expanded.add(value);
+      this.indexes.set(value, new Fenwick(newSizes));
+    }
+    this.propagate(chain, chain.length - 1, delta);
+    return { row: this.rowOfPath(path), changed: true, totalRows: this.totalRows };
+  }
+
+  /** 释放所有展开索引（根容器重新 open，保持与 load 后一致）。 */
+  clear(): void {
+    this.releaseSubtree(this.rootValue);
+    this.expanded.clear();
+    this.indexes.clear();
+    this.keysCache = new WeakMap();
+    if (isContainer(this.rootValue)) this.mountRoot(this.rootValue);
+  }
+
+  /* ------------------------------ internals ------------------------------ */
+
+  private mountRoot(root: Container): void {
+    const count = this.childCount(root);
+    if (1 + count > this.rowBudget) throw this.tooManyRows(1 + count);
+    const sizes = new Array<number>(count).fill(1);
+    this.expanded.add(root);
+    this.indexes.set(root, new Fenwick(sizes));
+  }
+
+  private tooManyRows(totalRows: number): CoreError {
+    return new CoreError({
+      code: 'TOO_MANY_ROWS',
+      message: `visible rows would exceed the budget (${totalRows} > ${this.rowBudget})`,
+      totalRows,
+    });
+  }
+
+  private keysOf(container: Container): string[] {
+    if (Array.isArray(container)) return [];
+    let keys = this.keysCache.get(container);
+    if (!keys) {
+      keys = Object.keys(container);
+      this.keysCache.set(container, keys);
+    }
+    return keys;
+  }
+
+  private childCount(container: Container): number {
+    return Array.isArray(container) ? container.length : this.keysOf(container).length;
+  }
+
+  private childAt(container: Container, slot: number): unknown {
+    if (Array.isArray(container)) return container[slot];
+    const keys = this.keysOf(container);
+    return container[keys[slot] as string];
+  }
+
+  private pathOfSlot(container: Container, slot: number, base: Path): Path {
+    return Array.isArray(container) ? appendIndex(base, slot) : appendKey(base, this.keysOf(container)[slot] as string);
+  }
+
+  private keyOfSlot(container: Container, slot: number): { key: string; idx: boolean } {
+    if (Array.isArray(container)) return { key: '[' + slot + ']', idx: true };
+    return { key: this.keysOf(container)[slot] as string, idx: false };
+  }
+
+  /** 子节点的可见行数：标量 1；容器 1 + （open 时其 Fenwick 总和）。 */
+  private sizeOf(node: unknown): number {
+    if (!isContainer(node)) return 1;
+    const index = this.indexes.get(node);
+    return index ? 1 + index.total() : 1;
+  }
+
+  private measureChildren(container: Container): { sizes: number[]; total: number } {
+    const count = this.childCount(container);
+    const sizes = new Array<number>(count);
+    let total = 0;
+    for (let i = 0; i < count; i++) {
+      const size = this.sizeOf(this.childAt(container, i));
+      sizes[i] = size;
+      total += size;
+    }
+    return { sizes, total };
+  }
+
+  /** 沿祖先链把 delta 加到每个 open 祖先的 Fenwick 上；遇折叠祖先即停。 */
+  private propagate(chain: ChainEntry[], from: number, delta: number): void {
+    if (delta === 0) return;
+    for (let j = from; j >= 0; j--) {
+      const parent: unknown = j === 0 ? this.rootValue : (chain[j - 1] as ChainEntry).node;
+      if (!isContainer(parent)) return;
+      const index = this.indexes.get(parent);
+      if (!index) return;
+      index.add((chain[j] as ChainEntry).slot, delta);
+    }
+  }
+
+  private rowAt(index: number): Row | null {
+    if (index === 0) return this.describeRow(this.rootValue, ROOT_PATH, 0, 'root', false);
+    if (index < 0) return null;
+    if (!isContainer(this.rootValue)) return null;
+    const rootIndex = this.indexes.get(this.rootValue);
+    if (!rootIndex) return null;
+    return this.descend(this.rootValue, ROOT_PATH, 0, index - 1);
+  }
+
+  /** offset 是 container 子项区域内的 0-based 行偏移。 */
+  private descend(container: Container, containerPath: Path, containerDepth: number, offset: number): Row | null {
+    const index = this.indexes.get(container);
+    if (!index || index.size === 0 || offset < 0 || offset >= index.total()) return null;
+    const slot = index.lowerBound(offset);
+    const local = offset - index.prefix(slot);
+    const node = this.childAt(container, slot);
+    const path = this.pathOfSlot(container, slot, containerPath);
+    const { key, idx } = this.keyOfSlot(container, slot);
+    const row = this.describeRow(node, path, containerDepth + 1, key, idx);
+    if (local === 0) return row;
+    if (!isContainer(node)) return null;
+    return this.descend(node, path, containerDepth + 1, local - 1);
+  }
+
+  private describeRow(node: unknown, path: Path, depth: number, key: string, idx: boolean): Row {
+    const container = isContainer(node);
+    const open = container && this.expanded.has(node);
+    const count = container ? this.childCount(node) : 0;
+    return {
+      path,
+      depth,
+      key,
+      idx,
+      kind: jsonKind(node),
+      preview: previewOf(node, open),
+      count,
+      open,
+      hasChildren: count > 0,
+    };
+  }
+
+  /** 解析路径为「从根的子项到目标」的链；任何一段缺失都抛 BAD_COMMAND。 */
+  private locateChain(path: Path): ChainEntry[] {
+    const segments = parsePath(path);
+    const chain: ChainEntry[] = [];
+    let container: unknown = this.rootValue;
+    let currentPath: Path = ROOT_PATH;
+    for (const segment of segments) {
+      if (!isContainer(container)) throw this.badPath(path);
+      let slot: number;
+      if (Array.isArray(container)) {
+        if (segment.kind === 'index') {
+          slot = segment.index;
+        } else {
+          slot = Number(segment.key);
+          if (!Number.isInteger(slot) || segment.key.trim() === '') throw this.badPath(path);
+        }
+        if (!Number.isInteger(slot) || slot < 0 || slot >= container.length) throw this.badPath(path);
+      } else {
+        const key = segment.kind === 'key' ? segment.key : String(segment.index);
+        slot = this.keysOf(container).indexOf(key);
+        if (slot < 0) throw this.badPath(path);
+      }
+      const node = this.childAt(container, slot);
+      currentPath = this.pathOfSlot(container, slot, currentPath);
+      chain.push({ container, slot, node, path: currentPath });
+      container = node;
+    }
+    return chain;
+  }
+
+  /** 释放子树内所有展开状态与键缓存（编辑替换前调用）。 */
+  private releaseSubtree(node: unknown): void {
+    if (!isContainer(node)) return;
+    const stack: Container[] = [node];
+    while (stack.length > 0) {
+      const current = stack.pop() as Container;
+      this.indexes.delete(current);
+      this.expanded.delete(current);
+      this.keysCache.delete(current);
+      if (Array.isArray(current)) {
+        for (let i = 0; i < current.length; i++) {
+          const child = current[i];
+          if (isContainer(child)) stack.push(child);
+        }
+      } else {
+        const keys = Object.keys(current);
+        for (const key of keys) {
+          const child = current[key];
+          if (isContainer(child)) stack.push(child);
+        }
+      }
+    }
+  }
+
+  private badPath(path: Path): CoreError {
+    return new CoreError({ code: 'BAD_COMMAND', message: `path not found: ${path}` });
+  }
+}

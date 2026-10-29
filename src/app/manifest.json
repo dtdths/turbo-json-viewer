@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Turbo JSON Viewer",
+  "version": "0.1.0",
+  "description": "本地只读 JSON 查看器：文档常驻 Worker、固定行高虚拟化、搜索与临时编辑。",
+  "minimum_chrome_version": "120",
+  "action": { "default_title": "Turbo JSON Viewer" },
+  "background": { "service_worker": "sw.js", "type": "module" },
+  "permissions": ["storage"]
+}

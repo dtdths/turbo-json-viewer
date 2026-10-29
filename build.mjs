@@ -1,0 +1,79 @@
+import { build, context } from 'esbuild';
+import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+
+const ROOT = import.meta.dirname;
+const SRC = path.join(ROOT, 'src');
+const DIST = path.join(ROOT, 'dist');
+const watch = process.argv.includes('--watch');
+const analyze = process.argv.includes('--analyze');
+
+const entryPoints = {
+  page: path.join(SRC, 'app/main.ts'),
+  worker: path.join(SRC, 'app/worker.ts'),
+  sw: path.join(SRC, 'app/sw.ts'),
+};
+
+const staticFiles = [
+  ['src/app/page.html', 'page.html'],
+  ['src/app/manifest.json', 'manifest.json'],
+];
+
+const options = {
+  entryPoints,
+  outdir: DIST,
+  bundle: true,
+  format: 'esm',
+  target: 'chrome120',
+  splitting: true,
+  sourcemap: watch ? 'linked' : false,
+  minify: false,
+  metafile: analyze,
+  logLevel: 'info',
+  chunkNames: 'chunks/[name]-[hash]',
+  assetNames: 'assets/[name]-[hash]',
+  loader: { '.css': 'css' },
+};
+
+async function copyStatic() {
+  await mkdir(DIST, { recursive: true });
+  for (const [from, to] of staticFiles) {
+    const target = path.join(DIST, to);
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(path.join(ROOT, from), target);
+  }
+}
+
+function gzKB(buf) {
+  return (zlib.gzipSync(buf).length / 1024).toFixed(1);
+}
+
+async function reportSize(metafile) {
+  if (!metafile) return;
+  const files = Object.keys(metafile.outputs).sort();
+  const rows = [];
+  for (const f of files) {
+    if (!f.endsWith('.js') && !f.endsWith('.css')) continue;
+    const buf = await readFile(path.join(ROOT, f));
+    rows.push({ file: path.relative(DIST, path.join(ROOT, f)), raw: (buf.length / 1024).toFixed(1), gz: gzKB(buf) });
+  }
+  rows.sort((a, b) => Number(b.gz) - Number(a.gz));
+  console.log('\nfile'.padEnd(34), 'raw KB'.padStart(8), 'gzip KB'.padStart(8));
+  for (const r of rows) console.log(r.file.padEnd(34), r.raw.padStart(8), r.gz.padStart(8));
+  const page = rows.find((r) => r.file.startsWith('page.js'));
+  if (page) console.log(`\nfirst paint (page.js) gzip: ${page.gz} KB  (budget 45 KB)`);
+}
+
+await rm(DIST, { recursive: true, force: true });
+await copyStatic();
+
+if (watch) {
+  const ctx = await context(options);
+  await ctx.watch();
+  console.log('watching… (reload the extension to pick up changes)');
+} else {
+  const result = await build({ ...options, metafile: analyze });
+  if (analyze) await reportSize(result.metafile);
+}
