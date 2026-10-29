@@ -1,0 +1,106 @@
+{
+  "sizes": {
+    "cm6-min": {
+      "raw": 312817,
+      "gz": 101809,
+      "rawKB": 305.49,
+      "gzKB": 99.42
+    },
+    "cm6-lang": {
+      "raw": 430924,
+      "gz": 146239,
+      "rawKB": 420.82,
+      "gzKB": 142.81
+    },
+    "textarea-baseline": {
+      "raw": 2215,
+      "gz": 1060,
+      "rawKB": 2.16,
+      "gzKB": 1.04
+    },
+    "acorn": {
+      "raw": 121664,
+      "gz": 34511,
+      "rawKB": 118.81,
+      "gzKB": 33.7
+    },
+    "focus-trap": {
+      "raw": 20300,
+      "gz": 6852,
+      "rawKB": 19.82,
+      "gzKB": 6.69
+    },
+    "floating-ui": {
+      "raw": 15936,
+      "gz": 6484,
+      "rawKB": 15.56,
+      "gzKB": 6.33
+    }
+  },
+  "buildTimes": [
+    {
+      "name": "cm6-min",
+      "ms": 39
+    },
+    {
+      "name": "cm6-lang",
+      "ms": 26
+    },
+    {
+      "name": "textarea-baseline",
+      "ms": 4
+    },
+    {
+      "name": "acorn",
+      "ms": 10
+    },
+    {
+      "name": "focus-trap",
+      "ms": 10
+    },
+    {
+      "name": "floating-ui",
+      "ms": 11
+    }
+  ],
+  "repeatMs": [
+    25,
+    21,
+    21,
+    25,
+    21
+  ],
+  "split": {
+    "timeMs": 25,
+    "sizes": {
+      "cm6-min": {
+        "raw": 2813,
+        "gz": 1221,
+        "rawKB": 2.75,
+        "gzKB": 1.19
+      },
+      "cm6-lang": {
+        "raw": 112376,
+        "gz": 42850,
+        "rawKB": 109.74,
+        "gzKB": 41.85
+      }
+    },
+    "chunks": {
+      "chunk-U6HRXSB4.js": {
+        "raw": 319011,
+        "gz": 103967,
+        "rawKB": 311.53,
+        "gzKB": 101.53
+      }
+    },
+    "total": {
+      "raw": 434200,
+      "gz": 148038
+    },
+    "unsplitTotal": {
+      "raw": 743741,
+      "gz": 248048
+    }
+  }
+}

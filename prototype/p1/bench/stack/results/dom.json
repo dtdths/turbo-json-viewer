@@ -1,0 +1,181 @@
+{
+  "cfg": {
+    "logicalRows": 200000,
+    "frames": 1000,
+    "rounds": 5,
+    "rafFrames": 600
+  },
+  "wallMs": 59025,
+  "date": "2026-10-27T09:49:40.946Z",
+  "meta": {
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+    "dpr": 1,
+    "rowHeight": 24,
+    "viewportRows": 40,
+    "logicalRows": 200000,
+    "rounds": 5,
+    "frames": 1000,
+    "heapApi": true
+  },
+  "variants": {
+    "innerHTML": {
+      "sync": {
+        "frames": 5000,
+        "jsTotalMs": 86.18,
+        "jsMedianMs": 0.1,
+        "jsP95Ms": 0.2,
+        "jsMaxMs": 7,
+        "layoutTotalMs": 236.86,
+        "layoutMedianMs": 0.2,
+        "layoutP95Ms": 0.3,
+        "nodes": 160,
+        "heapDeltaKB": 1240,
+        "longTasks": 0
+      },
+      "raf": {
+        "frames": 600,
+        "wallMs": 10035.6,
+        "meanFrameMs": 16.73,
+        "p95FrameMs": 17.5,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "longTasks": 0,
+        "jsTotalMs": 305.8,
+        "jsP95Ms": 0.8
+      }
+    },
+    "createElement": {
+      "sync": {
+        "frames": 5000,
+        "jsTotalMs": 74.12,
+        "jsMedianMs": 0.1,
+        "jsP95Ms": 0.2,
+        "jsMaxMs": 13,
+        "layoutTotalMs": 242.32,
+        "layoutMedianMs": 0.2,
+        "layoutP95Ms": 0.3,
+        "nodes": 160,
+        "heapDeltaKB": -1499,
+        "longTasks": 0
+      },
+      "raf": {
+        "frames": 600,
+        "wallMs": 9999.5,
+        "meanFrameMs": 16.67,
+        "p95FrameMs": 17.5,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "longTasks": 0,
+        "jsTotalMs": 236.7,
+        "jsP95Ms": 0.7
+      }
+    },
+    "cloneNode": {
+      "sync": {
+        "frames": 5000,
+        "jsTotalMs": 67.16,
+        "jsMedianMs": 0.1,
+        "jsP95Ms": 0.2,
+        "jsMaxMs": 7.5,
+        "layoutTotalMs": 237.32,
+        "layoutMedianMs": 0.2,
+        "layoutP95Ms": 0.3,
+        "nodes": 160,
+        "heapDeltaKB": -229,
+        "longTasks": 0
+      },
+      "raf": {
+        "frames": 600,
+        "wallMs": 9999.8,
+        "meanFrameMs": 16.67,
+        "p95FrameMs": 17.4,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "longTasks": 0,
+        "jsTotalMs": 226.2,
+        "jsP95Ms": 0.7
+      }
+    },
+    "fragment": {
+      "sync": {
+        "frames": 5000,
+        "jsTotalMs": 76.04,
+        "jsMedianMs": 0.1,
+        "jsP95Ms": 0.2,
+        "jsMaxMs": 7.5,
+        "layoutTotalMs": 238.02,
+        "layoutMedianMs": 0.2,
+        "layoutP95Ms": 0.3,
+        "nodes": 160,
+        "heapDeltaKB": -554,
+        "longTasks": 0
+      },
+      "raf": {
+        "frames": 600,
+        "wallMs": 9997.7,
+        "meanFrameMs": 16.66,
+        "p95FrameMs": 17.5,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "longTasks": 0,
+        "jsTotalMs": 260.2,
+        "jsP95Ms": 0.8
+      }
+    },
+    "reuse": {
+      "sync": {
+        "frames": 5000,
+        "jsTotalMs": 31.24,
+        "jsMedianMs": 0,
+        "jsP95Ms": 0.1,
+        "jsMaxMs": 0.5,
+        "layoutTotalMs": 208.7,
+        "layoutMedianMs": 0.2,
+        "layoutP95Ms": 0.3,
+        "nodes": 160,
+        "heapDeltaKB": -415,
+        "longTasks": 0
+      },
+      "raf": {
+        "frames": 600,
+        "wallMs": 9998.4,
+        "meanFrameMs": 16.66,
+        "p95FrameMs": 17.5,
+        "droppedFrames": 0,
+        "dropRate": 0,
+        "longTasks": 0,
+        "jsTotalMs": 186.9,
+        "jsP95Ms": 0.5
+      }
+    }
+  },
+  "checks": {
+    "xss": {
+      "innerHTML": true,
+      "createElement": true,
+      "cloneNode": true,
+      "fragment": true,
+      "reuse": true
+    },
+    "ellipsis": {
+      "textOverflow": "ellipsis",
+      "scrollWidth": 3675,
+      "clientWidth": 720,
+      "works": true
+    },
+    "heights": {
+      "innerHTML": 24,
+      "createElement": 24,
+      "cloneNode": 24,
+      "fragment": 24,
+      "reuse": 24
+    },
+    "nodesPerFrame": {
+      "innerHTML": 161,
+      "createElement": 161,
+      "cloneNode": 161,
+      "fragment": 161,
+      "reuse": 161
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "multiEntry": {
+    "wallMs": 126,
+    "buildMs": 67,
+    "entries": 5,
+    "modules": 16,
+    "outputs": {
+      "bench-dom": {
+        "raw": 7014,
+        "gz": 2809,
+        "rawKB": 6.85,
+        "gzKB": 2.74
+      },
+      "bench-ui": {
+        "raw": 9279,
+        "gz": 3180,
+        "rawKB": 9.06,
+        "gzKB": 3.11
+      },
+      "worker": {
+        "raw": 422,
+        "gz": 274,
+        "rawKB": 0.41,
+        "gzKB": 0.27
+      },
+      "sw": {
+        "raw": 169,
+        "gz": 145,
+        "rawKB": 0.17,
+        "gzKB": 0.14
+      },
+      "app": {
+        "raw": 130809,
+        "gz": 37831,
+        "rawKB": 127.74,
+        "gzKB": 36.94
+      }
+    },
+    "code": 0
+  },
+  "watch": {
+    "rounds": 10,
+    "rebuildMs": [
+      3.06,
+      100.86,
+      103.78,
+      103.65,
+      103.91,
+      103.91,
+      103.98,
+      106.18,
+      106.38,
+      105.76
+    ],
+    "medianMs": 103.91083300000003
+  },
+  "vitest": {
+    "wallMs": 511,
+    "code": 0,
+    "files": "2",
+    "tests": "12"
+  },
+  "tsc": {
+    "wallMs": 624,
+    "code": 0,
+    "errors": 0,
+    "sample": [
+      ""
+    ]
+  }
+}

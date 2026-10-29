@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer — 视觉方向评审</title>
+<style>
+  :root { color-scheme: dark; --bg:#0a0c10; --panel:#11141b; --border:#232937; --text:#e7eaf0; --muted:#8b93a7; --accent:#7c8cff; --warm:#e9be7a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC",sans-serif; }
+  a { color:var(--accent); text-decoration:none; }
+  .wrap { max-width:1280px; margin:0 auto; padding:40px 40px 80px; }
+  .eyebrow { font:11px/1.4 ui-monospace,Menlo,monospace; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+  h1 { font-size:40px; letter-spacing:-.03em; margin:8px 0 6px; font-weight:650; }
+  h2 { font-size:20px; letter-spacing:-.01em; margin:44px 0 14px; border-top:1px solid var(--border); padding-top:26px; }
+  h3 { font-size:14px; margin:0 0 8px; }
+  .lede { color:var(--muted); max-width:760px; font-size:14px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .card header { padding:14px 16px; display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .card header strong { font-size:14px; }
+  .card header span { color:var(--muted); font-size:12px; }
+  .card img { display:block; width:100%; height:auto; border-top:1px solid var(--border); }
+  .thumbs { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:14px; }
+  .thumbs figure { margin:0; background:var(--panel); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .thumbs img { display:block; width:100%; height:auto; }
+  .thumbs figcaption { padding:8px 10px; color:var(--muted); font-size:11px; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:11px; letter-spacing:.04em; text-transform:uppercase; }
+  td { font-size:13px; }
+  .pill { display:inline-block; border:1px solid var(--border); border-radius:999px; padding:2px 9px; color:var(--muted); font-size:11px; margin-right:6px; }
+  .rec { border:1px solid rgba(124,140,255,.45); background:rgba(124,140,255,.08); border-radius:12px; padding:20px 22px; }
+  .rec h3 { color:var(--accent); }
+  .muted { color:var(--muted); }
+  .links { display:flex; flex-wrap:wrap; gap:10px 22px; margin-top:12px; font-size:12px; }
+  .swatches { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .sw { width:34px; height:18px; border-radius:4px; border:1px solid rgba(255,255,255,.12); }
+  .note { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Turbo JSON Viewer · #6 视觉方向评审</div>
+  <h1>A / B 两套高保真，定稿为 C</h1>
+  <p class="lede">同一组功能（树 / 搜索 / 表达式 / 子树编辑 / JSON 地图 / 修复态）在两种气质下的实现。两套均为暗色默认 + 完整亮色，1440×900 与 1280×720 已验证。</p>
+
+  <h2>定稿（2026-10-28）：C · 工作台</h2>
+  <div class="rec">
+    <h3>A 的视觉 ＋ B 的活动栏与双侧工作区</h3>
+    <p class="note" style="color:#c9cfdd;font-size:13px">左侧 48px 活动栏（文档树/搜索/大纲/表达式 + 底部主题/设置）＋ 左侧 320px 面板（搜索/大纲/设置）＋ 中间 JSON 视图（24px 行、max 1280 居中）＋ 右侧 300px 工作区（地图/选中节点/文档概要/临时修改，可折叠）。工具栏只留文档动作（导入/导出/右侧栏）。完整规格见 <code>docs/design/direction.md</code>。</p>
+    <div class="card" style="margin-top:14px"><img src="shots/c-main-dark.png" alt="方向 C 工作台主界面"></div>
+    <div class="links">
+      <a href="c/index.html?screen=main&theme=dark">打开 C 原型</a>
+      <a href="c/index.html?screen=search&theme=dark">C · 搜索</a>
+      <a href="c/index.html?screen=main&panel=outline&theme=dark">C · 大纲</a>
+      <a href="c/index.html?screen=main&panel=settings&theme=dark">C · 设置</a>
+      <a href="compare.html">A / A+类型列 / B / C 实时对比</a>
+      <a href="shots/c-main-light.png">C · 亮色</a>
+    </div>
+  </div>
+
+  <h2>背景：A / B 两套方向（评估依据）</h2>
+  <div class="grid2">
+    <div class="card">
+      <header><strong>A · Graphite / Indigo</strong><span>24px 行高 · 无活动栏 · 浮层地图</span></header>
+      <img src="shots/a-main-dark.png" alt="方向 A 主界面暗色">
+    </div>
+    <div class="card">
+      <header><strong>B · Slate / VS Code</strong><span>26px 行高 · 活动栏 + 标签条 · IDE 骨架</span></header>
+      <img src="shots/b-main-dark.png" alt="方向 B 主界面暗色">
+    </div>
+  </div>
+
+  <h2>同一组关键状态</h2>
+  <div class="thumbs">
+    <figure><img src="shots/a-edit-dark.png" alt="A 子树编辑"><figcaption>A · 子树 JSON 编辑弹层（错误行 + Apply 禁用）</figcaption></figure>
+    <figure><img src="shots/a-expr-dark.png" alt="A 表达式"><figcaption>A · 表达式抽屉 + 字段补全</figcaption></figure>
+    <figure><img src="shots/a-search-dark.png" alt="A 搜索"><figcaption>A · 搜索命中 + 虚拟结果栏</figcaption></figure>
+    <figure><img src="shots/b-edit-dark.png" alt="B 子树编辑"><figcaption>B · 子树 JSON 编辑弹层</figcaption></figure>
+    <figure><img src="shots/b-expr-dark.png" alt="B 表达式"><figcaption>B · 表达式抽屉 + 补全</figcaption></figure>
+    <figure><img src="shots/b-search-dark.png" alt="B 搜索"><figcaption>B · 搜索侧栏 + 命中高亮</figcaption></figure>
+  </div>
+
+  <h2>差异与判断</h2>
+  <table>
+    <thead><tr><th>维度</th><th>A · Graphite / Indigo</th><th>B · Slate / VS Code</th></tr></thead>
+    <tbody>
+      <tr><td>核心气质</td><td>安静、紧凑、定制感强；接近 Linear / Raycast</td><td>IDE、结构感强；接近 VS Code，熟悉度高</td></tr>
+      <tr><td>密度</td><td>24px 行高，一屏更多数据；1280×720 下会自动滚到选中行</td><td>26px 行高，一屏约 29 行；右对齐类型列更容易扫读</td></tr>
+      <tr><td>导航骨架</td><td>单层顶部工具栏；无活动栏，视觉更轻</td><td>48px 活动栏 + 标签条 + 工具栏 + 状态栏；更像 IDE</td></tr>
+      <tr><td>颜色纪律</td><td>靛蓝只给焦点/动作；语法色更克制</td><td>蓝色只给动作/焦点；语法色对比更高，VS Code 熟悉</td></tr>
+      <tr><td>JSON 地图</td><td>右下浮层，层级塔 + 兄弟刻度，面包屑完整</td><td>右下浮层，层级塔 + 兄弟刻度 + 全局位置轨道</td></tr>
+      <tr><td>主要风险</td><td>对习惯 IDE 的用户可能“少一点结构感”</td><td>容易被视为 VS Code 仿品；活动栏对单文档工具偏重</td></tr>
+      <tr><td>产品契合</td><td>单文档只读查看器；密度优先；更独特</td><td>喜欢 VS Code 工作流的开发者；结构优先</td></tr>
+    </tbody>
+  </table>
+
+  <h2>当时的 Lead 建议（A + B 细节，已被 C 取代）</h2>
+  <div class="rec">
+    <h3>历史记录：以 A 为基础，吸收 B 的两个细节</h3>
+    <p class="note" style="color:#c9cfdd;font-size:13px">A 的密度、靛蓝焦点与单层工具栏更贴合“本地只读、极速、克制”的定位，也更不容易显得像现成 IDE。建议保留 A 的 24px 行高与浮层地图；从 B 借两点：① 可选的右对齐类型列（帮助快速扫读）；② 搜索结果侧栏的显式“共 N 条 + 上一个/下一个”结构。</p>
+    <div class="links">
+      <a href="a/index.html?screen=main&theme=dark">打开 A 原型</a>
+      <a href="b/index.html?screen=main&theme=dark">打开 B 原型</a>
+      <a href="a/board.html">A 方向板</a>
+      <a href="b/board.html">B 方向板</a>
+      <a href="shots/a-board-dark.png">A 方向板整页图</a>
+      <a href="shots/b-board-dark.png">B 方向板整页图</a>
+    </div>
+    <p class="note" style="margin-top:12px">两套均为纯静态、零外链；截图脚本：<code>node prototype/visual/shoot.mjs</code>。</p>
+  </div>
+
+  <h2>亮色</h2>
+  <div class="grid2">
+    <div class="card"><header><strong>A · light</strong><span>#F7F8FB</span></header><img src="shots/a-main-light.png" alt="A 亮色"></div>
+    <div class="card"><header><strong>B · light</strong><span>#F3F6FB</span></header><img src="shots/b-main-light.png" alt="B 亮色"></div>
+  </div>
+
+  <h2>空态 / 修复态</h2>
+  <div class="grid2">
+    <div class="card"><header><strong>A · empty</strong></header><img src="shots/a-empty-dark.png" alt="A 空态"></div>
+    <div class="card"><header><strong>B · repair</strong></header><img src="shots/b-repair-dark.png" alt="B 修复态"></div>
+  </div>
+</div>
+</body>
+</html>

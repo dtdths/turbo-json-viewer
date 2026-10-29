@@ -1,0 +1,420 @@
+/* ==========================================================================
+   Direction C — 工作台
+   A 的视觉语言（Graphite / Indigo、24px 行、靛蓝焦点、单层工具栏）
+   ＋ B 的活动栏与双侧工作区：左＝搜索/大纲/设置，右＝地图/选中节点/概要/临时修改。
+
+   本文件只做叠加：基础 token 与组件来自 ../a/tokens.css、../a/app.css，
+   `../a/app.js` 继续驱动屏幕切换、树渲染、搜索结果、主题与地图。
+   ========================================================================== */
+
+:root {
+  --activity-w: 48px;
+  --left-panel-w: 320px;
+  --rail-w: 300px;
+  --tree-max: 1280px;
+}
+
+/* ---------------- shell：活动栏 + 主列 ---------------- */
+
+.app { flex-direction: row; }
+.app__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------- activity bar (48px) ---------------- */
+
+.activity {
+  flex: 0 0 var(--activity-w);
+  width: var(--activity-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0 8px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  z-index: 20;
+}
+.actbtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.actbtn:hover { background: var(--bg-hover); color: var(--text); }
+.actbtn.is-active { color: var(--accent); background: var(--bg-selected); }
+.actbtn.is-active::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.activity__spacer { flex: 1 1 auto; }
+
+/* ---------------- left side panel ---------------- */
+
+.side--left {
+  display: none;
+  flex: 0 0 var(--left-panel-w);
+  width: var(--left-panel-w);
+  min-height: 0;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+body[data-panel="search"] .side--left,
+body[data-panel="outline"] .side--left,
+body[data-panel="settings"] .side--left { display: flex; }
+
+.side__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.side__title {
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.side__spacer { flex: 1 1 auto; }
+
+.panel { display: none; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+body[data-panel="search"] .panel--search,
+body[data-panel="outline"] .panel--outline,
+body[data-panel="settings"] .panel--settings { display: flex; }
+
+/* ---------------- search panel ---------------- */
+
+.csearch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  flex: 0 0 auto;
+}
+.csearch__box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-focus);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.csearch__box .ic { width: 14px; height: 14px; color: var(--muted); }
+.csearch__box input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text);
+}
+.csearch__count {
+  font-size: var(--text-caption);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.csearch__row { display: flex; align-items: center; gap: 6px; }
+.csearch__navs { display: flex; }
+.csearch__pos {
+  font-size: var(--text-caption);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.csearch__spacer { flex: 1 1 auto; }
+
+body[data-panel="search"] .results__filters { padding: 6px 12px; }
+body[data-panel="search"] .results__foot { padding: 7px 12px; flex: 0 0 auto; }
+
+/* ---------------- outline panel ---------------- */
+
+.panel--outline { overflow: auto; scrollbar-width: thin; }
+.outline { padding: 6px 0 4px; }
+.olrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-right: 12px;
+  padding-left: calc(10px + var(--d) * 14px);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.olrow:hover { background: var(--bg-hover); }
+.olrow.is-current { background: var(--bg-selected); color: var(--text); }
+.olrow__caret { flex: 0 0 12px; width: 12px; font-size: 9px; color: var(--faint); }
+.olrow__caret.is-leaf { visibility: hidden; }
+.olrow__key { color: var(--syntax-key); overflow: hidden; text-overflow: ellipsis; }
+.olrow.is-current .olrow__key { color: var(--accent-text); }
+.olrow__type {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+.olrow__count {
+  min-width: 44px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- settings panel ---------------- */
+
+.panel--settings { overflow: auto; scrollbar-width: thin; }
+.settings { display: flex; flex-direction: column; padding: 4px 12px; }
+.setrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.setrow:last-child { border-bottom: 0; }
+.setrow__label { flex: 0 0 58px; font-size: var(--text-caption); color: var(--muted); white-space: nowrap; }
+.seg {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.seg button {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-caption);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.seg button:hover { color: var(--text); }
+.seg button.is-on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+.panel__note {
+  margin: 10px 14px 16px;
+  font-size: var(--text-caption);
+  line-height: 1.65;
+  color: var(--faint);
+}
+
+/* ---------------- right rail ---------------- */
+
+.rail {
+  flex: 0 0 var(--rail-w);
+  width: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+}
+body.rail-collapsed .rail { display: none; }
+.rail__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.rail__title {
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rail__spacer { flex: 1 1 auto; }
+.rail__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.module { padding: 10px 14px 13px; border-bottom: 1px solid var(--border-subtle); }
+.module:last-child { border-bottom: 0; }
+.module__head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.module__title {
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.module__meta { margin-left: auto; font-size: var(--text-micro); color: var(--faint); white-space: nowrap; }
+
+/* map module (canvas from a/map.js) */
+.module--map .map__canvas { display: block; width: 100%; height: 138px; }
+/* A's crumb is a single clipped line inside its floating panel;
+   in the rail it may wrap to two lines. */
+.module--map .map__crumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  height: auto;
+  min-height: 0;
+  margin-top: 6px;
+  padding: 0;
+  border-top: 0;
+  background: transparent;
+  font-size: 10px;
+  color: var(--faint);
+  white-space: normal;
+  overflow: visible;
+}
+
+/* selected node module — the place where long values wrap */
+.detail__path {
+  display: block;
+  padding: 5px 7px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+  word-break: break-all;
+}
+.detail__row { display: flex; align-items: center; gap: 7px; margin-top: 8px; }
+.detail__value { font-family: var(--font-mono); font-size: var(--text-mono); color: var(--syntax-number); }
+.detail__spacer { flex: 1 1 auto; }
+.detail__label {
+  margin: 10px 0 5px;
+  font-size: var(--text-micro);
+  color: var(--faint);
+  letter-spacing: 0.03em;
+}
+.detail__json {
+  margin: 0;
+  max-height: 136px;
+  overflow: auto;
+  padding: 7px 9px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.detail__hint { margin: 8px 0 0; font-size: var(--text-micro); line-height: 1.55; color: var(--faint); }
+
+/* document profile module */
+.profile__stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.stat {
+  padding: 6px 8px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.stat b {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.stat span { font-size: var(--text-micro); color: var(--faint); white-space: nowrap; }
+.typebar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--bg-panel-2); }
+.typebar__seg { display: block; height: 100%; }
+.typebar__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 7px;
+  font-size: var(--text-micro);
+  color: var(--faint);
+}
+
+/* scratch edits module */
+.editrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  min-width: 0;
+}
+.editrow__dot { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--warn); }
+.editrow__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editrow__delta { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editrow .linkbtn { flex: 0 0 auto; margin-left: auto; }
+
+/* ---------------- adjustments to direction A ---------------- */
+
+/* the JSON view does not need the full width: cap it and centre it.
+   Deep rows still scroll horizontally inside the tree. */
+.tree { max-width: var(--tree-max); margin: 0 auto; }
+
+/* the empty state starts to the right of the activity bar */
+body[data-screen="empty"] .empty { inset: var(--toolbar-h) 0 var(--status-h) var(--activity-w); }
+/* with the workbench hidden the status bar would float under the toolbar;
+   pin it to the bottom where the empty state reserves room for it. */
+body[data-screen="empty"] .statusbar {
+  position: fixed;
+  left: var(--activity-w);
+  right: 0;
+  bottom: 0;
+}
+
+/* search: the query lives in the left panel, so the toolbar keeps its normal actions */
+body[data-screen="search"] .toolbar__spacer { display: block; }
+body[data-screen="search"] [data-only="browse"] { display: flex !important; }
+body[data-screen="search"] .chip--edited { display: inline-flex; }
+
+/* ---------------- responsive ---------------- */
+
+@media (max-width: 1320px) {
+  :root { --left-panel-w: 300px; --rail-w: 284px; --tree-max: 980px; }
+}
+
+@media (max-height: 800px) {
+  .module--map .map__canvas { height: 116px; }
+  .detail__json { max-height: 108px; }
+  .profile__stats { margin-bottom: 8px; }
+}

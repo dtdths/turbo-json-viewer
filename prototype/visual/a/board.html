@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer — 方向 A 视觉板 / Graphite · Indigo</title>
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230B0D12'/%3E%3Cpath d='M8 16V10M12 16V7M16 16v-3' stroke='%237C8CFF' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="board.css">
+</head>
+<body class="board-body">
+
+<header class="bnav">
+  <a class="bnav__brand" href="index.html?screen=main&amp;theme=dark">
+    <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="2.75" y="2.75" width="18.5" height="18.5" rx="6" fill="var(--bg-accent-soft)" stroke="var(--border-strong)"/>
+      <path d="M8 15.6V10.2" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M12 15.6V7.4" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" opacity=".78"/>
+      <path d="M16 15.6v-3.2" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" opacity=".5"/>
+    </svg>
+    <span class="bnav__name">Turbo JSON Viewer</span>
+    <span class="bnav__slash">/</span>
+    <span class="bnav__sub">方向 A 视觉板</span>
+  </a>
+  <nav class="bnav__links" aria-label="方向板章节">
+    <a href="#color">色彩</a>
+    <a href="#type">字体</a>
+    <a href="#space">间距</a>
+    <a href="#shape">形状</a>
+    <a href="#row">行解剖</a>
+    <a href="#components">组件</a>
+    <a href="#map">JSON 地图</a>
+  </nav>
+  <div class="bnav__tools">
+    <span class="bnav__theme" id="boardThemeLabel">深色</span>
+    <button class="iconbtn" type="button" data-theme-toggle aria-label="切换主题（当前深色）" aria-pressed="false" title="切换深色 / 亮色主题">
+      <svg class="ic ic--sun" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M12.5 3.5l-1 1M4.5 11.5l-1 1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic ic--moon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M12.9 9.6A5.4 5.4 0 0 1 6.4 3.1 5.5 5.5 0 1 0 12.9 9.6Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<main class="board">
+
+  <!-- =========================== HERO =========================== -->
+  <section class="hero">
+    <div class="hero__copy">
+      <div class="hero__eyebrow"><span class="hero__dot" aria-hidden="true"></span>TURBO JSON VIEWER · VISUAL DIRECTION A</div>
+      <h1 class="hero__title">Graphite <span class="hero__slash">/</span> Indigo</h1>
+      <p class="hero__lede">近黑石墨底、冷灰层级、单一靛蓝强调。为一台本地只读、追求毫秒级响应的 JSON 工具定义一套安静而紧凑的语言：颜色只做两件事——区分 JSON 类型，标出当前焦点。</p>
+      <div class="hero__chips">
+        <span class="bchip">深色默认</span>
+        <span class="bchip">24px 行高</span>
+        <span class="bchip">12.5px 等宽 JSON</span>
+        <span class="bchip">系统字体</span>
+        <span class="bchip">零外部依赖</span>
+      </div>
+      <div class="hero__links">
+        <span class="hero__links-label">屏幕预览</span>
+        <a class="blink" href="index.html?screen=main&amp;theme=dark">主界面</a><span class="blink__sep">·</span>
+        <a class="blink" href="index.html?screen=empty&amp;theme=dark">空态</a><span class="blink__sep">·</span>
+        <a class="blink" href="index.html?screen=edit&amp;theme=dark">子树编辑</a><span class="blink__sep">·</span>
+        <a class="blink" href="index.html?screen=expr&amp;theme=dark">表达式</a><span class="blink__sep">·</span>
+        <a class="blink" href="index.html?screen=search&amp;theme=dark">搜索</a>
+      </div>
+    </div>
+
+    <div class="hero__specimen">
+      <div class="map map--board">
+        <div class="map__head">
+          <span class="map__title">
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.8 3.5h4.2M2.8 8h7M2.8 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              <circle cx="12.6" cy="3.5" r="1.1" fill="currentColor"/><circle cx="8.6" cy="12.5" r="1.1" fill="var(--accent)"/>
+            </svg>
+            JSON 地图
+          </span>
+          <span class="map__depth">5 层</span>
+          <span class="map__spacer"></span>
+          <button class="iconbtn iconbtn--xs" type="button" aria-label="折叠 JSON 地图" aria-expanded="true">
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10.5 8 6.5l4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div class="map__body">
+          <canvas class="map__canvas" data-json-map aria-hidden="true"></canvas>
+          <div class="map__crumb">
+            <span class="map__crumb-item">root</span><span class="map__sep">›</span><span class="map__crumb-item">data</span><span class="map__sep">›</span><span class="map__crumb-item">hotel_list[1234]</span><span class="map__sep">›</span><span class="map__crumb-item">rooms[5]</span><span class="map__sep">›</span><span class="map__crumb-item is-current">price</span>
+          </div>
+        </div>
+      </div>
+      <div class="hero__legend" aria-hidden="true">
+        <span><i style="background:var(--syntax-key)"></i>key</span>
+        <span><i style="background:var(--syntax-string)"></i>string</span>
+        <span><i style="background:var(--syntax-number)"></i>number</span>
+        <span><i style="background:var(--syntax-boolean)"></i>boolean</span>
+        <span><i style="background:var(--syntax-null)"></i>null</span>
+        <span><i style="background:var(--accent)"></i>focus</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== 01 COLOR =========================== -->
+  <section class="sec" id="color">
+    <div class="sec__aside">
+      <span class="sec__num">01</span>
+      <h2 class="sec__title">色彩</h2>
+      <p class="sec__note">石墨中性色承担全部结构，靛蓝只出现在焦点与可交互处。语法色是全界面唯一的多色区域。</p>
+    </div>
+    <div class="sec__body">
+      <h3 class="grp">表面 / Surfaces</h3>
+      <div class="swatches">
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--bg-app)"></span><figcaption><code>--bg-app</code><span class="sw__hex">#0B0D12 · #F7F8FB</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--bg-panel)"></span><figcaption><code>--bg-panel</code><span class="sw__hex">#11141B · #FFFFFF</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--bg-panel-2)"></span><figcaption><code>--bg-panel-2</code><span class="sw__hex">#161A23 · #F1F3F8</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--bg-elevated)"></span><figcaption><code>--bg-elevated</code><span class="sw__hex">#1A1F2B · #FFFFFF</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--border)"></span><figcaption><code>--border</code><span class="sw__hex">#232937 · #E3E7EF</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--text)"></span><figcaption><code>--text</code><span class="sw__hex">#E7EAF0 · #1B2030</span></figcaption></figure>
+      </div>
+
+      <h3 class="grp">强调与语义 / Accent &amp; semantics</h3>
+      <div class="swatches swatches--six">
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--accent)"></span><figcaption><code>--accent</code><span class="sw__hex">#7C8CFF · #4F63E8</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--accent-text)"></span><figcaption><code>--accent-text</code><span class="sw__hex">#A9B4FF · #4053D6</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--muted)"></span><figcaption><code>--muted</code><span class="sw__hex">#8B93A7 · #626C84</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--danger)"></span><figcaption><code>--danger</code><span class="sw__hex">#FF7A85 · #CF3040</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--warn)"></span><figcaption><code>--warn</code><span class="sw__hex">#E9BE7A · #9A6414</span></figcaption></figure>
+        <figure class="sw"><span class="sw__chip" style="--sw: var(--success)"></span><figcaption><code>--success</code><span class="sw__hex">#6FD3B5 · #0C7B5A</span></figcaption></figure>
+      </div>
+
+      <h3 class="grp">语法 / Syntax <span class="grp__hint">唯一的多色区域 · 深色值 / 亮色值</span></h3>
+      <div class="syntax-grid">
+        <div class="codecard" aria-label="JSON 语法配色示例">
+          <div class="codecard__head"><span>hotel.json</span><span>12.5px · 20px 行高</span></div>
+          <div class="codecard__body">
+            <div class="cl"><span class="cl__ln">1</span><span class="cl__code"><span class="tok-punct">{</span></span></div>
+            <div class="cl"><span class="cl__ln">2</span><span class="cl__code">  <span class="tok-key">"source"</span><span class="tok-punct">:</span> <span class="tok-str">"hotel_catalog.json"</span><span class="tok-punct">,</span></span></div>
+            <div class="cl"><span class="cl__ln">3</span><span class="cl__code">  <span class="tok-key">"hotel_list"</span><span class="tok-punct">:</span> <span class="tok-punct">[…]</span><span class="tok-punct">,</span></span></div>
+            <div class="cl"><span class="cl__ln">4</span><span class="cl__code">  <span class="tok-key">"rooms"</span><span class="tok-punct">:</span> <span class="tok-num">12</span><span class="tok-punct">,</span></span></div>
+            <div class="cl"><span class="cl__ln">5</span><span class="cl__code">  <span class="tok-key">"price"</span><span class="tok-punct">:</span> <span class="tok-num">2380</span><span class="tok-punct">,</span></span></div>
+            <div class="cl"><span class="cl__ln">6</span><span class="cl__code">  <span class="tok-key">"breakfast"</span><span class="tok-punct">:</span> <span class="tok-bool">true</span><span class="tok-punct">,</span></span></div>
+            <div class="cl"><span class="cl__ln">7</span><span class="cl__code">  <span class="tok-key">"note"</span><span class="tok-punct">:</span> <span class="tok-null">null</span></span></div>
+            <div class="cl"><span class="cl__ln">8</span><span class="cl__code"><span class="tok-punct">}</span></span></div>
+          </div>
+        </div>
+        <ul class="syntax-list">
+          <li><span class="sdot" style="background:var(--syntax-key)"></span><code>--syntax-key</code><span class="syntax-list__label">键名 · 冷灰蓝</span><span class="syntax-list__hex">#A9B8D8 · #4B5A7A</span></li>
+          <li><span class="sdot" style="background:var(--syntax-string)"></span><code>--syntax-string</code><span class="syntax-list__label">字符串 · 青绿</span><span class="syntax-list__hex">#6FD3B5 · #0C7B5A</span></li>
+          <li><span class="sdot" style="background:var(--syntax-number)"></span><code>--syntax-number</code><span class="syntax-list__label">数字 · 琥珀</span><span class="syntax-list__hex">#E3B778 · #96610F</span></li>
+          <li><span class="sdot" style="background:var(--syntax-boolean)"></span><code>--syntax-boolean</code><span class="syntax-list__label">布尔 · 紫</span><span class="syntax-list__hex">#B49CFF · #6D4BD6</span></li>
+          <li><span class="sdot" style="background:var(--syntax-null)"></span><code>--syntax-null</code><span class="syntax-list__label">null · 灰</span><span class="syntax-list__hex">#7B8496 · #667086</span></li>
+          <li><span class="sdot" style="background:var(--syntax-punct)"></span><code>--syntax-punct</code><span class="syntax-list__label">标点 · 暗灰</span><span class="syntax-list__hex">#737C8E · #667086</span></li>
+        </ul>
+      </div>
+
+      <h3 class="grp">状态底色 / State</h3>
+      <div class="state-row">
+        <div class="state-card">
+          <div class="row is-selected"><span class="row__guides"><i></i><i></i></span><span class="row__caret is-leaf"></span><span class="row__key">price</span><span class="row__colon">:</span><span class="row__value"><span class="tok-num">2380</span></span><span class="row__count">选中行</span></div>
+          <span class="state-card__label"><code>--bg-selected</code> 14% 靛蓝 + 2px 左条</span>
+        </div>
+        <div class="state-card">
+          <div class="row is-hit"><span class="row__guides"><i></i><i></i></span><span class="row__caret is-leaf"></span><span class="row__key">price<mark class="hl">_note</mark></span><span class="row__colon">:</span><span class="row__value"><span class="tok-str">"含税价"</span></span></div>
+          <span class="state-card__label"><code>--hit-bg</code> 暖黄底 + 1px 内描边</span>
+        </div>
+        <div class="state-card">
+          <div class="banner banner--demo"><svg class="banner__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.4 14 13H2L8 2.4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.2v3.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".75" fill="currentColor"/></svg><span class="banner__text"><strong>已修复 3 处</strong></span></div>
+          <span class="state-card__label"><code>--warn-bg</code> 修复提示条 · 非错误</span>
+        </div>
+      </div>
+
+      <h3 class="grp">双主题对照 / Theme parity</h3>
+      <div class="duo">
+        <div class="duo__pane" data-theme="dark">
+          <div class="duo__head"><span>深色 · 默认</span><code>#0B0D12</code></div>
+          <div class="duo__rows">
+            <div class="drow"><span class="drow__key">name</span><span class="drow__punct">:</span><span class="drow__str">"杭州西湖国宾馆"</span></div>
+            <div class="drow is-sel"><span class="drow__key">price</span><span class="drow__punct">:</span><span class="drow__num">2380</span><span class="drow__count">[12]</span></div>
+            <div class="drow"><span class="drow__key">note</span><span class="drow__punct">:</span><span class="drow__null">null</span></div>
+          </div>
+          <div class="duo__foot">低眩光 · 长时间阅读优先</div>
+        </div>
+        <div class="duo__pane" data-theme="light">
+          <div class="duo__head"><span>亮色 · 完整</span><code>#F7F8FB</code></div>
+          <div class="duo__rows">
+            <div class="drow"><span class="drow__key">name</span><span class="drow__punct">:</span><span class="drow__str">"杭州西湖国宾馆"</span></div>
+            <div class="drow is-sel"><span class="drow__key">price</span><span class="drow__punct">:</span><span class="drow__num">2380</span><span class="drow__count">[12]</span></div>
+            <div class="drow"><span class="drow__key">note</span><span class="drow__punct">:</span><span class="drow__null">null</span></div>
+          </div>
+          <div class="duo__foot">同一 token 名 · 对比度 ≥ 4.5:1</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== 02 TYPE =========================== -->
+  <section class="sec" id="type">
+    <div class="sec__aside">
+      <span class="sec__num">02</span>
+      <h2 class="sec__title">字体 / 字号</h2>
+      <p class="sec__note">系统 UI 字体负责操作层，等宽字体负责数据层。仅四个 UI 字号 + 两个等宽字号，靠字重与颜色建立层级。</p>
+    </div>
+    <div class="sec__body">
+      <div class="type-table">
+        <div class="type-row type-row--head"><span>角色</span><span>样例</span><span>规格</span></div>
+        <div class="type-row"><span class="type-role">Display<br><em>空态标题</em></span><span class="type-sample t-display">拖入 JSON，毫秒级开始查看</span><span class="type-spec">system-ui · 22 / 1.25 · 600</span></div>
+        <div class="type-row"><span class="type-role">Title<br><em>面板标题</em></span><span class="type-sample t-title">JSON 地图</span><span class="type-spec">system-ui · 16 / 1.3 · 600</span></div>
+        <div class="type-row"><span class="type-role">Body<br><em>默认 UI</em></span><span class="type-sample t-body">搜索、过滤与临时编辑全部在本地完成。</span><span class="type-spec">system-ui · 13 / 1.45 · 400</span></div>
+        <div class="type-row"><span class="type-role">Small<br><em>状态 / 徽标</em></span><span class="type-sample t-small">已临时修改 1 处 · 2,958,550 节点</span><span class="type-spec">system-ui · 12 / 1.4 · 500</span></div>
+        <div class="type-row"><span class="type-role">Mono<br><em>JSON / 路径</em></span><span class="type-sample t-mono">data.hotel_list[1234].rooms[5].price</span><span class="type-spec">ui-monospace · 12.5 / 24 · 400</span></div>
+        <div class="type-row"><span class="type-role">Micro<br><em>刻度 / kbd</em></span><span class="type-sample t-micro">2,958,550 个节点 · 37,189 处命中 · ⌘K</span><span class="type-spec">ui-monospace · 10 / 1.2 · 500</span></div>
+      </div>
+
+      <div class="stack-row">
+        <div class="stack-card">
+          <span class="stack-card__label">UI 字体栈</span>
+          <code class="stack-card__code">system-ui, -apple-system, "SF Pro Text",<br>"PingFang SC", "Segoe UI", sans-serif</code>
+          <span class="stack-card__note">中英混排由苹方 / 系统 UI 承接，不加载 Web 字体。</span>
+        </div>
+        <div class="stack-card">
+          <span class="stack-card__label">等宽字体栈</span>
+          <code class="stack-card__code">ui-monospace, "SF Mono", SFMono-Regular,<br>Menlo, Consolas, monospace</code>
+          <span class="stack-card__note">JSON、路径、数字一律等宽；tab 宽度 2 空格。</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== 03 SPACE =========================== -->
+  <section class="sec" id="space">
+    <div class="sec__aside">
+      <span class="sec__num">03</span>
+      <h2 class="sec__title">间距 / 布局</h2>
+      <p class="sec__note">4px 基线；行高 24px 是全局节奏。工具栏 48、修复条 32、状态栏 26，让内容区在 1440×900 与 1280×720 下都完整可用。</p>
+    </div>
+    <div class="sec__body">
+      <h3 class="grp">间距刻度 / Spacing scale</h3>
+      <ul class="space-list">
+        <li><span class="space-bar" style="--h:8"></span><code>--sp-1</code><span class="space-px">2</span></li>
+        <li><span class="space-bar" style="--h:12"></span><code>--sp-2</code><span class="space-px">4</span></li>
+        <li><span class="space-bar" style="--h:18"></span><code>--sp-3</code><span class="space-px">6</span></li>
+        <li><span class="space-bar" style="--h:24"></span><code>--sp-4</code><span class="space-px">8</span></li>
+        <li><span class="space-bar" style="--h:34"></span><code>--sp-5</code><span class="space-px">12</span></li>
+        <li><span class="space-bar" style="--h:44"></span><code>--sp-6</code><span class="space-px">16</span></li>
+        <li><span class="space-bar" style="--h:52"></span><code>--sp-7</code><span class="space-px">20</span></li>
+        <li><span class="space-bar" style="--h:60"></span><code>--sp-8</code><span class="space-px">24</span></li>
+        <li><span class="space-bar" style="--h:76"></span><code>--sp-9</code><span class="space-px">32</span></li>
+        <li><span class="space-bar" style="--h:92"></span><code>--sp-10</code><span class="space-px">40</span></li>
+      </ul>
+
+      <h3 class="grp">关键尺寸 / Layout metrics</h3>
+      <div class="metrics">
+        <div class="metric"><span class="metric__num">48<em>px</em></span><span class="metric__label">顶部工具栏</span><span class="metric__bar" style="width:100%"></span></div>
+        <div class="metric"><span class="metric__num">32<em>px</em></span><span class="metric__label">修复提示条</span><span class="metric__bar" style="width:66.6%"></span></div>
+        <div class="metric"><span class="metric__num">26<em>px</em></span><span class="metric__label">底部状态栏</span><span class="metric__bar" style="width:54.1%"></span></div>
+        <div class="metric"><span class="metric__num">24<em>px</em></span><span class="metric__label">树行高</span><span class="metric__bar" style="width:50%"></span></div>
+        <div class="metric"><span class="metric__num">16<em>px</em></span><span class="metric__label">每级缩进</span><span class="metric__bar" style="width:33.3%"></span></div>
+        <div class="metric"><span class="metric__num">264<em>×204</em></span><span class="metric__label">JSON 地图面板</span><span class="metric__bar" style="width:82%"></span></div>
+      </div>
+      <p class="fineprint">树行 24px = 12.5px 等宽 × 1.92；800px 高的内容区约容纳 33 行。1280×720 下仍保留 25 行可读数据 + 24px 行高，不做响应式降级。</p>
+    </div>
+  </section>
+
+  <!-- =========================== 04 SHAPE =========================== -->
+  <section class="sec" id="shape">
+    <div class="sec__aside">
+      <span class="sec__num">04</span>
+      <h2 class="sec__title">圆角 / 阴影</h2>
+      <p class="sec__note">边框负责结构，阴影只负责“浮起来”。除弹层与 JSON 地图外，几乎不使用大阴影；发光只给主按钮。</p>
+    </div>
+    <div class="sec__body">
+      <h3 class="grp">圆角 / Radius</h3>
+      <div class="radius-row">
+        <div class="radius-item"><span class="radius-box" style="border-radius:4px"></span><code>--radius-xs</code><span>4 · kbd / 标签</span></div>
+        <div class="radius-item"><span class="radius-box" style="border-radius:6px"></span><code>--radius-sm</code><span>6 · 按钮 / 行操作</span></div>
+        <div class="radius-item"><span class="radius-box" style="border-radius:8px"></span><code>--radius-md</code><span>8 · 输入 / 菜单</span></div>
+        <div class="radius-item"><span class="radius-box" style="border-radius:10px"></span><code>--radius-lg</code><span>10 · JSON 地图</span></div>
+        <div class="radius-item"><span class="radius-box" style="border-radius:14px"></span><code>--radius-xl</code><span>14 · 编辑弹层</span></div>
+      </div>
+
+      <h3 class="grp">阴影 / Elevation</h3>
+      <div class="elev-row">
+        <div class="elev-card" style="box-shadow: var(--shadow-sm)"><span>shadow-sm</span><em>行操作浮条 · 单选态</em></div>
+        <div class="elev-card" style="box-shadow: var(--shadow-md)"><span>shadow-md</span><em>补全浮层 · 提示</em></div>
+        <div class="elev-card" style="box-shadow: var(--shadow-lg)"><span>shadow-lg</span><em>JSON 地图 · 编辑弹层</em></div>
+      </div>
+
+      <h3 class="grp">焦点环 / Focus</h3>
+      <div class="focus-row">
+        <button class="btn" type="button" style="box-shadow: var(--focus-ring)">键盘焦点环</button>
+        <span class="focus-note">2px 背景色 + 2px 靛蓝外环；所有可聚焦元素可见，不做 outline: none。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== 05 ROW =========================== -->
+  <section class="sec" id="row">
+    <div class="sec__aside">
+      <span class="sec__num">05</span>
+      <h2 class="sec__title">行解剖</h2>
+      <p class="sec__note">树行是产品的核心像素：24px 高、16px 一级缩进、折叠容器保留可读预览。选中态用低透明靛蓝，不夺走类型色。</p>
+    </div>
+    <div class="sec__body">
+      <div class="anatomy">
+        <div class="anatomy__frame" role="img" aria-label="树行解剖示例：rooms 数组、折叠对象、选中数字行、搜索命中行与省略行">
+          <div class="row">
+            <span class="row__guides"><i></i></span><span class="anmark">1</span>
+            <span class="row__caret is-open"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6.3 4.2 4 3.8-4 3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="anmark">2</span>
+            <span class="row__key">rooms</span><span class="anmark">3</span>
+            <span class="row__colon">:</span>
+            <span class="row__value"><span class="tok-punct">[…]</span></span><span class="anmark">4</span>
+            <span class="row__count row__count--arr">[12]</span><span class="anmark">5</span>
+          </div>
+          <div class="row">
+            <span class="row__guides"><i></i><i></i></span>
+            <span class="row__caret"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6.3 4.2 4 3.8-4 3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="row__key row__key--idx">[5]</span>
+            <span class="row__colon">:</span>
+            <span class="row__value"><span class="tok-punct">{…}</span></span>
+            <span class="row__count">8 项</span>
+            <span class="row__preview">"type": "湖景套房", "price": 2380, "area": 68 …</span><span class="anmark">6</span>
+          </div>
+          <div class="row is-selected">
+            <span class="row__guides"><i></i><i></i></span>
+            <span class="row__caret is-leaf"></span>
+            <span class="row__key">price</span>
+            <span class="row__colon">:</span>
+            <span class="row__value"><span class="tok-num">2380</span></span>
+            <span class="row__actions">
+              <button type="button" tabindex="-1" aria-label="复制子树 JSON"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.6" y="5.6" width="6.8" height="6.8" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M10.4 5.6V4.3c0-.7-.6-1.3-1.3-1.3H4.3c-.7 0-1.3.6-1.3 1.3v4.8c0 .7.6 1.3 1.3 1.3h1.3" fill="none" stroke="currentColor" stroke-width="1.25"/></svg></button>
+              <button type="button" tabindex="-1" aria-label="编辑此节点 JSON"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.7 3 13 5.3 6.6 11.7l-2.8.6.6-2.8L10.7 3Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg></button>
+            </span><span class="anmark">7</span>
+          </div>
+          <div class="row is-hit">
+            <span class="row__guides"><i></i><i></i></span>
+            <span class="row__caret is-leaf"></span>
+            <span class="row__key">price<mark class="hl">_note</mark></span>
+            <span class="row__colon">:</span>
+            <span class="row__value"><span class="tok-str">"含税价 · 含双早"</span></span><span class="anmark">8</span>
+          </div>
+          <div class="row row--ellipsis">
+            <span class="row__guides"><i></i><i></i><i></i></span>
+            <span class="row__caret is-leaf"></span>
+            <span class="row__ellipsis-text">…&nbsp;&nbsp;省略 1,231 项（[2] … [1232]）</span>
+          </div>
+        </div>
+
+        <ol class="anatomy__legend">
+          <li><b>1</b><span><strong>缩进引导线</strong>每级 16px，1px <code>--border-subtle</code>；深度可一眼数清。</span></li>
+          <li><b>2</b><span><strong>折叠箭头</strong>11px chevron，展开旋转 90°；标量行隐藏占位保持对齐。</span></li>
+          <li><b>3</b><span><strong>键名</strong>冷灰蓝；数组下标与数字键改用更暗的 <code>--syntax-index</code>。</span></li>
+          <li><b>4</b><span><strong>值 / 类型色</strong>字符串青绿、数字琥珀、布尔紫、null 灰；颜色之外仍有文本差异。</span></li>
+          <li><b>5</b><span><strong>计数</strong>数组 <code>[12]</code>、对象「8 项」；折叠时保留首字段预览。</span></li>
+          <li><b>6</b><span><strong>折叠预览</strong>一行内给出 2–3 个字段，减少无谓展开；长内容省略。</span></li>
+          <li><b>7</b><span><strong>操作</strong>hover 出现复制 / 编辑浮条；选中行内联常显，避免被 JSON 地图遮挡。</span></li>
+          <li><b>8</b><span><strong>搜索命中</strong>暖黄底 + 内描边，叠加在类型色之上，不替换类型信息。</span></li>
+        </ol>
+      </div>
+      <p class="fineprint">选中行：<code>--bg-selected</code>（靛蓝 14%）+ 2px 左条；同一节点在状态栏路径与 JSON 地图中同步高亮。省略行用斜体 + faint，明确「还有内容但未展开」。</p>
+    </div>
+  </section>
+
+  <!-- =========================== 06 COMPONENTS =========================== -->
+  <section class="sec" id="components">
+    <div class="sec__aside">
+      <span class="sec__num">06</span>
+      <h2 class="sec__title">组件状态</h2>
+      <p class="sec__note">全部原生元素手写，无组件库。按钮克制、输入聚焦明确、菜单与补全使用同一套浮层语言。</p>
+    </div>
+    <div class="sec__body">
+      <div class="comp-grid">
+
+        <div class="comp">
+          <h4>按钮 / Buttons</h4>
+          <div class="comp__demo comp__demo--wrap">
+            <button class="btn btn--primary" type="button">运行 <kbd>⌘↵</kbd></button>
+            <button class="btn" type="button">复制路径</button>
+            <button class="btn btn--ghost" type="button">取消</button>
+            <button class="btn btn--sm" type="button">查看摘要</button>
+            <button class="btn" type="button" disabled>应用 <kbd>⌘↵</kbd></button>
+            <button class="iconbtn" type="button" aria-label="设置">
+              <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.9v1.4M8 12.7v1.4M1.9 8h1.4M12.7 8h1.4M3.7 3.7l1 1M11.3 11.3l1 1M12.3 3.7l-1 1M4.7 11.3l-1 1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+            </button>
+            <span class="comp__note">主按钮仅 1 个/屏（运行、应用）；危险操作只出现在菜单里。</span>
+          </div>
+        </div>
+
+        <div class="comp">
+          <h4>输入 / Inputs</h4>
+          <div class="comp__demo comp__demo--col">
+            <label class="bfield">
+              <span class="bfield__label">搜索</span>
+              <span class="binput-wrap"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.4 10.4 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><input class="binput" type="text" value="" placeholder="键、值或路径…" aria-label="搜索示例"></span>
+            </label>
+            <label class="bfield is-focus">
+              <span class="bfield__label">聚焦 · 带命中计数</span>
+              <span class="binput-wrap"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.4 10.4 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><input class="binput" type="text" value="price" aria-label="聚焦输入示例"><span class="binput__count">37,189</span></span>
+            </label>
+            <label class="bfield is-error">
+              <span class="bfield__label">错误</span>
+              <span class="binput-wrap"><input class="binput" type="text" value='"area": 68' aria-label="错误输入示例"><span class="bfield__msg">第 4 行 · 期望逗号</span></span>
+            </label>
+            <div class="expr-demo">
+              <span class="expr__prompt">ƒ</span>
+              <code>data.hotel_list.filter(item =&gt; item.price &gt; 1000)</code>
+              <span class="expr__caret"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="comp">
+          <h4>菜单 / Context menu</h4>
+          <div class="comp__demo">
+            <div class="menu">
+              <button class="menu__item" type="button"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.6" y="5.6" width="6.8" height="6.8" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M10.4 5.6V4.3c0-.7-.6-1.3-1.3-1.3H4.3c-.7 0-1.3.6-1.3 1.3v4.8c0 .7.6 1.3 1.3 1.3h1.3" fill="none" stroke="currentColor" stroke-width="1.25"/></svg>复制子树 JSON<kbd>⌘C</kbd></button>
+              <button class="menu__item" type="button"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 3.6h3.2M11.6 3.6h-1.5M8 1.4v5.2M8 9.4v5.2M4.4 12.4h3.2M11.6 12.4h-1.5" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>复制路径<kbd>⇧⌘P</kbd></button>
+              <button class="menu__item is-hover" type="button"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.7 3 13 5.3 6.6 11.7l-2.8.6.6-2.8L10.7 3Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>编辑此节点 JSON<kbd>F2</kbd></button>
+              <div class="menu__sep" role="separator"></div>
+              <button class="menu__item" type="button"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M4.5 4.5v8h7v-8" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>折叠全部<kbd>⌥←</kbd></button>
+              <button class="menu__item menu__item--danger" type="button"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v6.2M8 11.6v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.25"/></svg>丢弃临时修改</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="comp">
+          <h4>状态 / Feedback</h4>
+          <div class="comp__demo comp__demo--col">
+            <span class="bddrow">
+              <span class="chip chip--edited"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 2.9 13 5.1 6.4 11.7l-2.7.5.5-2.7 6.6-6.6Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>已临时修改 1 处</span>
+              <span class="chip chip--type">object</span>
+              <span class="chip">只读</span>
+            </span>
+            <span class="bddrow">
+              <span class="dot dot--ok"></span><span class="bdd__txt">运行完成 · 42 ms · 1,284 条结果</span>
+            </span>
+            <span class="bddrow">
+              <span class="dot" style="background:var(--warn)"></span><span class="bdd__txt">已修复 3 处 · 查看摘要</span>
+              <span class="bddrow__spacer"></span>
+              <span class="bdd__faint">修复不猜测内容</span>
+            </span>
+            <div class="banner banner--demo" role="status">
+              <svg class="banner__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.4 14 13H2L8 2.4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.2v3.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".75" fill="currentColor"/></svg>
+              <span class="banner__text"><strong>来源文本不完整，已修复 3 处</strong><span class="banner__detail">补全 2 个缺失括号</span></span>
+              <button class="btn btn--sm banner__action" type="button">查看摘要</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="comp">
+          <h4>选择控件 / Controls</h4>
+          <div class="comp__demo comp__demo--wrap">
+            <span class="switch is-on" role="switch" aria-checked="true" tabindex="0"><i></i><span>区分大小写</span></span>
+            <span class="switch" role="switch" aria-checked="false" tabindex="0"><i></i><span>正则</span></span>
+            <span class="checkbox is-on" role="checkbox" aria-checked="true" tabindex="0"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8.2 2.7 2.7L12 5.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>自动展开命中</span>
+            <span class="checkbox" role="checkbox" aria-checked="false" tabindex="0"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 8.2 2.7 2.7L12 5.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>仅匹配键名</span>
+            <span class="seg"><button class="is-on" type="button">全部</button><button type="button">键名</button><button type="button">值</button></span>
+          </div>
+        </div>
+
+        <div class="comp">
+          <h4>提示 / Tooltip</h4>
+          <div class="comp__demo comp__demo--col">
+            <div class="tipdemo">
+              <span class="tipdemo__target">悬停祖先行</span>
+              <div class="tip" role="tooltip">
+                <span class="tip__path">data.hotel_list[1234].rooms[5]</span>
+                <span class="tip__meta">object · 8 项 · 634 B</span>
+              </div>
+            </div>
+            <span class="comp__note">延迟 400ms 出现，跟随指针，最大宽度 360px；路径可复制。</span>
+          </div>
+        </div>
+
+        <div class="comp comp--wide">
+          <h4>弹层 / Dialog</h4>
+          <div class="comp__demo">
+            <div class="dialog-demo" role="img" aria-label="子树编辑弹层示例：720×520，含路径、语法高亮、错误行与底部操作">
+              <div class="dialog-demo__head">
+                <span class="dialog-demo__title">编辑此节点 JSON</span>
+                <span class="chip chip--type">object</span>
+                <span class="dialog-demo__meta">412 B · 8 行</span>
+                <span class="dialog-demo__spacer"></span>
+                <button class="iconbtn iconbtn--xs" type="button" aria-label="关闭编辑器示例">
+                  <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <div class="dialog-demo__crumb">root › data › hotel_list[1234] › rooms[5] <span>数组元素 · 父级 rooms 共 12 项</span></div>
+              <div class="dialog-demo__code">
+                <div><span class="tok-key">"price"</span><span class="tok-punct">:</span> <span class="tok-num">2380</span><span class="tok-punct">,</span></div>
+                <div class="is-error"><span class="tok-key is-err">"area"</span><span class="tok-punct">:</span> <span class="tok-num">68</span><span class="tok-punct">,</span></div>
+                <div><span class="tok-key">"breakfast"</span><span class="tok-punct">:</span> <span class="tok-bool">true</span></div>
+              </div>
+              <div class="dialog-demo__err"><span>第 2 行 · 第 3 列：期望 , 或 }，当前输入未应用。</span><span>Apply 已禁用</span></div>
+              <div class="dialog-demo__foot">
+                <span class="dialog-demo__note">仅临时修改，不写回原文件</span>
+                <span class="dialog-demo__spacer"></span>
+                <button class="btn btn--ghost btn--sm" type="button">恢复当前值</button>
+                <button class="btn btn--sm" type="button">取消</button>
+                <button class="btn btn--primary btn--sm" type="button" disabled>应用 <kbd>⌘↵</kbd></button>
+              </div>
+            </div>
+            <span class="comp__note">720 × 520 · 遮罩 rgba(5,7,11,.66) + blur(3px) · 错误行整行 danger 底 + 波浪下划线；Apply 禁用，不产生修改。</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== 07 MAP =========================== -->
+  <section class="sec" id="map">
+    <div class="sec__aside">
+      <span class="sec__num">07</span>
+      <h2 class="sec__title">JSON 地图</h2>
+      <p class="sec__note">v1.1 的 Canvas 层级塔：跟随选中显示 root → 当前节点，附当前层前后各 2 个兄弟 key 的刻度。</p>
+    </div>
+    <div class="sec__body">
+      <div class="map-demo">
+        <div class="map map--board">
+          <div class="map__head">
+            <span class="map__title">
+              <svg class="ic" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2.8 3.5h4.2M2.8 8h7M2.8 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                <circle cx="12.6" cy="3.5" r="1.1" fill="currentColor"/><circle cx="8.6" cy="12.5" r="1.1" fill="var(--accent)"/>
+              </svg>
+              JSON 地图
+            </span>
+            <span class="map__depth">5 层</span>
+            <span class="map__spacer"></span>
+            <button class="iconbtn iconbtn--xs" type="button" aria-label="折叠 JSON 地图" aria-expanded="true">
+              <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10.5 8 6.5l4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <div class="map__body">
+            <canvas class="map__canvas" data-json-map aria-hidden="true"></canvas>
+            <div class="map__crumb" aria-live="polite">
+              <span class="map__crumb-item">root</span><span class="map__sep">›</span><span class="map__crumb-item">data</span><span class="map__sep">›</span><span class="map__crumb-item">hotel_list[1234]</span><span class="map__sep">›</span><span class="map__crumb-item">rooms[5]</span><span class="map__sep">›</span><span class="map__crumb-item is-current">price</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="map-demo__notes">
+          <h3 class="grp">构成</h3>
+          <ul class="notes">
+            <li><b>头部</b><span>标题 / 深度徽标 / 折叠按钮；面板 264 × 204，圆角 10、shadow-lg。</span></li>
+            <li><b>层级塔</b><span>每层一行 20px；数组追加 <code>[1234/5000]</code>；连接线 1px border。</span></li>
+            <li><b>当前节点</b><span>靛蓝 10% 底 + 2px 左条 + ◉；右侧显示类型色值预览。</span></li>
+            <li><b>兄弟刻度</b><span>当前层前后各 2 个 key，当前项加粗 + 下划线，其余 faint。</span></li>
+            <li><b>无障碍</b><span>Canvas <code>aria-hidden</code>，底部等价文本面包屑并 <code>aria-live="polite"</code>。</span></li>
+            <li><b>折叠态</b><span>收为 40 × 40 图标按钮，保留在右下角。</span></li>
+          </ul>
+          <div class="collapsed-demo">
+            <div class="map is-collapsed map--board map--collapsed">
+              <div class="map__head">
+                <button class="iconbtn iconbtn--xs" type="button" aria-label="展开 JSON 地图" aria-expanded="false">
+                  <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10.5 8 6.5l4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+            <span class="collapsed-demo__label">折叠态 40 × 40</span>
+          </div>
+        </div>
+      </div>
+      <p class="fineprint">地图不显示全文档概览（v1.1 范围），不参与主树滚动重绘；只在选中、主题、尺寸变化时重绘。</p>
+    </div>
+  </section>
+
+  <footer class="bfoot">
+    <span>方向 A · Graphite / Indigo — Turbo JSON Viewer 视觉方向板 v0.1</span>
+    <span class="bfoot__meta">纯静态 HTML / CSS / JS · 零网络请求 · 系统字体 · CSS 变量 tokens</span>
+    <a class="blink" href="index.html?screen=main&amp;theme=dark">打开主界面 →</a>
+  </footer>
+
+</main>
+
+<script src="map.js"></script>
+<script src="board.js"></script>
+</body>
+</html>

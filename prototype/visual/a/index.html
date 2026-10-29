@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer — 方向 A / Graphite · Indigo</title>
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230B0D12'/%3E%3Cpath d='M8 16V10M12 16V7M16 16v-3' stroke='%237C8CFF' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body data-screen="main">
+
+<div class="app" id="app">
+
+  <!-- ======================= TOP TOOLBAR (48px) ======================= -->
+  <header class="toolbar" aria-label="主工具栏">
+    <div class="brand" aria-label="Turbo JSON Viewer">
+      <svg class="brand__mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.75" y="2.75" width="18.5" height="18.5" rx="6" fill="var(--bg-accent-soft)" stroke="var(--border-strong)"/>
+        <path d="M8 15.6V10.2" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round"/>
+        <path d="M12 15.6V7.4" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" opacity=".78"/>
+        <path d="M16 15.6v-3.2" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" opacity=".5"/>
+      </svg>
+      <span class="brand__name">Turbo JSON Viewer</span>
+      <span class="brand__tag">BETA</span>
+    </div>
+
+    <span class="toolbar__rule" data-only="doc" aria-hidden="true"></span>
+
+    <button class="file-chip" type="button" data-only="doc" aria-label="当前文档：hotel_catalog.json，50.0 MB。点击切换文档">
+      <svg class="ic ic--file" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M4 2.2h4.6L12.8 6v7.6c0 .5-.4.9-.9.9H4.9a.9.9 0 0 1-.9-.9V3.1c0-.5.4-.9.9-.9Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+        <path d="M8.4 2.5v3.2c0 .4.3.7.7.7h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      </svg>
+      <span class="file-chip__name">hotel_catalog.json</span>
+      <span class="file-chip__meta">50.0 MB</span>
+      <svg class="ic ic--chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <span class="chip chip--edited" data-only="doc" title="当前会话内有 1 处临时修改，未写回原文件">
+      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 2.9 13 5.1 6.4 11.7l-2.7.5.5-2.7 6.6-6.6Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      已临时修改 1 处
+    </span>
+
+    <div class="toolbar__spacer"></div>
+
+    <!-- actions visible when browsing a document (hidden in search mode) -->
+    <div class="toolbar__actions" data-only="browse">
+      <button class="btn btn--ghost" type="button">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7M5 7l3 3 3-3M3 11.6v1.3c0 .6.5 1.1 1.1 1.1h7.8c.6 0 1.1-.5 1.1-1.1v-1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        导入
+      </button>
+      <button class="btn btn--ghost" type="button">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.4 10.4 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        搜索<kbd>⌘K</kbd>
+      </button>
+      <button class="btn btn--ghost" type="button">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 3.6c-1.3 0-1.9.8-1.9 2v1.5c0 .8-.5 1.3-1.3 1.4.8.1 1.3.6 1.3 1.4v1.5c0 1.2.6 2 1.9 2M10.3 3.6c1.3 0 1.9.8 1.9 2v1.5c0 .8.5 1.3 1.3 1.4-.8.1-1.3.6-1.3 1.4v1.5c0 1.2-.6 2-1.9 2" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        表达式<kbd>⌘E</kbd>
+      </button>
+    </div>
+
+    <!-- search mode: inline query field -->
+    <div class="searchmode" role="search" aria-label="搜索文档">
+      <div class="searchfield">
+        <svg class="ic searchfield__icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7.1" cy="7.1" r="4.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.4 10.4 3 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <input class="searchfield__input" id="searchInput" type="text" value="price" spellcheck="false" autocomplete="off" aria-label="搜索关键词，当前 price">
+        <span class="searchfield__count" id="searchCount"><b>37,189</b> 处命中</span>
+        <span class="searchfield__navs">
+          <button class="iconbtn iconbtn--sm" id="searchPrev" type="button" aria-label="上一个命中">
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 9.5 8 6l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="iconbtn iconbtn--sm" id="searchNext" type="button" aria-label="下一个命中">
+            <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </span>
+        <span class="searchfield__rule" aria-hidden="true"></span>
+        <button class="toggle is-on" type="button" aria-pressed="true" title="区分大小写">Aa</button>
+        <button class="toggle" type="button" aria-pressed="false" title="使用正则表达式">.*</button>
+        <button class="toggle" type="button" aria-pressed="false" title="仅匹配键名">键</button>
+        <button class="iconbtn iconbtn--sm searchfield__close" type="button" data-nav="main" aria-label="关闭搜索，返回树视图">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <span class="toolbar__rule toolbar__rule--end" aria-hidden="true"></span>
+
+    <button class="iconbtn" type="button" data-theme-toggle aria-label="切换主题（当前深色）" aria-pressed="false" title="切换深色 / 亮色主题">
+      <svg class="ic ic--sun" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M8 1.6v1.5M8 12.9v1.5M1.6 8h1.5M12.9 8h1.5M3.5 3.5l1 1M11.5 11.5l1 1M12.5 3.5l-1 1M4.5 11.5l-1 1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic ic--moon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M12.9 9.6A5.4 5.4 0 0 1 6.4 3.1 5.5 5.5 0 1 0 12.9 9.6Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <button class="iconbtn" type="button" aria-label="设置" title="设置">
+      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="2.1" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M8 1.9v1.4M8 12.7v1.4M1.9 8h1.4M12.7 8h1.4M3.7 3.7l1 1M11.3 11.3l1 1M12.3 3.7l-1 1M4.7 11.3l-1 1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- ======================= REPAIR BANNER (32px) ======================= -->
+  <div class="banner" data-only="main" role="status">
+    <svg class="banner__icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 2.4 14 13H2L8 2.4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+      <path d="M8 6.2v3.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+      <circle cx="8" cy="11.4" r=".75" fill="currentColor"/>
+    </svg>
+    <span class="banner__text"><strong>来源文本不完整，已修复 3 处</strong><span class="banner__detail">补全 2 个缺失括号 · 截断 1 个字符串 · 修复不猜测内容</span></span>
+    <button class="btn btn--sm banner__action" type="button">查看摘要
+      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m6.5 4.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="banner__close" type="button" data-dismiss-banner aria-label="关闭修复提示">
+      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.8 4.8 6.4 6.4M11.2 4.8l-6.4 6.4" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <!-- ======================= WORKBENCH ======================= -->
+  <main class="workbench" aria-label="文档视图">
+
+    <div class="tree" id="tree" role="tree" aria-label="JSON 树视图，当前选中 data.hotel_list[1234].rooms[5].price" tabindex="-1">
+      <div class="tree__body" id="treeBody" role="presentation"><!-- rows rendered by app.js --></div>
+      <div class="tree__end" aria-hidden="true"></div>
+    </div>
+
+    <!-- search results rail -->
+    <aside class="results" id="results" aria-label="搜索结果列表">
+      <div class="results__head">
+        <span class="results__title">搜索结果</span>
+        <span class="results__count" id="resultsCount">37,189</span>
+        <span class="results__spacer"></span>
+        <button class="iconbtn iconbtn--sm" type="button" aria-label="结果列表选项">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 4.5h10.8M2.6 8h10.8M2.6 11.5h7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <button class="iconbtn iconbtn--sm" type="button" aria-label="关闭搜索结果">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="results__filters" role="group" aria-label="结果过滤">
+        <button class="filter is-on" type="button" aria-pressed="true">全部 <span>37,189</span></button>
+        <button class="filter" type="button" aria-pressed="false">键名 <span>12,482</span></button>
+        <button class="filter" type="button" aria-pressed="false">值 <span>24,707</span></button>
+      </div>
+      <div class="results__scroll" id="resultsScroll" role="listbox" tabindex="0" aria-label="搜索结果，虚拟滚动列表">
+        <div class="results__spacer" id="resultsSpacer">
+          <div class="results__window" id="resultsWindow"></div>
+        </div>
+      </div>
+      <div class="results__foot">
+        <span class="dot dot--accent" aria-hidden="true"></span>
+        虚拟滚动 · 已渲染 <span id="resultsRendered">14</span> / 37,189 行
+      </div>
+    </aside>
+
+    <!-- JSON map (canvas path tower) -->
+    <aside class="map" id="mapPanel" aria-label="JSON 地图，当前路径的层级塔">
+      <div class="map__head">
+        <span class="map__title">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.8 3.5h4.2M2.8 8h7M2.8 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="12.6" cy="3.5" r="1.1" fill="currentColor"/><circle cx="8.6" cy="12.5" r="1.1" fill="var(--accent)"/>
+          </svg>
+          JSON 地图
+        </span>
+        <span class="map__depth">5 层</span>
+        <span class="map__spacer"></span>
+        <button class="iconbtn iconbtn--xs" id="mapToggle" type="button" aria-label="折叠 JSON 地图" aria-expanded="true" aria-controls="mapBody">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10.5 8 6.5l4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="map__body" id="mapBody">
+        <canvas id="mapCanvas" class="map__canvas" data-json-map aria-hidden="true"></canvas>
+        <div class="map__crumb" aria-live="polite">
+          <span class="map__crumb-item">root</span><span class="map__sep">›</span><span class="map__crumb-item">data</span><span class="map__sep">›</span><span class="map__crumb-item">hotel_list[1234]</span><span class="map__sep">›</span><span class="map__crumb-item">rooms[5]</span><span class="map__sep">›</span><span class="map__crumb-item is-current">price</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ======================= EXPRESSION DRAWER (180px) ======================= -->
+  <section class="expr" id="exprDrawer" aria-label="表达式过滤器">
+    <div class="expr__head">
+      <span class="expr__label">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 3.6c-1.3 0-1.9.8-1.9 2v1.5c0 .8-.5 1.3-1.3 1.4.8.1 1.3.6 1.3 1.4v1.5c0 1.2.6 2 1.9 2M10.3 3.6c1.3 0 1.9.8 1.9 2v1.5c0 .8.5 1.3 1.3 1.4-.8.1-1.3.6-1.3 1.4v1.5c0 1.2-.6 2-1.9 2" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        表达式过滤器
+      </span>
+      <span class="expr__hint"><code>$</code> 代表文档根 · 顶层字段可裸引用 · 时间预算 150 ms</span>
+      <span class="expr__spacer"></span>
+      <span class="expr__keys"><kbd>⌘↵</kbd> 运行 <kbd>Esc</kbd> 收起</span>
+    </div>
+
+    <div class="expr__row">
+      <div class="expr__input" role="textbox" aria-label="表达式输入，当前为 data.hotel_list.filter(item =&gt; item.price &gt; 1000)">
+        <span class="expr__prompt" aria-hidden="true">ƒ</span>
+        <code class="expr__code"><span class="tok-var">data</span><span class="tok-punct">.</span><span class="tok-prop">hotel_list</span><span class="tok-punct">.</span><span class="tok-prop">filter</span><span class="tok-punct">(</span><span class="tok-param">item</span> <span class="tok-op">=&gt;</span> <span class="tok-param">item</span><span class="tok-punct">.</span><span class="tok-prop">price</span> <span class="tok-op">&gt;</span> <span class="tok-num">1000</span><span class="tok-punct">)</span></code>
+        <span class="expr__caret" aria-hidden="true"></span>
+      </div>
+      <button class="btn btn--primary expr__run" type="button">运行<kbd>⌘↵</kbd></button>
+    </div>
+
+    <div class="expr__foot">
+      <span class="dot dot--ok" aria-hidden="true"></span>
+      <span>运行完成 · <b>42 ms</b> · <b>1,284</b> 条结果</span>
+      <span class="expr__rule" aria-hidden="true"></span>
+      <span class="expr__root">结果根 #2 · 只读</span>
+      <span class="expr__spacer"></span>
+      <span class="expr__note">已在 2,958,550 个节点上求值</span>
+    </div>
+
+    <div class="expr__chips">
+      <span class="expr__chips-cap">最近</span>
+      <button class="exprchip" type="button"><code>data.hotel_list.filter(item =&gt; item.price &gt; 1000)</code></button>
+      <button class="exprchip" type="button"><code>data.hotel_list[0].rooms.map(r =&gt; r.price)</code></button>
+      <button class="exprchip" type="button"><code>Object.keys(data)</code></button>
+    </div>
+
+    <!-- floating field completion -->
+    <div class="completion" role="listbox" aria-label="字段补全">
+      <div class="completion__head">
+        <span>字段补全</span>
+        <span class="completion__scope">item · <code>rooms[5]</code></span>
+        <kbd>↑↓</kbd>
+      </div>
+      <div class="completion__list">
+        <div class="completion__item" role="option" aria-selected="false">
+          <span class="completion__glyph completion__glyph--string">S</span>
+          <span class="completion__key">type</span>
+          <span class="completion__kind">string</span>
+          <span class="completion__preview">"湖景套房"</span>
+        </div>
+        <div class="completion__item is-active" role="option" aria-selected="true">
+          <span class="completion__glyph completion__glyph--number">#</span>
+          <span class="completion__key">price</span>
+          <span class="completion__kind">number</span>
+          <span class="completion__preview">2380</span>
+        </div>
+        <div class="completion__item" role="option" aria-selected="false">
+          <span class="completion__glyph completion__glyph--number">#</span>
+          <span class="completion__key">base_price</span>
+          <span class="completion__kind">number</span>
+          <span class="completion__preview">2100</span>
+        </div>
+        <div class="completion__item" role="option" aria-selected="false">
+          <span class="completion__glyph completion__glyph--number">#</span>
+          <span class="completion__key">area</span>
+          <span class="completion__kind">number</span>
+          <span class="completion__preview">68</span>
+        </div>
+        <div class="completion__item" role="option" aria-selected="false">
+          <span class="completion__glyph completion__glyph--boolean">B</span>
+          <span class="completion__key">breakfast</span>
+          <span class="completion__kind">boolean</span>
+          <span class="completion__preview">true</span>
+        </div>
+      </div>
+      <div class="completion__foot"><span><kbd>Tab</kbd> 补全</span><span><kbd>Esc</kbd> 关闭</span><span class="completion__foot-note">来自文档概要采样</span></div>
+    </div>
+  </section>
+
+  <!-- ======================= STATUS BAR (26px) ======================= -->
+  <footer class="statusbar" aria-label="状态栏">
+    <div class="statusbar__left" data-only="doc">
+      <span class="status__item"><span class="status__dot" aria-hidden="true"></span>2,958,550 个节点</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item">184,913 行</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item">50.0 MB</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item status__item--muted">只读 · 原文件不变</span>
+    </div>
+    <div class="statusbar__left" data-only="empty">
+      <span class="status__item status__item--muted">未打开文档 · 等待导入</span>
+    </div>
+    <div class="statusbar__center" data-only="doc">
+      <span class="status__path" id="statusPath" title="data.hotel_list[1234].rooms[5].price">data.hotel_list[1234].rooms[5].price</span>
+    </div>
+    <div class="statusbar__right">
+      <span class="status__item">中文</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item" id="themeLabel">深色</span>
+      <span class="status__sep" aria-hidden="true"></span>
+      <span class="status__item status__item--local">
+        <svg class="ic ic--tiny" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 7V5.4a3.6 3.6 0 0 1 7.2 0V7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><rect x="3.1" y="7" width="9.8" height="6.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+        本地 · 不联网
+      </span>
+    </div>
+  </footer>
+</div>
+
+<!-- ======================= EMPTY STATE ======================= -->
+<section class="empty" aria-label="导入 JSON 文档">
+  <div class="empty__inner">
+    <div class="empty__eyebrow"><span class="empty__eyebrow-dot"></span>本地只读 JSON 查看器</div>
+    <h1 class="empty__title">拖入 JSON，毫秒级开始查看</h1>
+    <p class="empty__sub">50 MB 文档首帧毫秒级 · 搜索、过滤与临时编辑全部在本地完成，数据不经过网络。</p>
+
+    <div class="dropzone" role="button" tabindex="0" aria-label="拖放 JSON 文件到这里，或按 Command V 粘贴">
+      <span class="dropzone__glow" aria-hidden="true"></span>
+      <span class="dropzone__icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 3.5h7l5 5V20a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20V4.5A1 1 0 0 1 7 3.5Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M12.6 3.8v5.1c0 .6.4 1 1 1h4.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M10 12.6h5M12.5 10.4v4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".85"/>
+        </svg>
+      </span>
+      <span class="dropzone__title">拖放 JSON 文件到这里</span>
+      <span class="dropzone__hint">或 <span class="dropzone__link">选择文件</span> · 支持 .json / .ndjson · 最大 200 MB</span>
+      <span class="dropzone__kbd"><kbd>⌘</kbd><kbd>V</kbd> 直接粘贴剪贴板内容</span>
+    </div>
+
+    <div class="imports">
+      <button class="import" type="button">
+        <span class="import__icon"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.4" y="2.6" width="9.2" height="10.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.6 2.6h4.8M6.3 6.2h3.4M6.3 8.6h3.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span>
+        <span class="import__label">粘贴 JSON</span>
+        <span class="import__hint"><kbd>⌘</kbd><kbd>V</kbd></span>
+      </button>
+      <button class="import" type="button">
+        <span class="import__icon"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 4.2c0-.7.6-1.3 1.3-1.3h3l1.4 1.6h5.4c.7 0 1.3.6 1.3 1.3v6.1c0 .7-.6 1.3-1.3 1.3H3.1c-.7 0-1.3-.6-1.3-1.3V4.2Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7.2v4M6.2 9.3 8 11.2l1.8-1.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="import__label">选择文件</span>
+        <span class="import__hint"><kbd>⌘</kbd><kbd>O</kbd></span>
+      </button>
+      <button class="import" type="button">
+        <span class="import__icon"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.4 2.9h5.2c.7 0 1.3.6 1.3 1.3v8.9c0 .7-.6 1.3-1.3 1.3H5.4c-.7 0-1.3-.6-1.3-1.3V4.2c0-.7.6-1.3 1.3-1.3Z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.9 5.9h4.2M5.9 8h4.2M5.9 10.1h2.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg></span>
+        <span class="import__label">从剪贴板导入</span>
+        <span class="import__hint">JSON 文本</span>
+      </button>
+    </div>
+
+    <div class="recent">
+      <div class="recent__head">
+        <span class="recent__title">最近文档</span>
+        <span class="recent__meta">仅保存在本地会话</span>
+        <button class="linkbtn" type="button">清空</button>
+      </div>
+      <a class="recent__row" href="#" aria-label="打开 hotel_catalog.json，50.0 MB，12 分钟前">
+        <span class="recent__icon"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.2h4.6L12.8 6v7.6c0 .5-.4.9-.9.9H4.9a.9.9 0 0 1-.9-.9V3.1c0-.5.4-.9.9-.9Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8.4 2.5v3.2c0 .4.3.7.7.7h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></span>
+        <span class="recent__body"><span class="recent__name">hotel_catalog.json</span><span class="recent__info">50.0 MB · 2,958,550 节点</span></span>
+        <span class="recent__time">12 分钟前</span>
+        <svg class="ic recent__arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="m6.5 4.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a class="recent__row" href="#" aria-label="打开 users_dump.ndjson，8.4 MB，昨天 16:22">
+        <span class="recent__icon"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.2h4.6L12.8 6v7.6c0 .5-.4.9-.9.9H4.9a.9.9 0 0 1-.9-.9V3.1c0-.5.4-.9.9-.9Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8.4 2.5v3.2c0 .4.3.7.7.7h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></span>
+        <span class="recent__body"><span class="recent__name">users_dump.ndjson</span><span class="recent__info">8.4 MB · 120,450 节点</span></span>
+        <span class="recent__time">昨天 16:22</span>
+        <svg class="ic recent__arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="m6.5 4.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a class="recent__row" href="#" aria-label="打开 config.schema.json，12 KB，10 月 24 日">
+        <span class="recent__icon"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.2h4.6L12.8 6v7.6c0 .5-.4.9-.9.9H4.9a.9.9 0 0 1-.9-.9V3.1c0-.5.4-.9.9-.9Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8.4 2.5v3.2c0 .4.3.7.7.7h3.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></span>
+        <span class="recent__body"><span class="recent__name">config.schema.json</span><span class="recent__info">12 KB · 842 节点</span></span>
+        <span class="recent__time">10 月 24 日</span>
+        <svg class="ic recent__arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="m6.5 4.5 3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+    </div>
+
+    <div class="empty__foot">
+      <svg class="ic ic--tiny" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 7V5.4a3.6 3.6 0 0 1 7.2 0V7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><rect x="3.1" y="7" width="9.8" height="6.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+      所有解析在本地完成 · 无网络请求 · 原文件只读
+    </div>
+  </div>
+</section>
+
+<!-- ======================= EDIT MODAL (720×520) ======================= -->
+<div class="overlay" id="editOverlay" role="presentation">
+  <div class="editor" role="dialog" aria-modal="true" aria-labelledby="editorTitle" aria-describedby="editorNote">
+    <header class="editor__head">
+      <span class="editor__title" id="editorTitle">编辑此节点 JSON</span>
+      <span class="chip chip--type">object</span>
+      <span class="editor__meta">412 B · 8 行</span>
+      <span class="editor__spacer"></span>
+      <span class="editor__shortcut"><kbd>⌘↵</kbd> 应用</span>
+      <button class="iconbtn iconbtn--sm" type="button" data-nav="main" aria-label="关闭编辑器">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <div class="editor__crumb" aria-label="节点路径">
+      <svg class="ic ic--tiny" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 3.6h5.2c.8 0 1.4.6 1.4 1.4v.8M4.5 8h7M4.5 12.4h5.2c.8 0 1.4-.6 1.4-1.4v-.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span class="crumb__seg">root</span><span class="crumb__sep">›</span>
+      <span class="crumb__seg">data</span><span class="crumb__sep">›</span>
+      <span class="crumb__seg">hotel_list<em>[1234]</em></span><span class="crumb__sep">›</span>
+      <span class="crumb__seg">rooms<em>[5]</em></span>
+      <span class="editor__typehint">数组元素 · 父级 rooms 共 12 项</span>
+      <span class="editor__spacer"></span>
+      <button class="iconbtn iconbtn--xs" type="button" aria-label="复制路径">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="7.2" height="7.2" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M10.4 5.2V4c0-.7-.6-1.3-1.3-1.3H4.2c-.7 0-1.3.6-1.3 1.3v4.9c0 .7.6 1.3 1.3 1.3h1.2" fill="none" stroke="currentColor" stroke-width="1.25"/></svg>
+      </button>
+    </div>
+
+    <div class="editor__code" role="group" aria-label="JSON 编辑器，第 4 行有语法错误">
+      <div class="cl"><span class="cl__ln">1</span><span class="cl__code"><span class="tok-punct">{</span></span></div>
+      <div class="cl"><span class="cl__ln">2</span><span class="cl__code">  <span class="tok-key">"type"</span><span class="tok-punct">:</span> <span class="tok-str">"湖景套房"</span><span class="tok-punct">,</span></span></div>
+      <div class="cl"><span class="cl__ln">3</span><span class="cl__code">  <span class="tok-key">"price"</span><span class="tok-punct">:</span> <span class="tok-num">2380</span></span></div>
+      <div class="cl is-error"><span class="cl__ln">4</span><span class="cl__code">  <span class="tok-key is-err">"area"</span><span class="tok-punct">:</span> <span class="tok-num">68</span><span class="tok-punct">,</span><span class="expr__caret expr__caret--code" aria-hidden="true"></span></span></div>
+      <div class="cl"><span class="cl__ln">5</span><span class="cl__code">  <span class="tok-key">"breakfast"</span><span class="tok-punct">:</span> <span class="tok-bool">true</span><span class="tok-punct">,</span></span></div>
+      <div class="cl"><span class="cl__ln">6</span><span class="cl__code">  <span class="tok-key">"left"</span><span class="tok-punct">:</span> <span class="tok-num">3</span><span class="tok-punct">,</span></span></div>
+      <div class="cl"><span class="cl__ln">7</span><span class="cl__code">  <span class="tok-key">"note"</span><span class="tok-punct">:</span> <span class="tok-null">null</span></span></div>
+      <div class="cl"><span class="cl__ln">8</span><span class="cl__code"><span class="tok-punct">}</span></span></div>
+    </div>
+
+    <div class="editor__error" role="alert">
+      <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.9v3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="10.9" r=".8" fill="currentColor"/></svg>
+      <span>第 <b>4</b> 行 · 第 <b>3</b> 列：第 3 行末尾缺少逗号，期望 <code>,</code> 或 <code>}</code>，当前输入未应用。</span>
+      <span class="editor__error-spacer"></span>
+      <span class="editor__error-hint">Apply 已禁用</span>
+    </div>
+
+    <footer class="editor__foot">
+      <span class="editor__note" id="editorNote">
+        <svg class="ic ic--tiny" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.4 7V5.4a3.6 3.6 0 0 1 7.2 0V7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><rect x="3.1" y="7" width="9.8" height="6.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+        仅临时修改，不写回原文件 · 关闭页面即丢弃
+      </span>
+      <span class="editor__spacer"></span>
+      <button class="btn btn--ghost btn--sm" type="button">恢复当前值</button>
+      <button class="btn btn--sm" type="button" data-nav="main">取消</button>
+      <button class="btn btn--primary btn--sm" type="button" disabled>应用 <kbd>⌘↵</kbd></button>
+    </footer>
+  </div>
+</div>
+
+<script src="map.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

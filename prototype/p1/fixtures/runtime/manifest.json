@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Turbo runtime bench (fixture)",
+  "version": "1.0.0",
+  "description": "Fixture extension for runtime / row-model benchmarks. Not product code.",
+  "minimum_chrome_version": "110",
+  "action": { "default_popup": "page.html" }
+}

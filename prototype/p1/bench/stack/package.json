@@ -1,0 +1,29 @@
+{
+  "name": "turbo-json-stack-bench",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Stack re-assessment bench: DOM row rendering, CodeMirror 6 under MV3 CSP, esbuild multi-entry, UI parts",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:cm6": "node build-cm6.mjs",
+    "bench:dom": "node bench-dom.mjs",
+    "bench:cm6": "node bench-cm6.mjs",
+    "bench:ui": "node bench-ui.mjs",
+    "bench:build": "node bench-build.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@floating-ui/dom": "^1.8.0",
+    "acorn": "^8.19.0",
+    "esbuild": "^0.28.2",
+    "focus-trap": "^8.2.4",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

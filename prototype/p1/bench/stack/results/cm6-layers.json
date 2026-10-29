@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "layer": "l0-state",
+      "gz": 16154,
+      "deltaGz": 16154,
+      "raw": 48384
+    },
+    {
+      "layer": "l1-view",
+      "gz": 65260,
+      "deltaGz": 49106,
+      "raw": 201341
+    },
+    {
+      "layer": "l2-autocomplete",
+      "gz": 90735,
+      "deltaGz": 25475,
+      "raw": 277909
+    },
+    {
+      "layer": "l3-commands",
+      "gz": 100899,
+      "deltaGz": 10164,
+      "raw": 310205
+    },
+    {
+      "layer": "l4-lang",
+      "gz": 145918,
+      "deltaGz": 45019,
+      "raw": 430174
+    }
+  ],
+  "times": {
+    "l0-state": 22,
+    "l1-view": 24,
+    "l2-autocomplete": 29,
+    "l3-commands": 28,
+    "l4-lang": 34
+  }
+}

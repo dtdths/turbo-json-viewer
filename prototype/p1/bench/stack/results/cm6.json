@@ -1,0 +1,196 @@
+{
+  "csp": {
+    "evalBlocked": true,
+    "newFunctionBlocked": true,
+    "evalError": "EvalError: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: ",
+    "newFunctionError": "EvalError: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: "
+  },
+  "cspViaCdp": {
+    "evalBlocked": false,
+    "newFunctionBlocked": false,
+    "evalError": "",
+    "newFunctionError": ""
+  },
+  "cm6": {
+    "firstMount": {
+      "ms": 7.099999904632568,
+      "nodes": 6,
+      "docLen": 0
+    },
+    "mountTimes": [
+      0.5,
+      0.2999999523162842,
+      0.20000004768371582,
+      0.19999980926513672,
+      0.09999990463256836,
+      0.09999990463256836,
+      0.20000004768371582,
+      0.10000014305114746,
+      0.10000014305114746,
+      0.20000004768371582,
+      0.5,
+      0,
+      0,
+      0.09999990463256836,
+      0.10000014305114746,
+      0,
+      0.09999990463256836,
+      0,
+      0,
+      0.09999990463256836
+    ],
+    "stats": {
+      "nodes": 6,
+      "docLen": 0,
+      "tooltips": 0
+    },
+    "typing": {
+      "chars": 39,
+      "wallMs": 13,
+      "frames": {
+        "frames": 3,
+        "p95": 16.5,
+        "max": 16.5,
+        "longtasks": 0
+      }
+    },
+    "docAfterTyping": "data.hotel_tags.filter(item => item.pri)",
+    "popup": {
+      "visible": false,
+      "options": 0,
+      "role": null,
+      "optionRole": null,
+      "ariaActiveDescendant": null,
+      "activeOption": null,
+      "rect": null
+    },
+    "afterTypingStats": {
+      "nodes": 5,
+      "docLen": 40,
+      "tooltips": 0
+    },
+    "autocomplete": {
+      "visible": true,
+      "options": 7,
+      "role": "listbox",
+      "optionRole": "option",
+      "ariaActiveDescendant": "cm-ac-a45-0",
+      "activeOption": "available",
+      "rect": {
+        "w": 252,
+        "h": 100
+      },
+      "waitMs": 106.2,
+      "cdpTypeMs": 108
+    },
+    "autocompleteFiltered": {
+      "visible": true,
+      "options": 3,
+      "role": "listbox",
+      "optionRole": "option",
+      "ariaActiveDescendant": "cm-ac-a45-0",
+      "activeOption": "hotel_id",
+      "rect": {
+        "w": 252,
+        "h": 51
+      }
+    }
+  },
+  "textarea": {
+    "mount": {
+      "ms": 0.20000004768371582
+    },
+    "typing": {
+      "chars": 39,
+      "wallMs": 12,
+      "frames": {
+        "frames": 3,
+        "p95": 16.700000047683716,
+        "max": 16.700000047683716,
+        "longtasks": 0
+      }
+    },
+    "value": "data.hotel_tags.filter(item => item.pri",
+    "showLatency": [
+      0.39999985694885254,
+      0.09999990463256836,
+      0,
+      0,
+      0.10000014305114746,
+      0,
+      0,
+      0,
+      0.10000014305114746,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0.09999990463256836,
+      0.20000004768371582,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0.19999980926513672,
+      0.09999990463256836,
+      0,
+      0,
+      0,
+      0.10000014305114746,
+      0.09999990463256836,
+      0,
+      0.09999990463256836,
+      0.10000014305114746,
+      0,
+      0,
+      0,
+      0.09999990463256836,
+      0,
+      0.09999990463256836,
+      0
+    ],
+    "autocomplete": {
+      "visible": true,
+      "options": 8,
+      "role": "listbox",
+      "optionRole": "option",
+      "cdpTypeMs": 64
+    }
+  },
+  "cm6Lang": {
+    "mount": {
+      "ms": 4.200000047683716,
+      "nodes": 6
+    },
+    "popup": {
+      "visible": false,
+      "options": 0,
+      "highlighted": 0
+    },
+    "tokenSpans": 2,
+    "nodes": 7
+  },
+  "logs": [],
+  "exceptions": [],
+  "bundleScan": {
+    "cm6-min.js": [
+      0,
+      0,
+      0
+    ],
+    "cm6-lang.js": [
+      0,
+      0,
+      0
+    ],
+    "textarea-baseline.js": [
+      0,
+      0,
+      0
+    ],
+    "note": "occurrences (eval( / new Function( / Function(\"…\")) in the shipped minified bundle, bench CSP-probe stripped"
+  }
+}
