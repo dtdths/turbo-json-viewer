@@ -1,0 +1,195 @@
+/* ==========================================================================
+   Turbo JSON Viewer — Direction A · Graphite / Indigo
+   Design tokens. Theme is selected by [data-theme="dark"|"light"] on <html>.
+   Dark is the default (professional tool, low-glare, long-session use).
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ---- surfaces (graphite, cool neutral) ---- */
+  --bg-app: #0b0d12;
+  --bg-panel: #11141b;
+  --bg-panel-2: #161a23;
+  --bg-elevated: #1a1f2b;
+  --bg-input: #0d1016;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-pressed: rgba(255, 255, 255, 0.07);
+  --bg-selected: rgba(124, 140, 255, 0.14);
+  --bg-selected-strong: rgba(124, 140, 255, 0.2);
+  --bg-accent-soft: rgba(124, 140, 255, 0.1);
+  --overlay: rgba(5, 7, 11, 0.66);
+
+  /* ---- borders / hairlines ---- */
+  --border-subtle: #1a1f29;
+  --border: #232937;
+  --border-strong: #2e3648;
+  --border-focus: #7c8cff;
+
+  /* ---- text ---- */
+  --text: #e7eaf0;
+  --text-2: #c6ccd9;
+  --muted: #8b93a7;
+  --faint: #737c8e;
+  --text-on-accent: #0b0d12;
+
+  /* ---- accent (indigo) ---- */
+  --accent: #7c8cff;
+  --accent-hover: #8e9cff;
+  --accent-pressed: #6c7cf5;
+  --accent-text: #a9b4ff;
+  --accent-glow: rgba(124, 140, 255, 0.3);
+  --accent-soft: rgba(124, 140, 255, 0.12);
+  --accent-border: rgba(124, 140, 255, 0.3);
+
+  /* ---- syntax: key · string · number · boolean · null ---- */
+  --syntax-key: #a9b8d8;
+  --syntax-string: #6fd3b5;
+  --syntax-number: #e3b778;
+  --syntax-boolean: #b49cff;
+  --syntax-null: #7b8496;
+  --syntax-punct: #737c8e;
+  --syntax-index: #6f7a90;
+
+  /* ---- semantic ---- */
+  --danger: #ff7a85;
+  --danger-bg: rgba(255, 107, 122, 0.1);
+  --danger-border: rgba(255, 107, 122, 0.32);
+  --warn: #e9be7a;
+  --warn-bg: rgba(233, 190, 122, 0.09);
+  --warn-border: rgba(233, 190, 122, 0.24);
+  --success: #6fd3b5;
+  --success-bg: rgba(111, 211, 181, 0.1);
+
+  /* ---- search hit (warm amber) ---- */
+  --hit-bg: rgba(240, 196, 96, 0.18);
+  --hit-border: rgba(240, 196, 96, 0.42);
+  --hit-text: #f5d79c;
+  --hit-row: rgba(240, 196, 96, 0.045);
+
+  /* ---- typography ---- */
+  --font-ui: system-ui, -apple-system, "SF Pro Text", "PingFang SC",
+    "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono",
+    Consolas, "Liberation Mono", monospace;
+
+  --text-micro: 10px;      /* badges, tick labels, kbd */
+  --text-caption: 11px;    /* status bar, meta */
+  --text-small: 12px;      /* secondary UI */
+  --text-body: 13px;       /* default UI */
+  --text-mono: 12.5px;     /* JSON tree / code */
+  --text-title: 16px;      /* panel titles */
+  --text-display: 22px;    /* empty state headline */
+  --leading-tight: 1.2;
+  --leading-ui: 1.45;
+  --leading-code: 20px;
+
+  /* ---- metrics ---- */
+  --toolbar-h: 48px;
+  --banner-h: 32px;
+  --status-h: 26px;
+  --row-h: 24px;           /* tree row */
+  --row-indent: 16px;
+  --map-w: 264px;
+  --type-col-w: 88px;      /* optional right-aligned type column (from direction B) */
+
+  /* ---- spacing scale ---- */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+  --sp-7: 20px;
+  --sp-8: 24px;
+  --sp-9: 32px;
+  --sp-10: 40px;
+
+  /* ---- radii ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* ---- elevation (soft, low-contrast; borders do most of the work) ---- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.35), 0 10px 26px -10px rgba(0, 0, 0, 0.65);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45), 0 28px 64px -20px rgba(0, 0, 0, 0.8);
+  --shadow-accent: 0 6px 18px -8px rgba(124, 140, 255, 0.55);
+  --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px rgba(124, 140, 255, 0.6);
+  --focus-ring-inset: inset 0 0 0 1px var(--accent);
+
+  /* ---- motion ---- */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 110ms;
+  --dur: 160ms;
+  --dur-slow: 220ms;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #f7f8fb;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #f1f3f8;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-hover: rgba(27, 32, 48, 0.04);
+  --bg-pressed: rgba(27, 32, 48, 0.07);
+  --bg-selected: rgba(79, 99, 232, 0.09);
+  --bg-selected-strong: rgba(79, 99, 232, 0.15);
+  --bg-accent-soft: rgba(79, 99, 232, 0.08);
+  --overlay: rgba(27, 32, 48, 0.34);
+
+  --border-subtle: #edeff5;
+  --border: #e3e7ef;
+  --border-strong: #d2d8e4;
+  --border-focus: #4f63e8;
+
+  --text: #1b2030;
+  --text-2: #3c445a;
+  --muted: #626c84;
+  --faint: #667086;
+  --text-on-accent: #ffffff;
+
+  --accent: #4f63e8;
+  --accent-hover: #4356d8;
+  --accent-pressed: #3a4cc6;
+  --accent-text: #4053d6;
+  --accent-glow: rgba(79, 99, 232, 0.2);
+  --accent-soft: rgba(79, 99, 232, 0.08);
+  --accent-border: rgba(79, 99, 232, 0.3);
+
+  --syntax-key: #4b5a7a;
+  --syntax-string: #0c7b5a;
+  --syntax-number: #96610f;
+  --syntax-boolean: #6d4bd6;
+  --syntax-null: #667086;
+  --syntax-punct: #667086;
+  --syntax-index: #8b93a5;
+
+  --danger: #cf3040;
+  --danger-bg: rgba(207, 48, 64, 0.07);
+  --danger-border: rgba(207, 48, 64, 0.24);
+  --warn: #9a6414;
+  --warn-bg: rgba(233, 176, 76, 0.12);
+  --warn-border: rgba(196, 138, 35, 0.28);
+  --success: #0c7b5a;
+  --success-bg: rgba(14, 135, 99, 0.08);
+
+  --hit-bg: rgba(245, 194, 60, 0.3);
+  --hit-border: rgba(212, 158, 22, 0.45);
+  --hit-text: #5a4308;
+  --hit-row: rgba(245, 194, 60, 0.08);
+
+  --shadow-sm: 0 1px 2px rgba(20, 28, 48, 0.06);
+  --shadow-md: 0 2px 6px rgba(20, 28, 48, 0.06), 0 10px 24px -12px rgba(20, 28, 48, 0.18);
+  --shadow-lg: 0 8px 24px rgba(20, 28, 48, 0.1), 0 28px 60px -24px rgba(20, 28, 48, 0.24);
+  --shadow-accent: 0 6px 16px -8px rgba(79, 99, 232, 0.45);
+  --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px rgba(79, 99, 232, 0.5);
+  --focus-ring-inset: inset 0 0 0 1px var(--accent);
+}

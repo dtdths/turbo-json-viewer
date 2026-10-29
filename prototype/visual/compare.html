@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer — 方向对比（实时）</title>
+<style>
+  :root { color-scheme: dark; --bg:#0a0c10; --panel:#11141b; --border:#232937; --text:#e7eaf0; --muted:#8b93a7; --faint:#737c8e; --accent:#7c8cff; --hover:#1a1f2b; --sel:rgba(124,140,255,.16); }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:12px/1.4 system-ui,-apple-system,"PingFang SC",sans-serif; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+  .bar { display:flex; align-items:center; gap:14px; height:44px; padding:0 12px; background:var(--panel); border-bottom:1px solid var(--border); flex:0 0 44px; }
+  .label { color:var(--faint); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+  .group { display:flex; align-items:center; gap:2px; background:#0d1016; border:1px solid var(--border); border-radius:7px; padding:2px; }
+  .group button { border:0; background:transparent; color:var(--muted); font:inherit; padding:4px 9px; border-radius:5px; cursor:pointer; }
+  .group button:hover { background:var(--hover); color:var(--text); }
+  .group button.is-on { background:var(--sel); color:#c9d1ff; box-shadow: inset 0 0 0 1px rgba(124,140,255,.45); }
+  .spacer { flex:1; }
+  a { color:var(--accent); text-decoration:none; font-size:12px; }
+  a:hover { text-decoration:underline; }
+  iframe { flex:1 1 auto; width:100%; border:0; background:var(--bg); }
+  .hint { color:var(--faint); font-size:11px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="label">视图</span>
+  <div class="group" id="which">
+    <button type="button" data-which="a" class="is-on">A · 默认</button>
+    <button type="button" data-which="a-typecol">A + 类型列</button>
+    <button type="button" data-which="b">B · IDE</button>
+    <button type="button" data-which="c">C · 工作台</button>
+  </div>
+  <span class="label">屏幕</span>
+  <div class="group" id="screen">
+    <button type="button" data-screen="main" class="is-on">主界面</button>
+    <button type="button" data-screen="empty">空态</button>
+    <button type="button" data-screen="edit">编辑</button>
+    <button type="button" data-screen="expr">表达式</button>
+    <button type="button" data-screen="search">搜索</button>
+    <button type="button" data-screen="outline">大纲</button>
+    <button type="button" data-screen="settings">设置</button>
+  </div>
+  <span class="label">主题</span>
+  <div class="group" id="theme">
+    <button type="button" data-theme="dark" class="is-on">深色</button>
+    <button type="button" data-theme="light">亮色</button>
+  </div>
+  <span class="spacer"></span>
+  <span class="hint">A/B/C 均可点：主题切换 / 地图折叠 / 搜索上下条；C 的左侧面板 = 搜索 / 大纲 / 设置</span>
+  <a id="open" href="#" target="_blank" rel="noopener">新标签打开 ↗</a>
+</div>
+<iframe id="frame" title="视觉方向原型"></iframe>
+<script>
+  var state = { which: 'a', screen: 'main', theme: 'dark' };
+  var frame = document.getElementById('frame');
+  var open = document.getElementById('open');
+
+  function url() {
+    var q = new URLSearchParams();
+    q.set('theme', state.theme);
+
+    // outline / settings are C-only panels; other directions fall back to main
+    var panelScreen = state.screen === 'outline' || state.screen === 'settings';
+
+    if (state.which === 'c') {
+      if (panelScreen) {
+        q.set('screen', 'main');
+        q.set('panel', state.screen);
+      } else {
+        q.set('screen', state.screen);
+      }
+      return 'c/index.html?' + q.toString();
+    }
+
+    q.set('screen', panelScreen ? 'main' : state.screen);
+    if (state.which === 'a-typecol') q.set('typecol', '1');
+    return (state.which === 'b' ? 'b/index.html' : 'a/index.html') + '?' + q.toString();
+  }
+
+  function render() {
+    var u = url();
+    if (frame.getAttribute('src') !== u) frame.src = u;
+    open.href = u;
+  }
+
+  function bind(groupId, key, attr) {
+    document.getElementById(groupId).addEventListener('click', function (e) {
+      var btn = e.target.closest('button[' + attr + ']');
+      if (!btn) return;
+      state[key] = btn.getAttribute(attr);
+      var kids = btn.parentElement.children;
+      for (var i = 0; i < kids.length; i++) kids[i].classList.toggle('is-on', kids[i] === btn);
+      render();
+    });
+  }
+
+  bind('which', 'which', 'data-which');
+  bind('screen', 'screen', 'data-screen');
+  bind('theme', 'theme', 'data-theme');
+  render();
+</script>
+</body>
+</html>

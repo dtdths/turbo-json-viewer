@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>runtime bench</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+      #vp {
+        position: relative;
+        height: 100vh;
+        overflow: auto;
+        font: 12px/22px ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #content {
+        position: relative;
+      }
+      .row {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 22px;
+        white-space: pre;
+        overflow: hidden;
+      }
+      .row.blank {
+        background: #fee;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="vp"><div id="content"></div></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

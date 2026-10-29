@@ -1,0 +1,40 @@
+{
+  "mode": "prod",
+  "buildMs": 25,
+  "entries": 5,
+  "inputs": 16,
+  "inputBytesInOutput": null,
+  "outputs": {
+    "bench-dom": {
+      "raw": 7014,
+      "gz": 2809,
+      "rawKB": 6.85,
+      "gzKB": 2.74
+    },
+    "bench-ui": {
+      "raw": 9336,
+      "gz": 3197,
+      "rawKB": 9.12,
+      "gzKB": 3.12
+    },
+    "worker": {
+      "raw": 422,
+      "gz": 274,
+      "rawKB": 0.41,
+      "gzKB": 0.27
+    },
+    "sw": {
+      "raw": 169,
+      "gz": 145,
+      "rawKB": 0.17,
+      "gzKB": 0.14
+    },
+    "app": {
+      "raw": 130866,
+      "gz": 37849,
+      "rawKB": 127.8,
+      "gzKB": 36.96
+    }
+  },
+  "outdir": "/Users/user/Documents/code/d/turbo-json-viewer/prototype/p1/fixtures/stack"
+}

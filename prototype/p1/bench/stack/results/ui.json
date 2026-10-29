@@ -1,0 +1,523 @@
+{
+  "menu": {
+    "opened": {
+      "open": true,
+      "active": {
+        "tag": "BUTTON",
+        "text": "Copy value",
+        "role": "menuitem",
+        "inDialog": false,
+        "inMenu": true
+      },
+      "items": 4,
+      "role": "menu",
+      "itemRole": "menuitem",
+      "rect": {
+        "x": 0,
+        "y": 23,
+        "width": 170,
+        "height": 105,
+        "top": 23,
+        "right": 170,
+        "bottom": 128,
+        "left": 0
+      },
+      "hidden": false
+    },
+    "afterArrowDownFocused": 1,
+    "afterEnter": {
+      "actions": [
+        "copy-json"
+      ],
+      "open": false
+    },
+    "afterEscape": {
+      "open": false,
+      "focusRestored": "menu-anchor"
+    },
+    "clamped": {
+      "rect": {
+        "x": 1106,
+        "y": 648,
+        "width": 170,
+        "height": 105,
+        "top": 648,
+        "right": 1276,
+        "bottom": 753,
+        "left": 1106
+      },
+      "innerW": 1280,
+      "innerH": 757,
+      "inside": true
+    },
+    "afterOutsideClick": false,
+    "roles": {
+      "role": "menu",
+      "itemRole": "menuitem",
+      "items": 4
+    }
+  },
+  "dialog": {
+    "opened": {
+      "open": true,
+      "active": {
+        "tag": "BUTTON",
+        "text": "Cancel",
+        "role": null,
+        "inDialog": true,
+        "inMenu": false
+      },
+      "role": null,
+      "modal": true,
+      "inertBackground": true
+    },
+    "tabSequence": [
+      "BUTTON:OK",
+      "BODY:\n    Row actions\n    Outside\n    Co",
+      "BUTTON:Cancel",
+      "BUTTON:OK",
+      "BODY:\n    Row actions\n    Outside\n    Co"
+    ],
+    "allTabsStayInside": false,
+    "afterEscape": {
+      "open": false,
+      "active": {
+        "tag": "BODY",
+        "text": "\n    Row actions\n    Outside\n    CopyExp",
+        "role": null,
+        "inDialog": false,
+        "inMenu": false
+      },
+      "role": null,
+      "modal": false,
+      "inertBackground": false
+    }
+  },
+  "toast": {
+    "live": "polite",
+    "role": "status",
+    "count": 1,
+    "text": "Copied path to clipboard"
+  },
+  "splitter": {
+    "afterDrag": {
+      "width": 400,
+      "aria": "400"
+    },
+    "deltaPx": 80,
+    "afterArrowRight": 416,
+    "role": "separator"
+  },
+  "toolbar": {
+    "initial": {
+      "role": "toolbar",
+      "active": 0,
+      "focused": {
+        "tag": "BUTTON",
+        "text": "Copy",
+        "role": null,
+        "inDialog": false,
+        "inMenu": false
+      },
+      "tabbable": 1
+    },
+    "afterArrowRight": {
+      "role": "toolbar",
+      "active": 1,
+      "focused": {
+        "tag": "BUTTON",
+        "text": "Expand",
+        "role": null,
+        "inDialog": false,
+        "inMenu": false
+      },
+      "tabbable": 1
+    },
+    "afterEnd": {
+      "role": "toolbar",
+      "active": 3,
+      "focused": {
+        "tag": "BUTTON",
+        "text": "Export",
+        "role": null,
+        "inDialog": false,
+        "inMenu": false
+      },
+      "tabbable": 1
+    }
+  },
+  "tree": {
+    "activedescendant": {
+      "handlerMedianMs": 0,
+      "handlerP95Ms": 0.1,
+      "afterTrusted": {
+        "activeDescendant": "tn-row-26",
+        "focusedIndex": -1,
+        "tabbable": 0
+      },
+      "focusedIsContainer": "tree"
+    },
+    "roving": {
+      "handlerMedianMs": 0.1,
+      "handlerP95Ms": 0.3,
+      "afterTrusted": {
+        "activeDescendant": null,
+        "focusedIndex": 26,
+        "tabbable": 1
+      },
+      "focusedIsContainer": "tree-row active"
+    }
+  },
+  "ax": {
+    "roles": {
+      "RootWebArea": 1,
+      "none": 3,
+      "button": 6,
+      "generic": 6,
+      "status": 1,
+      "StaticText": 408,
+      "toolbar": 1,
+      "separator": 1,
+      "tree": 2,
+      "InlineTextBox": 408,
+      "treeitem": 400
+    },
+    "interesting": [
+      {
+        "role": "toolbar",
+        "name": "JSON actions"
+      },
+      {
+        "role": "separator",
+        "name": ""
+      },
+      {
+        "role": "tree",
+        "name": "JSON tree"
+      },
+      {
+        "role": "tree",
+        "name": "JSON tree"
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_0\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_1\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_2\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_3\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_4\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_5\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_6\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_7\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_8\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_9\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_10\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_11\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_12\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_13\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_14\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_15\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_16\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_17\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_18\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_19\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_20\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_21\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_22\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_23\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_24\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_25\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_26\"",
+        "selected": true
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_27\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_28\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_29\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_30\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_31\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_32\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_33\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_34\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_35\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_36\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_37\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_38\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_39\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_40\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_41\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_42\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_43\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_44\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_45\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_46\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_47\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_48\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_49\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_50\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_51\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_52\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_53\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_54\"",
+        "selected": false
+      },
+      {
+        "role": "treeitem",
+        "name": "\"field_55\"",
+        "selected": false
+      }
+    ]
+  },
+  "i18n": {
+    "uiLanguage": "zh-CN",
+    "name": "Turbo JSON 技术栈基准",
+    "raw1000LookupsMs": 1.1,
+    "cached1000LookupsMs": 0.1
+  },
+  "logs": [],
+  "exceptions": [],
+  "loc": {
+    "menu": {
+      "lines": 79,
+      "bytes": 2672
+    },
+    "toast": {
+      "lines": 38,
+      "bytes": 1001
+    },
+    "dialog": {
+      "lines": 40,
+      "bytes": 1371
+    },
+    "splitter": {
+      "lines": 51,
+      "bytes": 1664
+    },
+    "toolbar": {
+      "lines": 36,
+      "bytes": 1312
+    },
+    "treeNav": {
+      "lines": 79,
+      "bytes": 2768
+    },
+    "i18n": {
+      "lines": 32,
+      "bytes": 942
+    }
+  },
+  "locTotal": 355
+}
