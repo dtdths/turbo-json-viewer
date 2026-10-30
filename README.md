@@ -19,7 +19,8 @@ npm run smoke:ext    # 以真实 unpacked 扩展跑同一套冒烟
 
 1. `npm run build`
 2. `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选择 `dist/`
-3. 点扩展图标打开查看页；拖入 / 选择文件 / 直接 ⌘V 粘贴
+3. 点扩展图标打开查看页；初始页可拖入 / 选择文件 / 直接 `⌘V` 粘贴
+4. 已打开文档后，页面上的 `⌘V` / 拖放**不会直接替换文档**：点「导入」或按 `⌘O` 打开**导入层**，在层内粘贴 / 拖放 / 选择文件替换（会提示将替换的文档；原文件不受影响）
 
 品牌版 Chrome（≥137）会忽略 `--load-extension`，自动化验证请用 Chrome for Testing（见 `prototype/p1/README.md`）。
 
