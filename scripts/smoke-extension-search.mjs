@@ -296,6 +296,35 @@ async function extImportPhase(cfg) {
   return out;
 }
 
+/** 回归（2026-10-30）：在搜索输入框里粘贴普通文本（key 片段）不应触发全局 JSON 导入。 */
+async function extPasteInputPhase(cfg) {
+  const out = {};
+  const input = document.getElementById('searchInput');
+  if (!input) return { error: '#searchInput missing' };
+  out.rowsBefore = document.querySelectorAll('.row[data-path]:not([hidden])').length;
+  out.statusBefore = (document.getElementById('statusRows') || {}).textContent || '';
+  input.focus();
+  out.focusedBefore = document.activeElement === input;
+  const dt = new DataTransfer();
+  dt.setData('text/plain', cfg.text || 'min_price_');
+  const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+  window.__extSmoke.reset();
+  input.dispatchEvent(ev);
+  await window.__extSmoke.settle(800);
+  const toast = document.getElementById('toast');
+  out.defaultPrevented = ev.defaultPrevented;
+  out.toastHidden = toast ? toast.hidden : true;
+  out.toastText = toast ? toast.textContent : '';
+  out.rowsAfter = document.querySelectorAll('.row[data-path]:not([hidden])').length;
+  out.statusAfter = (document.getElementById('statusRows') || {}).textContent || '';
+  out.activeIsInput = document.activeElement === input;
+  out.hasDevHook = Boolean(window.__tjv);
+  out.longTasks = window.__extSmoke.take();
+  // 说明：合成 ClipboardEvent 不会执行浏览器默认插入（只有可信事件才会），
+  // 所以这里断言「全局 handler 没有 preventDefault / 没有触发导入」，而不是输入框内容。
+  return out;
+}
+
 /** 真实输入（input 事件）→ 等命中数 → 校验列表 → Enter 跳转。 */
 async function extSearchPhase(cfg) {
   const out = {};
@@ -484,6 +513,33 @@ try {
       bodyPanelAfterPaste: importPhase.bodyPanelAfterPaste,
     });
     check('ext:no-dev-hook-after-paste', importPhase.hasDevHook === false, { hasDevHook: importPhase.hasDevHook });
+  }
+
+  /* ---- 1b) 回归：搜索输入框内粘贴普通文本，不触发全局 JSON 导入 ---- */
+  const pasteInputPhase = importPhase
+    ? await runPhase('paste-input', extPasteInputPhase, { text: 'min_price_' })
+    : null;
+  if (pasteInputPhase) {
+    report.pasteIntoInput = pasteInputPhase;
+    check(
+      'ext:paste-into-input-not-imported',
+      pasteInputPhase.defaultPrevented === false &&
+        pasteInputPhase.toastHidden === true &&
+        pasteInputPhase.rowsAfter === pasteInputPhase.rowsBefore &&
+        pasteInputPhase.statusAfter === pasteInputPhase.statusBefore &&
+        pasteInputPhase.activeIsInput === true &&
+        pasteInputPhase.hasDevHook === false,
+      {
+        defaultPrevented: pasteInputPhase.defaultPrevented,
+        toastHidden: pasteInputPhase.toastHidden,
+        toastText: pasteInputPhase.toastText,
+        rowsBefore: pasteInputPhase.rowsBefore,
+        rowsAfter: pasteInputPhase.rowsAfter,
+        statusBefore: pasteInputPhase.statusBefore,
+        statusAfter: pasteInputPhase.statusAfter,
+        activeIsInput: pasteInputPhase.activeIsInput,
+      },
+    );
   }
 
   /* ---- 2) 真实输入 → 命中数 → 列表 → Enter 跳转 → 截图 ---- */

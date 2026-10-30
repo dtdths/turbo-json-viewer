@@ -156,7 +156,21 @@ function onLoaded(reply: LoadReply): void {
   treeHost.focus();
 }
 
+/**
+ * 粘贴目标是输入控件时不劫持：让浏览器把文本粘进输入框（搜索框等）。
+ * 否则全局「粘贴即导入 JSON」会把在搜索框里 ⌘V 一个 key 变成一次 PARSE 导入。
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const node = target instanceof HTMLElement ? target : null;
+  if (!node) return false;
+  if (node.isContentEditable) return true;
+  return Boolean(
+    node.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'),
+  );
+}
+
 document.addEventListener('paste', (event: ClipboardEvent) => {
+  if (isEditableTarget(event.target)) return;
   const text = event.clipboardData?.getData('text/plain');
   if (!text || !text.trim()) return;
   event.preventDefault();
