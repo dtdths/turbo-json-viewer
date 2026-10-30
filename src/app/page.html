@@ -103,10 +103,20 @@
   </div>
 </div>
 
-<section class="empty" id="empty">
-  <div class="empty__inner">
-    <h1 class="empty__title">拖入 JSON，毫秒级开始查看</h1>
-    <p class="empty__sub">本地只读 · 数据不经过网络 · 50 MB 文档由 Worker 常驻</p>
+<section class="empty" id="empty" data-mode="initial">
+  <div class="empty__inner" id="emptyInner" tabindex="-1">
+    <button class="iconbtn empty__close" type="button" id="emptyClose" aria-label="取消导入" hidden>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 4.6 6.8 6.8M11.4 4.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+    </button>
+    <h1 class="empty__title" id="emptyTitle">拖入 JSON，毫秒级开始查看</h1>
+    <p class="empty__sub" id="emptySub">本地只读 · 数据不经过网络 · 50 MB 文档由 Worker 常驻</p>
+    <div class="empty__warn" id="emptyWarn" hidden>将替换当前文档 <b id="emptyWarnDoc">—</b>；原文件不受影响。</div>
+    <div class="empty__error" id="emptyError" role="alert" hidden></div>
+    <div class="empty__pending" id="emptyPending" hidden>
+      <span>已拖入 <b id="emptyPendingName">—</b>，确认替换当前文档？</span>
+      <button class="btn" type="button" id="emptyPendingReplace">替换当前文档</button>
+    </div>
+    <div class="empty__busy" id="emptyBusy" hidden>正在解析…</div>
     <div class="dropzone" id="dropzone" role="button" tabindex="0">
       <strong>拖放 JSON 文件到这里</strong>
       <span class="dropzone__hint">或 <button class="linkbtn" type="button" id="pickBtn">选择文件</button> · <kbd>⌘V</kbd> 粘贴剪贴板</span>

@@ -42,6 +42,19 @@ const fileMeta = el('fileMeta');
 const exportBtn = el<HTMLButtonElement>('exportBtn');
 const fileInput = el<HTMLInputElement>('fileInput');
 const empty = el('empty');
+const emptyInner = el('emptyInner');
+const emptyTitle = el('emptyTitle');
+const emptySub = el('emptySub');
+const emptyWarn = el('emptyWarn');
+const emptyWarnDoc = el('emptyWarnDoc');
+const emptyError = el('emptyError');
+const emptyPending = el('emptyPending');
+const emptyPendingName = el('emptyPendingName');
+const emptyPendingReplace = el<HTMLButtonElement>('emptyPendingReplace');
+const emptyBusy = el('emptyBusy');
+const emptyClose = el<HTMLButtonElement>('emptyClose');
+const importBtn = el<HTMLButtonElement>('importBtn');
+const pickBtn = el<HTMLButtonElement>('pickBtn');
 const toast = el('toast');
 const searchHost = el('searchPanel');
 const selPath = el('selPath');
@@ -108,6 +121,90 @@ rowSource.subscribe((snapshot) => {
   updateStatus();
 });
 
+/* ---------------- import layer（文档入口层） ---------------- */
+
+const EMPTY_TITLE_INITIAL = '拖入 JSON，毫秒级开始查看';
+const EMPTY_TITLE_REPLACE = '打开新文档';
+const EMPTY_SUB_INITIAL = '本地只读 · 数据不经过网络 · 50 MB 文档由 Worker 常驻';
+const EMPTY_SUB_REPLACE = '本地只读 · 数据不经过网络 · 原文件不受影响';
+
+/** 外部拖放 → 替换层里暂存的文件（等待用户确认，Q6-A） */
+let pendingFile: File | null = null;
+
+function importLayerOpen(): boolean {
+  return !empty.classList.contains('is-hidden');
+}
+
+function importLayerMode(): 'initial' | 'replace' {
+  return empty.dataset.mode === 'replace' ? 'replace' : 'initial';
+}
+
+function setImportError(message: string | null): void {
+  emptyError.textContent = message ?? '';
+  emptyError.hidden = !message;
+}
+
+function setImportBusy(busy: boolean): void {
+  emptyBusy.hidden = !busy;
+  empty.classList.toggle('is-busy', busy);
+  emptyPendingReplace.disabled = busy;
+  pickBtn.disabled = busy;
+}
+
+function clearPendingFile(): void {
+  pendingFile = null;
+  emptyPending.hidden = true;
+  emptyPendingName.textContent = '—';
+}
+
+/** 回到「初始空态」的文案/可见性（不改变 empty 整体显示/隐藏）。 */
+function resetImportLayerView(): void {
+  empty.dataset.mode = 'initial';
+  empty.removeAttribute('role');
+  empty.removeAttribute('aria-modal');
+  empty.removeAttribute('aria-labelledby');
+  emptyTitle.textContent = EMPTY_TITLE_INITIAL;
+  emptySub.textContent = EMPTY_SUB_INITIAL;
+  emptyWarn.hidden = true;
+  emptyWarnDoc.textContent = '—';
+  emptyClose.hidden = true;
+  clearPendingFile();
+  setImportError(null);
+  setImportBusy(false);
+}
+
+/** 已打开文档时：点「导入」/文件 chip / ⌘O 打开显式替换层。 */
+function openImportLayer(): void {
+  if (!rootId || importLayerOpen()) return;
+  resetImportLayerView();
+  empty.dataset.mode = 'replace';
+  empty.classList.remove('is-hidden');
+  empty.setAttribute('role', 'dialog');
+  empty.setAttribute('aria-modal', 'true');
+  empty.setAttribute('aria-labelledby', 'emptyTitle');
+  emptyTitle.textContent = EMPTY_TITLE_REPLACE;
+  emptySub.textContent = EMPTY_SUB_REPLACE;
+  emptyWarnDoc.textContent = meta ? `${meta.name}（${formatBytes(meta.bytes)}）` : '当前文档';
+  emptyWarn.hidden = false;
+  emptyClose.hidden = false;
+  emptyInner.focus();
+}
+
+/** 取消替换层：丢弃在途导入回包，回到文档视图。 */
+function closeImportLayer(): void {
+  if (!rootId || !importLayerOpen()) return;
+  if (empty.classList.contains('is-busy')) loadSeq += 1;
+  empty.classList.add('is-hidden');
+  resetImportLayerView();
+  importBtn.focus();
+}
+
+/** 导入成功后隐藏入口层（初始空态或替换层）。 */
+function hideImportLayer(): void {
+  empty.classList.add('is-hidden');
+  resetImportLayerView();
+}
+
 /* ---------------- import ---------------- */
 
 async function importBuffer(
@@ -116,12 +213,25 @@ async function importBuffer(
   name: string,
 ): Promise<void> {
   const loadId = ++loadSeq;
+  const inLayer = importLayerOpen();
+  if (inLayer) {
+    clearPendingFile();
+    setImportError(null);
+    setImportBusy(true);
+  }
   try {
     const reply = await core.load({ loadId, source, data, name });
     if (loadId !== loadSeq) return;
     onLoaded(reply);
   } catch (error) {
-    showError(error);
+    if (loadId !== loadSeq) return;
+    if (CoreError.from(error).code === 'CANCELLED') return;
+    if (inLayer) {
+      setImportError(formatCoreError(error));
+      setImportBusy(false);
+    } else {
+      showError(error);
+    }
   }
 }
 
@@ -139,7 +249,7 @@ function onLoaded(reply: LoadReply): void {
   meta = reply.meta;
   selected = null;
 
-  empty.classList.add('is-hidden');
+  hideImportLayer();
   fileChip.hidden = false;
   fileName.textContent = reply.meta.name;
   fileMeta.textContent = formatBytes(reply.meta.bytes);
@@ -173,6 +283,14 @@ document.addEventListener('paste', (event: ClipboardEvent) => {
   if (isEditableTarget(event.target)) return;
   const text = event.clipboardData?.getData('text/plain');
   if (!text || !text.trim()) return;
+  if (!rootId) {
+    // 初始空态：粘贴 = 打开文档
+    event.preventDefault();
+    void importBuffer('paste', text, '剪贴板.json');
+    return;
+  }
+  // 文档已打开：只有导入层内才接受粘贴；层关闭时完全不处理（Q5-A）
+  if (!importLayerOpen() || importLayerMode() !== 'replace') return;
   event.preventDefault();
   void importBuffer('paste', text, '剪贴板.json');
 });
@@ -183,12 +301,45 @@ window.addEventListener('dragover', (event: DragEvent) => {
 window.addEventListener('drop', (event: DragEvent) => {
   event.preventDefault();
   const file = event.dataTransfer?.files?.[0];
-  if (file) void importFile(file);
+  if (!file) return;
+  if (!rootId) {
+    // 初始空态：直接导入
+    void importFile(file);
+    return;
+  }
+  if (importLayerOpen() && importLayerMode() === 'replace') {
+    // 导入层内拖放：层本身即确认（Q9-A），立即导入
+    void importFile(file);
+    return;
+  }
+  // 文档视图内拖放：打开替换层并暂存文件，等用户确认（Q6-A）
+  openImportLayer();
+  pendingFile = file;
+  emptyPendingName.textContent = `${file.name || 'document.json'}（${formatBytes(file.size)}）`;
+  emptyPending.hidden = false;
+  emptyPendingReplace.focus();
 });
 
-el('importBtn').addEventListener('click', () => fileInput.click());
-el('pickBtn').addEventListener('click', () => fileInput.click());
-fileChip.addEventListener('click', () => fileInput.click());
+importBtn.addEventListener('click', () => {
+  if (rootId) openImportLayer();
+  else fileInput.click();
+});
+pickBtn.addEventListener('click', () => fileInput.click());
+fileChip.addEventListener('click', () => {
+  if (rootId) openImportLayer();
+  else fileInput.click();
+});
+emptyClose.addEventListener('click', () => closeImportLayer());
+emptyPendingReplace.addEventListener('click', () => {
+  const file = pendingFile;
+  if (!file) return;
+  clearPendingFile();
+  void importFile(file);
+});
+empty.addEventListener('click', (event: MouseEvent) => {
+  // 点遮罩（inner 之外）关闭替换层
+  if (event.target === empty && rootId && importLayerMode() === 'replace') closeImportLayer();
+});
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
   if (file) void importFile(file);
@@ -406,6 +557,18 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
     setPanel('search');
     return;
   }
+  // 打开导入层（已打开文档时的显式替换入口，Q11-B）
+  if (mod && key === 'o') {
+    if (!rootId) return;
+    event.preventDefault();
+    openImportLayer();
+    return;
+  }
+  if (event.key === 'Escape' && rootId && importLayerOpen() && importLayerMode() === 'replace') {
+    event.preventDefault();
+    closeImportLayer();
+    return;
+  }
   // 下一个/上一个命中：⌘G / ⇧⌘G，或 F3 / ⇧F3
   if ((mod && key === 'g') || key === 'f3') {
     if (!rootId) return;
@@ -439,10 +602,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function showError(error: unknown): void {
+function formatCoreError(error: unknown): string {
   const coreError = CoreError.from(error);
   const detail = coreError.code === 'PARSE' && coreError.line ? `（第 ${coreError.line} 行）` : '';
-  toast.textContent = `${coreError.code}: ${coreError.message}${detail}`;
+  return `${coreError.code}: ${coreError.message}${detail}`;
+}
+
+function showError(error: unknown): void {
+  toast.textContent = formatCoreError(error);
   toast.hidden = false;
   window.setTimeout(() => {
     toast.hidden = true;
