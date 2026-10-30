@@ -113,6 +113,10 @@ page: 提交行 DOM（双 rAF 后统计首帧）
 异步：保真扫描 → 小报告；Profile 采样；源文本释放
 ```
 
+**导入路由**（2026-10-30，ADR-0004 修订 / #11）：粘贴、拖放只在**初始空态或导入层内**生效；
+文档已打开时由「导入」/`⌘O`/外部拖放打开**导入层**（显式替换层），层内获取路径解析成功即替换、
+失败留在层内且原文档保留；层关闭时页面级 `⌘V` 不导入（输入控件内仍原生粘贴）。
+
 **滚动 / 展开**
 ```
 TreeView 滚动 → RowWindowSource（合并目标、单飞）→ WorkerTransport.request(window)
@@ -209,7 +213,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 5 子树编辑 + undo | ⏳ 命令已留 | `getNodeJson/replaceNode/undo/redo/reset` 在 DocService 抛 `BAD_COMMAND` |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`）：`page.js` **16.7KB gz**（预算 45）、`worker.js` **7.9KB gz**、`page.css` **5.0KB gz**；构建 17ms。
+**产物体积**（`node build.mjs --analyze`）：`page.js` **18.3KB gz**（预算 45）、`worker.js` **7.9KB gz**、`page.css` **5.4KB gz**；构建 12–17ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -235,3 +239,4 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - 搜索高亮 helper 在 `row-renderer` 与 `search-panel` 各一份；大小写折叠对 `İ/ẞ` 等字符会错位（罕见）；smoke 脚本的 reference walk 与 `core/search.ts` 是两份实现。
 - `44px` / `SEARCH_LIMIT=50,000` 在常量、CSS、smoke 脚本多处重复；结果列表滚动直接重绘、未做 rAF 合并（实测 0 长任务）。
 - 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
+- slice 5 编辑接入后：「替换文档 / 关闭文档」需要未保存临时修改的确认（当前无编辑，故未做）。
