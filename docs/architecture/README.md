@@ -58,7 +58,7 @@
 | module | 职责 | 接口（一句话） | 深度要点 |
 |---|---|---|---|
 | `DocService` | 唯一门面：持有 RootStore、路由命令、维护版本、广播事件 | `CoreApi`（见 seams S1） | 15+ 条协议、多根、LRU、编辑历史、取消语义都藏在门面后 |
-| `RootStore` | 多根注册表：`doc` / `expr:N` / `repaired`，`docRevision`/`rowVersion`、表达式根 LRU 3 | `create/ get/ release/ markStale` | 根坐标与生命周期 |
+| `RootStore` | 多根注册表：`doc` / `expr:N` / `repaired`，`docRevision`/`rowVersion`、表达式根 LRU 3 | 已实现 `get/require/ids/values/put/touch/delete/clear`；**`release`/`markStale` 仍是草案**（多文档需补 `close`，见 §12、ADR-0009） | 根坐标与生命周期 |
 | `RowModel` | 可见行模型：per-open 容器 Fenwick、窗口下潜、toggle、replaceNode 增量更新、path↔行号 | `window/toggle/replaceNode/rowOfPath/totalRows` | 固定行高坐标、O(depth·log n) |
 | `identity` | 懒 id（容器）+ `(parent, slot)` 标量句柄；路径⇄句柄；不建全局 parentMap | `idOf/handleAt/pathOf` | 双格式（路径持久化、id 运行期） |
 | `ImportPipeline` | `arrayBuffer`→`TextDecoder`→`JSON.parse`；截断闭合+provenance；保真扫描（BigInt 精确） | `load(input): LoadResult` | 源文本用完即释放 |
@@ -240,3 +240,19 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - `44px` / `SEARCH_LIMIT=50,000` 在常量、CSS、smoke 脚本多处重复；结果列表滚动直接重绘、未做 rAF 合并（实测 0 长任务）。
 - 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
 - slice 5 编辑接入后：「替换文档 / 关闭文档」需要未保存临时修改的确认（当前无编辑，故未做）。
+
+## 12. 未实现设计（2026-10-30）：全部展开/收起 + 工作区多标签
+
+> 两项后续需求已定设计、**尚未实现**（用户明确「后续版本再做」）。决策记录：#9（展开/收起）、#18（多文档标签）；
+> 术语：`CONTEXT.md`（自适应展开 / 全部展开 / 工作区 / 文档标签）；决策：ADR-0002「修订（2026-10-30）」、ADR-0009。
+
+| 层 | 计划改动 | 现状 |
+|---|---|---|
+| `protocol` | 新增 `closeRoot { rootId }`；`load` 回带 `doc:N`；`versions.ts` 加自适应阈值（500）与标签上限（8）常量 | 15 条命令，无关闭根；`load` 只回 `DOC_ROOT_ID` |
+| `core` | `RootStore` doc 根释放（`release`/`close` 收口）；`DocService.load` 不覆盖已有根；`RowModel.expandAll`（dry-run 计数 + 一次性重建） | `load` 写死 `DOC_ROOT_ID`；`RowModel.clear()` 已可作 collapse-all |
+| `viewmodel` | 新增 `WorkspaceState` / `TabState`；`RowWindowSource` / `SearchState` 按标签实例化 | 各一份模块级实例（`main.ts`） |
+| `view` | 新增 `TabStrip`（32px、≥2 文档才显示）；工具栏两个「全部展开 / 全部收起」图标 | 无 |
+| `app` | 导入层区分「替换当前标签 / 新标签」；拖放按落点分流；关闭标签 → `closeRoot` | 导入层已实现（在 `main.ts`） |
+
+**实现期重点风险**：同一 `doc` rootId + 版本重置为 1 时，迟到回包只靠 `seq`/`loadSeq` 兜底（单文档的模块级守卫）——多标签必须改成「rootId 不复用 + 按 rootId 路由/丢弃回包」；
+8 × 50MB 标签 ≈ 584MB Worker 堆（软上限 8 与内存提示的来源）；切回旧标签的窗口可能 stale → 1 帧重取。
