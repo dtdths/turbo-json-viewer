@@ -139,7 +139,7 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
 | `target` | `"chrome120"` | 与 manifest 下限一致；CfT 156 实测 |
 | `splitting` | `true` | CM6 与 acorn 的公共块只打一次 |
 | `sourcemap` | 开发 `"linked"`，发布关闭 | 商店包不带 map |
-| `minify` | `false` | 商店可读性要求（MV3 审核偏好可读代码）；体积靠 gz 预算与懒加载管理，不靠混淆 |
+| `minify` | `true` | CWS Code Readability 允许 minification（删空白/缩短变量名/合并文件），禁止的是混淆与隐藏功能；本项目无 eval、无远程代码、发布不带 sourcemap，minify 合规。体积预算按 minify 后 gz 计（CM6 首开闭包 ≈129–131KB gz ≤140 预算；`minify:false` 会到 200.1KB 超预算） |
 | `metafile` | `true` | `npm run size` 逐文件 gzip 后卡预算（CI 门禁） |
 | `logLevel` | `"warning"` | 构建日志干净 |
 
@@ -255,5 +255,5 @@ CI（必需）：`typecheck → lint:layers → unit + in-process contract → b
 | 50MB 内存上限 | Worker ≈73MB、主线程 0.72MB、文本 0 | 超 50MB 先提示预估再继续；保真/profile 异步；不保留源文本 |
 | worker 生命周期 | 页面关闭即销毁 | 不在 SW 存文档；刷新 = 重新导入，避免"半状态" |
 | CM6 体积取舍 | 最小集 99.4KB gz；`lang-javascript` +45.0KB | v1 表达式框不带 JS 高亮；`lang-json` 增量实测后再定 |
-| `minify: false` 的体积代价 | 未量化（gzip 后差距小，包体字节变大） | 商店可读性优先；`size` 门禁按 gz 卡 |
+| `minify: true` 的体积代价 | 已量化（page.js 26.1→17.0KB gz；CM6 首开闭包 200.1→≈129–131KB gz；raw 字节约 −45%） | 代价 = 真机报错栈不可读（需要时本地临时 `minify:false` 构建复现），发布不含 sourcemap；`size` 门禁按 minify 后 gz 卡 |
 | Windows 高对比度 / 屏幕阅读器 / IME | 未测 | 真机向导补；aria 结构先按 ADR-0005 的 tree/treeitem 实现 |

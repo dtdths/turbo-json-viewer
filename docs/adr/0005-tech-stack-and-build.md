@@ -52,3 +52,12 @@
 | focus-trap / floating-ui / 组件库 | 原生 dialog 与 20 行 clamp 已覆盖实测场景；省 6.3–6.7KB gz 与维护面 |
 | Monaco 作为表达式输入 | 体积/初始化远大于 CM6；表达式框是单行短文本 |
 | Vite + CRXJS | 无框架、多入口 esbuild 已 67ms；HMR 与 SW reload 复杂度抵消收益 |
+
+## 修订（2026-11-02）：minify 合规性
+
+> 依据：[Chrome Web Store Code Readability](https://developer.chrome.com/docs/webstore/program-policies/code-readability)（2026-11-02 核对原文）。
+
+1. 政策只禁止「混淆代码或隐藏功能」（含扩展拉取的外部代码/资源），并**明确允许 minification**：删空白/换行/注释/块定界符、缩短变量与函数名、合并文件。
+2. 上文 §6 末句「保留可读模块结构」被当作 `minify:false` 的理由，属过度解读；现 `build.mjs` 用 `minify:true`。
+3. 合规性不变：仍保持 `splitting` 的独立模块结构、无 eval/`new Function`、无远程代码、发布不带 sourcemap。
+4. 体积口径按 minify 后 gzip 计，见 `docs/architecture/build-and-test.md` §3.2。
