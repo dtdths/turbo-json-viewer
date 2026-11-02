@@ -11,6 +11,7 @@ import type {
   CoreEvent,
   EditReply,
   ExpandReply,
+  ExportReply,
   LoadReply,
   NodeJsonReply,
   ReplyOf,
@@ -76,6 +77,8 @@ export interface CoreApi {
   undo(rootId: RootId): Promise<EditReply>;
   redo(rootId: RootId): Promise<EditReply>;
   reset(rootId: RootId): Promise<EditReply>;
+  /** 导出当前值图 JSON（Worker stringify，-edited 下载；不受编辑器 5MB 限制） */
+  exportDoc(rootId: RootId, indent?: number): Promise<ExportReply>;
 
   getTrail(req: { rootId: RootId; path: Path | null }): Promise<TrailReply>;
   profile(rootId: RootId): Promise<DocumentProfile>;
@@ -110,6 +113,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     undo: (rootId) => send({ t: 'undo', rootId }),
     redo: (rootId) => send({ t: 'redo', rootId }),
     reset: (rootId) => send({ t: 'reset', rootId }),
+    exportDoc: (rootId, indent) => send({ t: 'exportDoc', rootId, indent }),
     getTrail: (req) => send({ t: 'getTrail', ...req }),
     profile: (rootId) => send({ t: 'profile', rootId }),
     stats: (rootId) => send({ t: 'stats', rootId }),

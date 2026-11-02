@@ -61,6 +61,18 @@ A 纯只读；B 全文源文本编辑；C 子树/结构化编辑。
 - 原始文本视图与值图分歧成为常态（尤其新增字段）；必须显式标注，避免用户误判。
 - 子树 JSON 编辑使用 **CM6 + `@codemirror/lang-json`**（JSON 语法高亮 + lint）——已定（2026-10-27，+少量 gz 待实现时实测）。
 
+## 实现完成（2026-11-02）
+
+- **已实现**：`core/edit-history.ts`（撤销栈深度 `EDIT_UNDO_DEPTH=100`；reset = LIFO 反向应用）+ `DocService` 的
+  `getNodeJson/replaceNode/undo/redo/reset/exportDoc`；`viewmodel/edit-state.ts`（修改计数 / undo/redo 可用性）；
+  树入口（双击 / 右键菜单 / F2）+ `setChangedPath` 高亮；`SubtreeEditor`（720×520）+ S5 `CodeEditor` 适配器
+  （CM6 懒加载 130.6KB gz ≤140 预算）；导出 = `exportDoc` → Blob `-edited`；替换文档前未保存确认 + `beforeunload` 提示。
+- **与 edit-spec 的偏差**：spec §2 写「F2/Enter 打开编辑」，但 Enter 已是树「展开 / 折叠」键（slice 1 契约），
+  故编辑键只取 **F2**（+ 双击 / 右键菜单）；Enter 语义不变。
+- **语义落地**：no-op = 规范化 pretty 文本相等（键序变化算修改）；根替换 / 撤销根替换 = 根重建语义；
+  reset 每步版本 ++（迟到窗口一律 stale）；5MB 只读由 `TOO_LARGE` 提示、不打开编辑器。
+- **体积**：`build.mjs` 启用 `minify:true` —— 产物体积预算按 minify 后 gz 计（CM6 首开闭包 200→130.6KB gz）。
+
 ## 被否决的替代
 
 | 方案 | 否决理由 |

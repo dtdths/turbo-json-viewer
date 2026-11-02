@@ -115,3 +115,15 @@ Apply：
 - 行模型需暴露 `replaceNode(path, value)`：父 Fenwick 点更新、节点 Fenwick 重建（展开时）、祖先计数、展开集合裁剪、锚点换算。
 - CM6 包集合：现有最小集 + `@codemirror/lang-json`（+ `@codemirror/lint` 若 lang-json 的 linter 需要）；体积/初始化需实测。
 - 弹层里编辑器高度、长字符串折行、横向滚动需样式验证。
+
+## 10. 实现备注（2026-11-02 落地）
+
+- **S5 适配器**：`view/panels/code-editor.ts` 暴露 `mountCodeEditor(host, opts)`；CM6 全部动态 `import()`（最小包集合，
+  不引 `codemirror` meta 的 search/autocomplete），首次打开弹层才加载（**130.6KB gz ≤140 预算**，page.js 不含 CM6）。
+- **命令**：`getNodeJson`（回 `{text, bytes, kind}`；>5MB 抛 `TOO_LARGE`）/ `replaceNode`（`STALE_DOC` → 5MB →
+  `PARSE` 带行列 → no-op → 行模型替换 → 版本 ++ → 历史）/ `undo`/`redo`/`reset`（`NO_HISTORY`）/
+  **`exportDoc`**（不在 §9 原计划内：导出需要不受 5MB 限制的取文，故单独加）。
+- **入口偏差**：F2 + 双击 + 右键菜单（Enter 保留展开/折叠语义，见 ADR-0006 实现段）。
+- **重置**：源文本已在导入后释放（ADR-0003），故 reset 用 **LIFO 反向撤销**而非重新 parse 源文本
+  （与 ADR-0006 §2「重新 parse 或反向撤销」一致）。
+- **未做（v1.1 / backlog）**：S2（保留替换后仍存在的子路径展开态）、弹层 focus trap、大子树 5MB 预检、50MB 导出实测。

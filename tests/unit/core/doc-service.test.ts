@@ -227,15 +227,10 @@ describe('DocService — 事件 / 未实现命令 / 关闭', () => {
     expect(phases).toEqual(['decode', 'parse', 'model']);
   });
 
-  it('骨架未实现命令统一 BAD_COMMAND("not implemented in skeleton slice")', async () => {
+  it('仍未实现的命令（getTrail / profile）统一 BAD_COMMAND("not implemented in skeleton slice")', async () => {
     const svc = new DocService();
     await load(svc);
     const commands: Command[] = [
-      { t: 'getNodeJson', rootId: DOC_ROOT, path: '$' },
-      { t: 'replaceNode', rootId: DOC_ROOT, path: '$', docRevision: 1, jsonText: '{}' },
-      { t: 'undo', rootId: DOC_ROOT },
-      { t: 'redo', rootId: DOC_ROOT },
-      { t: 'reset', rootId: DOC_ROOT },
       { t: 'getTrail', rootId: DOC_ROOT, path: null },
       { t: 'profile', rootId: DOC_ROOT },
     ];
@@ -318,5 +313,395 @@ describe('DocService — expandAll / collapseAll 命令', () => {
     const svc = new DocService();
     expect((await errorOf(svc.dispatch({ t: 'expandAll', rootId: 'nope' }))).code).toBe('NO_ROOT');
     expect((await errorOf(svc.dispatch({ t: 'collapseAll', rootId: 'nope' }))).code).toBe('NO_ROOT');
+  });
+});
+
+/* ============================= slice 5：子树编辑 ============================= */
+
+const EDIT_DOC = { n: 1, s: 'x', b: true, nul: null, arr: [1], obj: { k: 1 } };
+const EDIT_DOC_TEXT = JSON.stringify(EDIT_DOC);
+
+async function loadEditDoc(svc: DocService): Promise<LoadReply> {
+  return load(svc, EDIT_DOC_TEXT);
+}
+
+describe('DocService — getNodeJson', () => {
+  it('返回规范 pretty JSON、UTF-8 字节数与节点类型（jsonKind）', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+
+    // 期望文本是独立字面量（JSON.stringify(v, null, 2) 的规范形态），不从实现侧重算
+    const expected: Array<[path: string, kind: string, text: string]> = [
+      ['$', 'object', '{\n  "n": 1,\n  "s": "x",\n  "b": true,\n  "nul": null,\n  "arr": [\n    1\n  ],\n  "obj": {\n    "k": 1\n  }\n}'],
+      ['$.n', 'number', '1'],
+      ['$.s', 'string', '"x"'],
+      ['$.b', 'boolean', 'true'],
+      ['$.nul', 'null', 'null'],
+      ['$.arr', 'array', '[\n  1\n]'],
+      ['$.obj', 'object', '{\n  "k": 1\n}'],
+    ];
+    for (const [path, kind, text] of expected) {
+      const reply = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path });
+      expect(reply.kind).toBe(kind);
+      expect(reply.text).toBe(text);
+      expect(reply.bytes).toBe(new TextEncoder().encode(text).byteLength);
+    }
+  });
+
+  it('路径不存在 → BAD_COMMAND', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    expect((await errorOf(svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.absent' }))).code).toBe(
+      'BAD_COMMAND',
+    );
+  });
+
+  it('子树文本 > EDIT_MAX_BYTES(5MB) → TOO_LARGE（带 bytes）', async () => {
+    const svc = new DocService();
+    await load(svc, JSON.stringify({ big: 'x'.repeat(6 * 1024 * 1024) }));
+    const err = await errorOf(svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.big' }));
+    expect(err.code).toBe('TOO_LARGE');
+    expect(err.bytes).toBeGreaterThan(5 * 1024 * 1024);
+  });
+});
+
+describe('DocService — replaceNode 基础', () => {
+  it('替换标量：值图/版本/历史计数更新，窗口可读到新值', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+    expect(loaded.totalRows).toBe(9); // root+n+s+b+nul+arr+arr[0]+obj+obj.k
+
+    const reply = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.n',
+      docRevision: loaded.docRevision,
+      jsonText: '42',
+    });
+    expect(reply).toMatchObject({
+      rootId: DOC_ROOT,
+      docRevision: 2,
+      rowVersion: 2,
+      totalRows: 9,
+      changedPath: '$.n',
+      changedRow: 1,
+    });
+    expect(reply.history).toEqual({ applied: 1, canUndo: true, canRedo: false });
+
+    const node = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' });
+    expect(node.text).toBe('42');
+    expect(node.kind).toBe('number');
+
+    // 旧 rowVersion 的窗口变 stale（主线程丢弃旧回包）
+    expect(
+      (await errorOf(svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 1, seq: 1, start: 0, count: 5 }))).code,
+    ).toBe('STALE_ROOT');
+  });
+
+  it('替换子树（对象→数组）：totalRows 按新结构变化，行序/行号反映新值', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+
+    // $.obj = {k:1}（2 节点）→ [1,2,3]（4 节点，S1 保留展开态 → 子项可见）：9 - 2 + 4 = 11
+    const reply = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.obj',
+      docRevision: loaded.docRevision,
+      jsonText: '[1, 2, 3]',
+    });
+    expect(reply).toMatchObject({ docRevision: 2, rowVersion: 2, totalRows: 11, changedRow: 7 });
+
+    const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 2, seq: 2, start: 0, count: 11 });
+    expect(windowPaths(win)).toEqual([
+      '$', '$.n', '$.s', '$.b', '$.nul', '$.arr', '$.arr[0]', '$.obj', '$.obj[0]', '$.obj[1]', '$.obj[2]',
+    ]);
+  });
+
+  it('文本未变化（等价 JSON）→ no-op：不推进版本、不记历史、无 changedRow', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+
+    const reply = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.obj',
+      docRevision: loaded.docRevision,
+      jsonText: '{ "k": 1 }', // 与当前值等价（键序/空白不同）
+    });
+    expect(reply).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 9 });
+    expect(reply.changedRow).toBeUndefined();
+    expect(reply.history).toEqual({ applied: 0, canUndo: false, canRedo: false });
+  });
+
+  it('docRevision 不符 → STALE_DOC，且不修改值图', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    const err = await errorOf(
+      svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 99, jsonText: '2' }),
+    );
+    expect(err.code).toBe('STALE_DOC');
+    const node = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' });
+    expect(node.text).toBe('1');
+  });
+
+  it('JSON 非法 → PARSE 带行列号，且不修改', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+    const err = await errorOf(
+      svc.dispatch({
+        t: 'replaceNode',
+        rootId: DOC_ROOT,
+        path: '$.n',
+        docRevision: loaded.docRevision,
+        jsonText: '{\n  "a": 1,\n  "b": 01\n}',
+      }),
+    );
+    expect(err.code).toBe('PARSE');
+    expect(err.line).toBe(3);
+    expect(err.column).toBe(9);
+
+    const node = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' });
+    expect(node.text).toBe('1');
+  });
+
+  it('jsonText > 5MB → TOO_LARGE（带 bytes），且不修改', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+    const big = JSON.stringify('x'.repeat(6 * 1024 * 1024));
+    const err = await errorOf(
+      svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.s', docRevision: loaded.docRevision, jsonText: big }),
+    );
+    expect(err.code).toBe('TOO_LARGE');
+    expect(err.bytes).toBeGreaterThan(5 * 1024 * 1024);
+
+    const node = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.s' });
+    expect(node.text).toBe('"x"');
+  });
+
+  it('路径不存在 → BAD_COMMAND', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+    const err = await errorOf(
+      svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.absent', docRevision: loaded.docRevision, jsonText: '1' }),
+    );
+    expect(err.code).toBe('BAD_COMMAND');
+  });
+});
+
+describe('DocService — undo / redo', () => {
+  it('undo 恢复旧值、redo 恢复新值，版本与历史计数正确', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+
+    const undo = await svc.dispatch({ t: 'undo', rootId: DOC_ROOT });
+    expect(undo).toMatchObject({ docRevision: 3, rowVersion: 3, totalRows: 9, changedPath: '$.n' });
+    expect(undo.history).toEqual({ applied: 0, canUndo: false, canRedo: true });
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' })).text).toBe('1');
+
+    const redo = await svc.dispatch({ t: 'redo', rootId: DOC_ROOT });
+    expect(redo).toMatchObject({ docRevision: 4, rowVersion: 4, totalRows: 9, changedPath: '$.n' });
+    expect(redo.history).toEqual({ applied: 1, canUndo: true, canRedo: false });
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' })).text).toBe('42');
+    expect(loaded.totalRows).toBe(9);
+  });
+
+  it('无可撤销 / 无可重做 → NO_HISTORY，且不推进版本', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+    expect((await errorOf(svc.dispatch({ t: 'undo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
+    expect((await errorOf(svc.dispatch({ t: 'redo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
+
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: loaded.docRevision, jsonText: '42' });
+    expect((await errorOf(svc.dispatch({ t: 'redo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
+  });
+
+  it('撤销后再编辑：redo 分支作废', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+    await svc.dispatch({ t: 'undo', rootId: DOC_ROOT }); // docRevision 2 → 3
+
+    const edited = await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 3, jsonText: '7' });
+    expect(edited.history).toEqual({ applied: 1, canUndo: true, canRedo: false });
+    expect((await errorOf(svc.dispatch({ t: 'redo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' })).text).toBe('7');
+  });
+
+  it('undo 多步按 LIFO 反向应用，版本每步推进', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.s', docRevision: 2, jsonText: '"y"' });
+
+    const undo1 = await svc.dispatch({ t: 'undo', rootId: DOC_ROOT });
+    expect(undo1).toMatchObject({ docRevision: 4, changedPath: '$.s' });
+    expect(undo1.history).toEqual({ applied: 1, canUndo: true, canRedo: true });
+
+    const undo2 = await svc.dispatch({ t: 'undo', rootId: DOC_ROOT });
+    expect(undo2).toMatchObject({ docRevision: 5, changedPath: '$.n' });
+    expect(undo2.history).toEqual({ applied: 0, canUndo: false, canRedo: true });
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' })).text).toBe('1');
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.s' })).text).toBe('"x"');
+  });
+});
+
+describe('DocService — reset', () => {
+  it('reset 反向应用所有已生效编辑回原值，版本推进、历史清空', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.obj', docRevision: 2, jsonText: '[7]' });
+
+    const reply = await svc.dispatch({ t: 'reset', rootId: DOC_ROOT });
+    expect(reply.history).toEqual({ applied: 0, canUndo: false, canRedo: false });
+    expect(reply.totalRows).toBe(9); // 回到原始结构
+    expect(reply.docRevision).toBe(5); // 2 次编辑 + 2 步反向替换
+    expect(reply.rowVersion).toBe(5);
+
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' })).text).toBe('1');
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.obj' })).text).toBe('{\n  "k": 1\n}');
+    expect((await errorOf(svc.dispatch({ t: 'undo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
+  });
+
+  it('部分撤销后 reset 只回滚仍生效的编辑', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.s', docRevision: 2, jsonText: '"y"' });
+    await svc.dispatch({ t: 'undo', rootId: DOC_ROOT }); // 只回滚 $.s
+
+    const reply = await svc.dispatch({ t: 'reset', rootId: DOC_ROOT });
+    expect(reply.history).toEqual({ applied: 0, canUndo: false, canRedo: false });
+    // $.s 已撤销，$.n 仍生效 → reset 后 n 回 1
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.n' })).text).toBe('1');
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.s' })).text).toBe('"x"');
+    expect(reply.docRevision).toBe(5); // 2 编辑 + 1 undo + 1 reset 步
+  });
+
+  it('无编辑时 reset 是 no-op 回包（不抛错）', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    const reply = await svc.dispatch({ t: 'reset', rootId: DOC_ROOT });
+    expect(reply).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 9 });
+    expect(reply.history).toEqual({ applied: 0, canUndo: false, canRedo: false });
+  });
+});
+
+describe('DocService — replaceNode 的行模型语义（S1）', () => {
+  it('替换展开态容器：自身保持展开、其直接子项折叠、被删子路径不可见', async () => {
+    const svc = new DocService();
+    // 6 节点小文档 → 加载即全展开：a 与 b 都是展开态
+    const loaded = await load(svc, JSON.stringify({ a: { b: [1, 2] }, c: 1 }));
+    expect(loaded.totalRows).toBe(6);
+
+    const reply = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.a',
+      docRevision: loaded.docRevision,
+      jsonText: '{"x":{"y":1}}',
+    });
+    // 旧 a 子树 4 行 → 新 a（自身展开 + x 折叠）2 行：6 - 4 + 2 = 4
+    expect(reply).toMatchObject({ totalRows: 4, changedRow: 1 });
+    const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: reply.rowVersion, seq: 1, start: 0, count: 4 });
+    expect(windowPaths(win)).toEqual(['$', '$.a', '$.a.x', '$.c']);
+    expect(win.rows.map((row) => row.open)).toEqual([true, true, false, false]);
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.a.x.y' })).text).toBe('1');
+  });
+
+  it('替换折叠态容器：保持折叠（新子项不可见）', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, JSON.stringify({ a: { b: [1, 2] }, c: 1 }));
+    await svc.dispatch({ t: 'toggle', rootId: DOC_ROOT, path: '$.a', open: false });
+
+    const reply = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.a',
+      docRevision: 1,
+      jsonText: '{"x":1}',
+    });
+    // $.a 折叠着 → 仍折叠：1(a) + 1(c) + 1(root) = 3 行，$.a.x 不可见
+    expect(reply.totalRows).toBe(3);
+    const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: reply.rowVersion, seq: 2, start: 0, count: 5 });
+    expect(windowPaths(win)).toEqual(['$', '$.a', '$.c']);
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.a.x' })).text).toBe('1');
+    expect(loaded.totalRows).toBe(6);
+  });
+});
+
+describe('DocService — 根替换', () => {
+  it('根替换重建行模型：根展开、顶层字段可见、子级折叠；search 读到新值图', async () => {
+    const svc = new DocService();
+    const loaded = await loadEditDoc(svc);
+
+    const reply = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$',
+      docRevision: loaded.docRevision,
+      jsonText: '{"q":[1,2],"r":{"s":3}}',
+    });
+    // 根重建语义：根展开、顶层字段可见、子级折叠 → totalRows = 1 + 顶层字段数(2) = 3
+    expect(reply).toMatchObject({ docRevision: 2, rowVersion: 2, totalRows: 3, changedRow: 0, changedPath: '$' });
+    expect(reply.history).toEqual({ applied: 1, canUndo: true, canRedo: false });
+
+    const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 2, seq: 1, start: 0, count: 5 });
+    expect(windowPaths(win)).toEqual(['$', '$.q', '$.r']);
+
+    // 根替换后 search / getNodeJson 必须读新值图（Root.value 同步）
+    const hit = await svc.dispatch({ t: 'search', rootId: DOC_ROOT, seq: 1, query: 'zzz' });
+    expect(hit.total).toBe(0);
+    const hitNew = await svc.dispatch({ t: 'search', rootId: DOC_ROOT, seq: 2, query: 's' });
+    expect(hitNew.total).toBe(1);
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.q' })).text).toBe('[\n  1,\n  2\n]');
+  });
+
+  it('根替换可 undo 回原文（含行数与值）', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$', docRevision: 1, jsonText: '[]' });
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$' })).text).toBe('[]');
+
+    const undo = await svc.dispatch({ t: 'undo', rootId: DOC_ROOT });
+    // 撤销根替换同样走「根重建」：子级折叠 → 1 + 6 个顶层字段 = 7 行（不是编辑前的全展开 9 行）
+    expect(undo).toMatchObject({ docRevision: 3, totalRows: 7, changedRow: 0, changedPath: '$' });
+    const root = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$' });
+    expect(JSON.parse(root.text)).toEqual(EDIT_DOC);
+    const hit = await svc.dispatch({ t: 'search', rootId: DOC_ROOT, seq: 1, query: 'k' });
+    expect(hit.total).toBe(1); // 原文的 $.obj.k 又回来了
+  });
+});
+
+describe('DocService — exportDoc', () => {
+  it('导出当前值图（pretty），字节数正确，反映编辑后的值', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+
+    const reply = await svc.dispatch({ t: 'exportDoc', rootId: DOC_ROOT });
+    const expected = JSON.stringify({ ...EDIT_DOC, n: 42 }, null, 2);
+    expect(reply.text).toBe(expected);
+    expect(reply.bytes).toBe(new TextEncoder().encode(expected).byteLength);
+    expect(JSON.parse(reply.text)).toEqual({ ...EDIT_DOC, n: 42 });
+  });
+
+  it('indent 参数生效（0 = 紧凑）', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    const compact = await svc.dispatch({ t: 'exportDoc', rootId: DOC_ROOT, indent: 0 });
+    expect(compact.text).toBe(JSON.stringify(EDIT_DOC));
+  });
+
+  it('不受编辑器 5MB 限制：6MB 文档可导出', async () => {
+    const svc = new DocService();
+    const big = { big: 'x'.repeat(6 * 1024 * 1024) };
+    await load(svc, JSON.stringify(big));
+    const reply = await svc.dispatch({ t: 'exportDoc', rootId: DOC_ROOT });
+    expect(reply.bytes).toBeGreaterThan(6 * 1024 * 1024);
+    expect(reply.text.length).toBeGreaterThan(6 * 1024 * 1024);
+    expect(JSON.parse(reply.text)).toEqual(big);
   });
 });

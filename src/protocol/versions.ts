@@ -12,6 +12,8 @@ export const MAX_SCROLL_PX = 33_554_428;
 export const ROW_BUDGET = 1_000_000;
 /** 子树编辑器文本上限 */
 export const EDIT_MAX_BYTES = 5 * 1024 * 1024;
+/** 编辑撤销栈深度上限（#16 / ADR-0006） */
+export const EDIT_UNDO_DEPTH = 100;
 /** 搜索命中上限 */
 export const SEARCH_LIMIT = 50_000;
 /** 自适应展开阈值：加载时「全展开行数」（= 节点数）不超过该值则直接全展开（ADR-0002 修订 / #9） */

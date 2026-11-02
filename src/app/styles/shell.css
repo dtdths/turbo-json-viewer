@@ -349,3 +349,145 @@ body.rail-collapsed .rail { display: none; }
   box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.4));
   z-index: 60;
 }
+
+/* ==========================================================================
+   slice 5：子树编辑弹层 / 右键菜单 / 修改标记（只新增，不改既有规则）
+   ========================================================================== */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal[hidden] { display: none; }
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.55);
+  backdrop-filter: blur(2px);
+}
+[data-theme="light"] .modal__backdrop { background: rgba(240, 243, 248, 0.62); }
+.modal__panel {
+  position: relative;
+  width: 720px;
+  height: 520px;
+  max-width: calc(100vw - 64px);
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 10px);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, 0.35));
+}
+.modal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 9px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.modal__title { margin: 0; font-size: 13px; font-weight: 600; }
+.modal__kind {
+  font: 10px/1 ui-monospace, Menlo, monospace;
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill, 999px);
+  color: var(--muted);
+}
+.modal__size {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.modal__close { margin-left: 2px; }
+.modal__path {
+  display: block;
+  padding: 7px 16px;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--accent-text, var(--accent));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.modal__editor { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.modal__editor .cm-editor { height: 100%; }
+.modal__editor .cm-scroller { overflow: auto; }
+.modal__error {
+  margin: 0;
+  padding: 7px 14px;
+  border-top: 1px solid var(--danger, #ff7a85);
+  background: var(--danger-soft, rgba(255, 122, 133, 0.08));
+  color: var(--danger, #ff7a85);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.modal__error[hidden] { display: none; }
+.modal__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.modal__note { font-size: 10.5px; color: var(--faint); }
+.modal__restore { font-size: 11px; }
+.modal__spacer { flex: 1 1 auto; }
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent, #0b0d12);
+}
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--text-on-accent, #0b0d12);
+}
+
+/* 工具栏「已修改 N 处」：有修改时强调（不新增颜色 token） */
+#editBadge.is-dirty {
+  color: var(--accent-text, var(--accent));
+  border-color: var(--accent-border, var(--accent));
+}
+
+.ctxmenu {
+  position: fixed;
+  z-index: 55;
+  min-width: 176px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md, 0 2px 6px rgba(0, 0, 0, 0.35), 0 10px 26px -10px rgba(0, 0, 0, 0.65));
+}
+.ctxmenu[hidden] { display: none; }
+.ctxmenu__item {
+  display: block;
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: var(--radius-xs, 4px);
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.ctxmenu__item:hover,
+.ctxmenu__item:focus-visible { background: var(--bg-hover); color: var(--text); }
+
+/* 编辑过的行：左侧 accent 条 + 淡底 */
+.tjv-tree .row.is-changed {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tjv-tree .row.is-changed.is-selected { background: var(--bg-selected, rgba(124, 140, 255, 0.14)); }

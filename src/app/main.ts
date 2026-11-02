@@ -17,7 +17,9 @@ import { CoreError } from '../protocol/errors';
 import { ROW_HEIGHT } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
 import type { DocumentMeta } from '../protocol/types';
-import type { LoadReply } from '../protocol/messages';
+import type { EditReply, LoadReply } from '../protocol/messages';
+import { EditState } from '../viewmodel/edit-state';
+import { SubtreeEditor } from '../view/panels/subtree-editor';
 
 const chromeApi = (globalThis as { chrome?: { runtime?: { id?: string; getURL(path: string): string } } }).chrome;
 const isExtension = Boolean(chromeApi?.runtime?.id);
@@ -42,6 +44,9 @@ const fileMeta = el('fileMeta');
 const exportBtn = el<HTMLButtonElement>('exportBtn');
 const expandAllBtn = el<HTMLButtonElement>('expandAllBtn');
 const collapseAllBtn = el<HTMLButtonElement>('collapseAllBtn');
+const editBadge = el<HTMLButtonElement>('editBadge');
+const editModal = el('editModal');
+const ctxMenu = el('ctxMenu');
 const fileInput = el<HTMLInputElement>('fileInput');
 const empty = el('empty');
 const emptyInner = el('emptyInner');
@@ -78,6 +83,13 @@ const tree = new TreeView(treeHost, {
     void toggleNode(path, open);
   },
   onSelect: (path: string) => setSelection(path),
+  onEdit: (path: string) => {
+    void openEditor(path);
+  },
+  onContextMenu: (path: string, x: number, y: number) => {
+    setSelection(path);
+    showContextMenu(path, x, y);
+  },
 });
 tree.mount();
 
@@ -101,6 +113,18 @@ const searchPanel = new SearchPanel(searchHost, {
 });
 searchPanel.mount();
 
+/** 子树编辑弹层（CM6 懒加载；见 src/view/panels/subtree-editor.ts）。 */
+const subtreeEditor = new SubtreeEditor({
+  modal: editModal,
+  onApply: (text: string) => applyEditText(text),
+  onClose: () => {
+    editingPath = null;
+  },
+  onRestore: () => {
+    /* 弹层内部已把文本复位到「打开时的值」，app 侧无需动作 */
+  },
+});
+
 /* ---------------- session state ---------------- */
 
 let rootId: string | null = null;
@@ -113,6 +137,12 @@ let loadSeq = 0;
 let searchTimer = 0;
 /** 首次 next/prev/Enter 先跳到当前命中，之后才移动（编辑器惯例）。 */
 let searchJumped = false;
+
+/** 编辑会话（slice 5 / #16 / ADR-0006）：当前编辑目标 + 修改计数/撤销可用性。 */
+const editState = new EditState();
+editState.subscribe(renderEditBadge);
+let editingPath: string | null = null;
+let ctxPath: string | null = null;
 
 function metrics(): { rowHeight: number; viewportRows: number } {
   return { rowHeight: ROW_HEIGHT, viewportRows: Math.max(1, tree.viewportRows()) };
@@ -175,9 +205,10 @@ function resetImportLayerView(): void {
   setImportBusy(false);
 }
 
-/** 已打开文档时：点「导入」/文件 chip / ⌘O 打开显式替换层。 */
-function openImportLayer(): void {
-  if (!rootId || importLayerOpen()) return;
+/** 已打开文档时：点「导入」/文件 chip / ⌘O 打开显式替换层。返回是否真的打开。 */
+function openImportLayer(): boolean {
+  if (!rootId || importLayerOpen()) return false;
+  if (!confirmDiscardEdits()) return false;
   resetImportLayerView();
   empty.dataset.mode = 'replace';
   empty.classList.remove('is-hidden');
@@ -190,6 +221,7 @@ function openImportLayer(): void {
   emptyWarn.hidden = false;
   emptyClose.hidden = false;
   emptyInner.focus();
+  return true;
 }
 
 /** 取消替换层：丢弃在途导入回包，回到文档视图。 */
@@ -258,6 +290,11 @@ function onLoaded(reply: LoadReply): void {
   exportBtn.disabled = false;
   expandAllBtn.disabled = false;
   collapseAllBtn.disabled = false;
+  // 新文档：清空编辑会话（slice 5）
+  editingPath = null;
+  subtreeEditor.close();
+  editState.clear();
+  renderEditBadge();
 
   rowSource.setRoot({ rootId: rid, rowVersion, totalRows });
   rowSource.setMetrics(metrics());
@@ -317,7 +354,7 @@ window.addEventListener('drop', (event: DragEvent) => {
     return;
   }
   // 文档视图内拖放：打开替换层并暂存文件，等用户确认（Q6-A）
-  openImportLayer();
+  if (!openImportLayer()) return;
   pendingFile = file;
   emptyPendingName.textContent = `${file.name || 'document.json'}（${formatBytes(file.size)}）`;
   emptyPending.hidden = false;
@@ -356,6 +393,30 @@ expandAllBtn.addEventListener('click', () => {
 collapseAllBtn.addEventListener('click', () => {
   void applyExpandAll(false);
 });
+
+exportBtn.addEventListener('click', () => {
+  void exportDoc();
+});
+editBadge.addEventListener('click', () => {
+  void resetEdits();
+});
+ctxMenu.addEventListener('click', (event: MouseEvent) => {
+  const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-act]');
+  if (!item) return;
+  const path = ctxPath;
+  hideContextMenu();
+  if (item.dataset.act === 'edit' && path) void openEditor(path);
+});
+ctxMenu.addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.key === 'Escape') hideContextMenu();
+});
+document.addEventListener(
+  'pointerdown',
+  (event: PointerEvent) => {
+    if (!ctxMenu.hidden && !ctxMenu.contains(event.target as Node)) hideContextMenu();
+  },
+  true,
+);
 
 /* ---------------- tree intents ---------------- */
 
@@ -405,12 +466,200 @@ async function applyExpandAll(open: boolean): Promise<void> {
   }
 }
 
+/* ---------------- 编辑（slice 5 / #16 / ADR-0006） ---------------- */
+
+const CHANGED_FLASH_MS = 900;
+
+function renderEditBadge(): void {
+  const count = editState.count;
+  editBadge.hidden = count === 0;
+  editBadge.textContent = `已修改 ${count} 处`;
+  editBadge.classList.toggle('is-dirty', count > 0);
+  exportBtn.title = count > 0 ? '导出当前值图（含临时修改，文件名带 -edited）' : '导出当前值图';
+}
+
+/** 替换文档会丢弃临时修改：有修改时先确认（edit-spec §5）。 */
+function confirmDiscardEdits(): boolean {
+  if (!editState.dirty) return true;
+  return window.confirm(`当前有 ${editState.count} 处未导出的临时修改，继续将丢失。继续？`);
+}
+
+function confirmReset(): boolean {
+  if (!editState.dirty) return false;
+  return window.confirm(`重置全部 ${editState.count} 处临时修改？原文件不受影响。`);
+}
+
+/**
+ * 编辑命令回包统一应用：版本/行数 + 窗口重取 + 锚点换算（edit-spec §4.4）
+ * + 选中与短暂高亮 + 修改计数。search stale 由调用方按需补。
+ */
+function applyModelReply(reply: EditReply): void {
+  if (!rootId) return;
+  const anchor = rowSource.anchor();
+  const delta = reply.totalRows - totalRows;
+  docRevision = reply.docRevision;
+  rowVersion = reply.rowVersion;
+  totalRows = reply.totalRows;
+  rowSource.setRoot({ rootId, rowVersion, totalRows });
+  // 变更发生在视口上方：按行数差值平移锚点，保持视口内容不跳
+  if (anchor && reply.changedRow !== undefined && reply.changedRow >= 0 && reply.changedRow < anchor.row) {
+    rowSource.restoreAnchor({ row: Math.max(0, anchor.row + delta), offsetPx: anchor.offsetPx });
+  }
+  rowSource.requestWindow();
+  if (reply.changedPath) {
+    setSelection(reply.changedPath);
+    tree.setChangedPath(reply.changedPath);
+    window.setTimeout(() => tree.setChangedPath(null), CHANGED_FLASH_MS);
+  }
+  editState.sync(reply.history);
+  updateStatus();
+}
+
+/** 文档已修改：清空搜索命中并提示重搜（edit-spec §6）。 */
+function markSearchStale(): void {
+  searchState.markStale();
+  applySearchToTree();
+  renderSearch();
+}
+
+async function openEditor(path: string): Promise<void> {
+  if (!rootId || subtreeEditor.isOpen()) return;
+  try {
+    const reply = await core.getNodeJson({ rootId, path });
+    editingPath = path;
+    await subtreeEditor.open({
+      path,
+      kind: reply.kind ?? 'object',
+      bytes: reply.bytes,
+      text: reply.text,
+      readOnly: false,
+    });
+  } catch (error) {
+    const coreError = CoreError.from(error);
+    // 超过 5MB：只读提示、不打开编辑器（edit-spec §7）
+    if (coreError.code === 'TOO_LARGE') {
+      showError(
+        new CoreError({
+          code: 'TOO_LARGE',
+          message: `子树过大（${formatBytes(coreError.bytes ?? 0)}），超过 5 MB，请选择更小的子树`,
+        }),
+      );
+      return;
+    }
+    showError(error);
+  }
+}
+
+async function applyEditText(text: string): Promise<void> {
+  if (!rootId || !editingPath) return;
+  const path = editingPath;
+  subtreeEditor.setError(null);
+  subtreeEditor.setBusy(true);
+  try {
+    const reply = await core.replaceNode({ rootId, path, docRevision, jsonText: text });
+    applyModelReply(reply);
+    markSearchStale();
+    subtreeEditor.close();
+    editingPath = null;
+  } catch (error) {
+    const coreError = CoreError.from(error);
+    subtreeEditor.setError({ message: coreError.message, line: coreError.line, column: coreError.column });
+  } finally {
+    subtreeEditor.setBusy(false);
+  }
+}
+
+async function undoEdit(): Promise<boolean> {
+  if (!rootId) return false;
+  try {
+    const reply = await core.undo(rootId);
+    applyModelReply(reply);
+    markSearchStale();
+    return true;
+  } catch (error) {
+    if (CoreError.from(error).code === 'NO_HISTORY') return false;
+    showError(error);
+    return false;
+  }
+}
+
+async function redoEdit(): Promise<boolean> {
+  if (!rootId) return false;
+  try {
+    const reply = await core.redo(rootId);
+    applyModelReply(reply);
+    markSearchStale();
+    return true;
+  } catch (error) {
+    if (CoreError.from(error).code === 'NO_HISTORY') return false;
+    showError(error);
+    return false;
+  }
+}
+
+/** 重置全部临时修改（反向撤销到打开时状态）；skipConfirm 供 dev hook 用。 */
+async function resetEdits(skipConfirm = false): Promise<boolean> {
+  if (!rootId || !editState.dirty) return false;
+  if (!skipConfirm && !confirmReset()) return false;
+  try {
+    const reply = await core.reset(rootId);
+    applyModelReply(reply);
+    markSearchStale();
+    return true;
+  } catch (error) {
+    if (CoreError.from(error).code !== 'NO_HISTORY') showError(error);
+    return false;
+  }
+}
+
+function exportName(name: string, edited: boolean): string {
+  const base = name.replace(/\.json$/i, '');
+  return `${base}${edited ? '-edited' : ''}.json`;
+}
+
+/** 导出当前值图（唯一落盘动作；`-edited` 后缀；ADR-0006 §2）。 */
+async function exportDoc(): Promise<void> {
+  if (!rootId || !meta) return;
+  exportBtn.disabled = true;
+  try {
+    const { text } = await core.exportDoc(rootId, 2);
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = exportName(meta.name, editState.dirty);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    showError(error);
+  } finally {
+    exportBtn.disabled = false;
+  }
+}
+
+function showContextMenu(path: string, x: number, y: number): void {
+  ctxPath = path;
+  ctxMenu.hidden = false;
+  const rect = ctxMenu.getBoundingClientRect();
+  ctxMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
+  ctxMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
+  ctxMenu.querySelector<HTMLElement>('[data-act="edit"]')?.focus();
+}
+
+function hideContextMenu(): void {
+  if (ctxMenu.hidden) return;
+  ctxMenu.hidden = true;
+  ctxPath = null;
+}
+
 function setSelection(path: string | null): void {
   selected = path;
   tree.setSelected(path);
   selPath.textContent = path ?? '—';
   selPath.title = path ?? '';
-  selMeta.textContent = path ? '按 F2 编辑（下一 slice）' : '';
+  selMeta.textContent = path ? 'F2 / 双击编辑' : '';
   updateStatus();
 }
 
@@ -593,8 +842,18 @@ el('railToggle').addEventListener('click', toggleRail);
 el('railCollapse').addEventListener('click', toggleRail);
 
 window.addEventListener('keydown', (event: KeyboardEvent) => {
+  // 子树编辑器打开时，快捷键交给 CM6（其 keymap 处理 Esc / Mod-Enter / 撤销）
+  if (subtreeEditor.isOpen()) return;
   const mod = event.metaKey || event.ctrlKey;
   const key = event.key.toLowerCase();
+  // 撤销/重做临时修改（输入控件内交给浏览器原生）
+  if (mod && key === 'z' && !isEditableTarget(event.target)) {
+    if (!rootId) return;
+    event.preventDefault();
+    if (event.shiftKey) void redoEdit();
+    else void undoEdit();
+    return;
+  }
   if (mod && key === 'k') {
     event.preventDefault();
     setPanel('search');
@@ -636,7 +895,9 @@ function updateStatus(): void {
   statusSize.textContent = `${formatBytes(meta.bytes)} · v${docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
-  statusState.textContent = '只读 · 原文件不变';
+  statusState.textContent = editState.dirty
+    ? `临时修改 ${editState.count} 处 · 原文件不变`
+    : '只读 · 原文件不变';
 }
 
 function formatBytes(bytes: number): string {
@@ -667,7 +928,12 @@ const resizeObserver = new ResizeObserver(() => {
 });
 resizeObserver.observe(treeHost);
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (event: BeforeUnloadEvent) => {
+  // 有未导出的临时修改：浏览器原生确认（edit-spec §5）
+  if (editState.dirty) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
   // 经 transport close：reject 所有 pending（CLOSED）并关闭端口，再 terminate worker
   workerCore.close();
 });
@@ -704,22 +970,27 @@ if (!isExtension) {
     };
   };
 
+  const stateOf = (): Record<string, unknown> => ({
+    rootId,
+    totalRows,
+    rowVersion,
+    docRevision,
+    selected,
+    rendered: rowSource.snapshot().rows.length,
+    start: rowSource.snapshot().start,
+    scrollTop: tree.scrollTopPx(),
+    editCount: editState.count,
+    canUndo: editState.canUndo,
+    canRedo: editState.canRedo,
+  });
+
   (globalThis as unknown as { __tjv?: unknown }).__tjv = {
     loadText: (text: string, name = 'sample.json') => importBuffer('file', text, name),
     scrollToPx: (px: number) => tree.scrollToPx(px),
     togglePath: (path: string, open: boolean) => toggleNode(path, open),
     expandAll: () => applyExpandAll(true),
     collapseAll: () => applyExpandAll(false),
-    state: () => ({
-      rootId,
-      totalRows,
-      rowVersion,
-      docRevision,
-      selected,
-      rendered: rowSource.snapshot().rows.length,
-      start: rowSource.snapshot().start,
-      scrollTop: tree.scrollTopPx(),
-    }),
+    state: stateOf,
 
     // ---- slice 4：搜索 dev hook（契约见 docs/design/slice4-search-contract.md §5）----
     search: async (term: string) => {
@@ -758,5 +1029,44 @@ if (!isExtension) {
       searchPanel.scrollListTo(px);
       return searchDiagnostics();
     },
+
+    // ---- slice 5：编辑 dev hook（契约见 docs/design/edit-spec.md §2/§8）----
+
+    /** 打开某路径的子树编辑器（走真实 getNodeJson → SubtreeEditor.open 流程）。 */
+    editOpen: async (path: string) => {
+      await openEditor(path);
+      return { open: subtreeEditor.isOpen(), path: editingPath, text: subtreeEditor.isOpen() ? subtreeEditor.getValue() : null };
+    },
+    /** 当前编辑器文本（未打开 → null）。 */
+    editText: () => (subtreeEditor.isOpen() ? subtreeEditor.getValue() : null),
+    /** 覆盖编辑器文本（模拟用户输入；JSON lint 异步生效）。 */
+    editSetText: (text: string) => {
+      subtreeEditor.setValue(text);
+      return subtreeEditor.getValue();
+    },
+    /** 走 UI 的 Apply 按钮（等 lint/禁用态生效后点击）。 */
+    editClickApply: () => {
+      document.getElementById('editApply')?.click();
+      return { open: subtreeEditor.isOpen() };
+    },
+    /** 直接走 app 的 Apply 流程（等价编辑器 Apply，绕过按钮）；返回 socket 状态。 */
+    editApplyText: async (text: string) => {
+      await applyEditText(text);
+      return { ...stateOf(), open: subtreeEditor.isOpen() };
+    },
+    editClose: () => {
+      subtreeEditor.close();
+      editingPath = null;
+      return true;
+    },
+    undo: async () => ({ ok: await undoEdit(), ...stateOf() }),
+    redo: async () => ({ ok: await redoEdit(), ...stateOf() }),
+    resetEdits: async () => ({ ok: await resetEdits(true), ...stateOf() }),
+    exportDocText: async () => {
+      if (!rootId) return null;
+      const reply = await core.exportDoc(rootId, 2);
+      return { bytes: reply.bytes, text: reply.text, name: exportName(meta?.name ?? 'doc.json', editState.dirty) };
+    },
+    editBadgeText: () => ({ hidden: editBadge.hidden, text: editBadge.textContent }),
   };
 }

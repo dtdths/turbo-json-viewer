@@ -29,7 +29,8 @@ const options = {
   target: 'chrome120',
   splitting: true,
   sourcemap: watch ? 'linked' : false,
-  minify: false,
+  // 产物体积预算按 minify 后的 gz 计（架构 §8）：CM6 首开闭包 200→129KB gz、page.js 25.6→17.0KB gz
+  minify: true,
   metafile: analyze,
   logLevel: 'info',
   chunkNames: 'chunks/[name]-[hash]',

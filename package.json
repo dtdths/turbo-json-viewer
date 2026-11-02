@@ -20,5 +20,9 @@
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
+    "codemirror": "^6.0.2"
   }
 }

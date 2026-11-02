@@ -35,6 +35,7 @@ export type Command =
   | { t: 'undo'; rootId: RootId }
   | { t: 'redo'; rootId: RootId }
   | { t: 'reset'; rootId: RootId }
+  | { t: 'exportDoc'; rootId: RootId; indent?: number }
   | { t: 'getTrail'; rootId: RootId; path: Path | null }
   | { t: 'profile'; rootId: RootId }
   | { t: 'stats'; rootId: RootId };
@@ -47,6 +48,14 @@ export interface LoadReply {
   meta: DocumentMeta;
 }
 
+/** 编辑历史状态（undo/redo/reset 与「已临时修改 N 处」徽标共用，见 #16 / ADR-0006） */
+export interface EditHistoryState {
+  /** 当前生效的编辑步数（撤销后减少，redo 后回增） */
+  applied: number;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
 export interface EditReply {
   rootId: RootId;
   docRevision: Rev;
@@ -54,6 +63,13 @@ export interface EditReply {
   totalRows: number;
   changedRow?: number;
   changedPath?: Path;
+  history?: EditHistoryState;
+}
+
+/** 导出当前值图的 JSON 文本（`-edited` 下载用；不受编辑器 5MB 限制） */
+export interface ExportReply {
+  text: string;
+  bytes: number;
 }
 
 export interface ExpandReply {
@@ -66,6 +82,8 @@ export interface ExpandReply {
 export interface NodeJsonReply {
   text: string;
   bytes: number;
+  /** 节点类型（编辑弹层标题用；见 #16） */
+  kind?: JsonKind;
 }
 
 export interface TrailReply {
@@ -99,6 +117,7 @@ export interface ReplyByKind {
   undo: EditReply;
   redo: EditReply;
   reset: EditReply;
+  exportDoc: ExportReply;
   getTrail: TrailReply;
   profile: DocumentProfile;
   stats: StatsReply;
