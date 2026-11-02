@@ -202,7 +202,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 自适应）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 自适应 + 复制 4 格式）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -212,9 +212,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 4 搜索面板 + 命中跳转 | ✅ | `viewmodel/search-state.ts`（begin/apply + seq/docRevision 过期 + 过滤 + 虚拟窗口，36 用例）、`view/panels/search-panel.ts`（44px 两行虚拟结果列表 + C 样式）、`app/main.ts` 接线（上下条 / Enter / ⌘G / F3 / 树命中高亮 + `<mark>`）；`.mock/1.json` `hotel` 27.3ms/186 命中，10MB `hotel` 91.3ms/50,000 截断（raw 74,378），跳转 2.7ms，列表滚动渲染恒 22 行、0 长任务 |
 | 4.5 全部展开 / 全部收起 + 小文档自适应展开（#9 / ADR-0002 修订） | ✅ | `RowModel.countAllExpandedRows/expandAll/expandIfAtMost/collapseAll` + `DocService` 的 `expandAll`/`collapseAll` 命令（changed 才 `rowVersion++`）+ `load` 自适应（≤500 节点全展开，带限计数早停 0.14ms）；顶部工具栏两个图标按钮（`#expandAllBtn`/`#collapseAllBtn`，无快捷键）；**单测 137**（新增 21） |
 | 5 子树编辑 + undo + 导出（#16 / ADR-0006） | ✅ | `core/edit-history.ts`（深度 100、redo 截断、LIFO reset）+ `DocService` 的 `getNodeJson/replaceNode/undo/redo/reset/exportDoc`（5MB `TOO_LARGE`、`PARSE` 带行列、no-op 不推进版本、`STALE_DOC` 守卫、每根一份历史）；`viewmodel/edit-state.ts` + 树意图（dblclick / 右键菜单 / F2 / `setChangedPath`）；`view/panels/{code-editor,subtree-editor}.ts`（CM6 懒加载、lint 门控 Apply、720×520 弹层）；`main.ts` 接线（徽标 / ⌘Z ⇧⌘Z / 重置 / `-edited` 导出 / 未保存确认）；**单测 177** |
+| 5.5 复制 4 格式（#9 / ADR-0010） | ✅ | `core/copy.ts`（四格式文本统一生成：子树 JSON 2 空格 / 规范路径 / 标量原值 / 键名）+ `DocService.copyNode`（**只读**，不推进 `docRevision`/`rowVersion`；子树 JSON 5MB `TOO_LARGE`）；行右键菜单 5 项（容器禁用「原始值」、根禁用「键名」，`title` 说明）+ ↑↓/Home/End 键盘；零权限剪贴板（`navigator.clipboard.writeText` → `execCommand` 回退 → toast 提示手动），**不声明 `clipboardWrite`**；**单测 199**（新增 22） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **17.0KB gz**（预算 45）、`worker.js` **6.3KB gz**、`page.css` **5.6KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **18.1KB gz**（预算 45）、`worker.js` **6.6KB gz**、`page.css` **5.6KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -247,7 +248,16 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **性能**（10MB 样本，core 临时基准）：`getNodeJson` 中层 item **0.22ms**、同形状 Apply **0.24ms**、undo/redo **0.05/0.04ms**；展开态 item 12→2000 字段 Apply **0.85ms**（+1988 行）/ undo 0.15ms；首开编辑器（130.6KB gz）0 长任务。
 - **回归**：`npm run smoke` / `smoke:ext` / `smoke-search` **82/82** / `smoke-extension-search` **56/56** / `smoke-expand` **11/11** 全绿；截图 `.spike/smoke/edit-{open,applied,reset}.png`。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
+**slice 5.5 复制验收**（2026-11-02，CfT headless 1440×900；`scripts/smoke-copy.mjs` **21/21**）：
+
+- **菜单**：5 项固定顺序（复制子树 JSON / 复制路径 / 复制原始值 / 复制键名 / 分隔线 / 编辑此节点 JSON）；容器「原始值」禁用、根「键名」禁用（`title` 说明）、标量数组元素全启用；焦点落第一个可用项。
+- **四格式逐字**：子树 JSON 2 空格（含非标识符键 `{"b.c": "x"}`）；根全文；规范路径 `$` / `$.a` / `$['b.c']` / `$.a['b.c']` / `$['it\'s']` / `$.arr[0]`；原始值（字符串去引号且**反转义**：`line\n"q" \ tail` → 真实换行/引号/反斜杠；`10` / `true` / `null`）；键名 `b.c`（非标识符键原样）/ `0`（数组下标无方括号）；容器原值与根键名 → `BAD_COMMAND`。
+- **剪贴板**：CDP 授权 origin 后四格式**逐字读回**（`$.arr[1].k`、`{\n  "b.c": "x"\n}`、`10`、`b.c`）；真实菜单点击 → toast「已复制：<格式>」+ 菜单关闭；无读权限环境自动降级为只验 toast/菜单/状态。
+- **守卫 / 只读**：6MB 标量子树 → `TOO_LARGE`，toast「子树过大（6.0 MB），超过 5 MB，请用「导出」」；复制前后 `docRevision`/`rowVersion`/`totalRows` 不变；0 page 异常 / 0 console error。
+- **体积**：`page.js` 17.0→**18.1KB gz**（预算 45），worker 6.3→6.6；CM6 闭包不变。
+- **回归**：`npm run smoke` / `smoke:ext` / `smoke-search` **82/82** / `smoke-extension-search` **56/56** / `smoke-expand` **11/11** / `smoke-edit` **14/14** 全绿；截图 `.spike/smoke/copy-{menu-container,menu-root,toast}.png`。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
@@ -262,6 +272,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - 「替换文档」已有未保存确认；「关闭文档」功能本身尚未存在（随 #11 最近文档 / 多标签再做）。
 - 「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）；「N=500 可关」的设置开关待设置面板（`ViewStateStore` 未接线）。
 - `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。
+- 复制（slice 5.5）：子树 JSON >5MB 只能走导出（`TOO_LARGE` toast 引导）；「缩进/压缩跟随当前设置」未做（设置面板与 `ViewStateStore` 未接线，固定 2 空格，见 ADR-0010 §5）；**真实扩展页未实测剪贴板**（HTTP 模式验到 `navigator.clipboard` 逐字读回，扩展内无 `__tjv`，需真机向导补）；菜单未加复制快捷键（⌘C 保留给原生文本选择，见 ADR-0010 §8）。
 
 ## 12. 未实现设计（多文档工作区标签，#18）
 
@@ -270,7 +281,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 | 层 | 计划改动 | 现状 |
 |---|---|---|
-| `protocol` | 新增 `closeRoot { rootId }`；`load` 回带 `doc:N`；`versions.ts` 加标签上限（8）与标签条高（32）常量 | 17 条命令（15 + `expandAll`/`collapseAll`），无关闭根；`load` 写死 `DOC_ROOT_ID` |
+| `protocol` | 新增 `closeRoot { rootId }`；`load` 回带 `doc:N`；`versions.ts` 加标签上限（8）与标签条高（32）常量 | 18 条命令（15 + `expandAll`/`collapseAll`/`copyNode`），无关闭根；`load` 写死 `DOC_ROOT_ID` |
 | `core` | `RootStore` doc 根释放（`release`/`close` 收口）；`DocService.load` 不覆盖已有根 | `load` 写死 `DOC_ROOT_ID`；doc 根无释放路径 |
 | `viewmodel` | 新增 `WorkspaceState` / `TabState`；`RowWindowSource` / `SearchState` 按标签实例化 | 各一份模块级实例（`main.ts`） |
 | `view` | 新增 `TabStrip`（32px、≥2 文档才显示、`role=tablist`） | 无 |

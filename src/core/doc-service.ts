@@ -13,6 +13,7 @@
 import { CoreError } from '../protocol/errors';
 import type {
   Command,
+  CopyReply,
   CoreEvent,
   EditReply,
   ExpandReply,
@@ -26,6 +27,7 @@ import type {
 import { ROOT_PATH } from '../shared/path';
 import type { Path, RootId, RowWindow } from '../protocol/types';
 import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES } from '../protocol/versions';
+import { copyNodeText } from './copy';
 import { EditHistory, type EditEntry } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { jsonKind, RowModel } from './row-model';
@@ -98,6 +100,8 @@ export class DocService {
         return this.stats(cmd);
       case 'getNodeJson':
         return this.getNodeJson(cmd);
+      case 'copyNode':
+        return this.copyNode(cmd);
       case 'replaceNode':
         return this.replaceNode(cmd);
       case 'undo':
@@ -306,6 +310,19 @@ export class DocService {
       });
     }
     return { text, bytes, kind: jsonKind(value) };
+  }
+
+  /* -------------------------------- 复制 -------------------------------- */
+
+  /**
+   * 复制四格式（ADR-0010 §6）：**只读**——不推进 docRevision / rowVersion、不触发搜索 stale。
+   * 文本生成全部在 `core/copy.ts`：主线程看不到值图，路径/键名必须与 `shared/path` 同源。
+   */
+  private copyNode(cmd: Cmd<'copyNode'>): CopyReply {
+    const root = this.roots.require(cmd.rootId);
+    const value = root.rowModel.valueAt(cmd.path);
+    const { text, bytes } = copyNodeText({ format: cmd.format, path: cmd.path, value });
+    return { text, bytes, format: cmd.format };
   }
 
   /**

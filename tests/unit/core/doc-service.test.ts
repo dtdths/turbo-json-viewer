@@ -705,3 +705,112 @@ describe('DocService — exportDoc', () => {
     expect(JSON.parse(reply.text)).toEqual(big);
   });
 });
+
+/** 复制用例的 fixture：覆盖标识符键 / 带点键 / 带引号键 / 数组元素 / 四种标量。 */
+const COPY_DOC = {
+  a: { 'b.c': 'x', n: 1 },
+  "it's": 'quote',
+  arr: [10, { k: null }],
+  t: true,
+  z: null,
+};
+
+async function loadCopyDoc(svc: DocService): Promise<void> {
+  await load(svc, JSON.stringify(COPY_DOC));
+}
+
+describe('DocService — copyNode（复制四格式 / ADR-0010）', () => {
+  it('subtree：2 空格缩进，bytes 为 UTF-8 字节数', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    const reply = await svc.dispatch({
+      t: 'copyNode',
+      rootId: DOC_ROOT,
+      path: '$.a',
+      format: 'subtree',
+    });
+    const expected = JSON.stringify(COPY_DOC.a, null, 2);
+    expect(reply.text).toBe(expected);
+    expect(reply.bytes).toBe(new TextEncoder().encode(expected).byteLength);
+    expect(reply.format).toBe('subtree');
+  });
+
+  it('path：返回规范路径原文（非标识符键 / 数组下标）', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    for (const path of ['$', '$.a', "$.a['b.c']", "$['it\\'s']", '$.arr[1]']) {
+      const reply = await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path, format: 'path' });
+      expect(reply.text).toBe(path);
+      expect(reply.bytes).toBe(new TextEncoder().encode(path).byteLength);
+    }
+  });
+
+  it('value：标量文本值（字符串不带引号；数字/布尔/null 为 JSON 字面量）', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    const cases: Array<[string, string]> = [
+      ['$.arr[0]', '10'],
+      ["$['it\\'s']", 'quote'],
+      ['$.a.n', '1'],
+      ['$.t', 'true'],
+      ['$.z', 'null'],
+      ["$.a['b.c']", 'x'],
+    ];
+    for (const [path, expected] of cases) {
+      const reply = await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path, format: 'value' });
+      expect(reply.text).toBe(expected);
+      expect(reply.format).toBe('value');
+    }
+  });
+
+  it('key：对象键原样；数组元素为下标数字；根 → BAD_COMMAND', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    expect(
+      (await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: "$.a['b.c']", format: 'key' })).text,
+    ).toBe('b.c');
+    expect(
+      (await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.arr[1]', format: 'key' })).text,
+    ).toBe('1');
+    expect(
+      (await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.a', format: 'key' })).text,
+    ).toBe('a');
+    const err = await errorOf(svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$', format: 'key' }));
+    expect(err.code).toBe('BAD_COMMAND');
+  });
+
+  it('容器复制原始值 → BAD_COMMAND（不静默序列化）', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    const err = await errorOf(svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.a', format: 'value' }));
+    expect(err.code).toBe('BAD_COMMAND');
+  });
+
+  it('子树 JSON > 5MB → TOO_LARGE（不截断，引导导出）', async () => {
+    const svc = new DocService();
+    const big = { big: 'x'.repeat(6 * 1024 * 1024) };
+    await load(svc, JSON.stringify(big));
+    const err = await errorOf(svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.big', format: 'subtree' }));
+    expect(err.code).toBe('TOO_LARGE');
+    expect(err.bytes).toBeGreaterThan(5 * 1024 * 1024);
+  });
+
+  it('只读：复制不推进 docRevision / rowVersion，不改 totalRows', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    const before = await svc.dispatch({ t: 'stats', rootId: DOC_ROOT });
+    for (const format of ['subtree', 'path', 'value', 'key'] as const) {
+      await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.arr[0]', format });
+    }
+    const after = await svc.dispatch({ t: 'stats', rootId: DOC_ROOT });
+    expect(after).toEqual(before);
+  });
+
+  it('未知路径 → 报错（不返回空文本）', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    await expect(
+      svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.nope', format: 'path' }),
+    ).rejects.toBeTruthy();
+  });
+});

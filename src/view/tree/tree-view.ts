@@ -10,7 +10,7 @@
  *   - click 委托：caret → onToggle(path, !open)；行 → onSelect(path)。
  *   - 最小键盘：↑/↓ 移动选中、←/→ 折叠/展开、Enter 切换。
  */
-import type { Row } from '../../protocol/types';
+import type { JsonKind, Row } from '../../protocol/types';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
 import type { WindowSnapshot } from '../../viewmodel/row-window-source';
 import type { RowContext, RowHandle, RowRenderer, RowRendererFactory } from './row-renderer';
@@ -26,8 +26,8 @@ export interface TreeViewOptions {
   onSelect(path: string): void;
   /** 编辑意图（slice 5）：行双击 / F2。不提供时该入口静默不可用。 */
   onEdit?(path: string): void;
-  /** 行右键（slice 5）：app 负责弹菜单；TreeView 只上报路径与屏幕坐标。 */
-  onContextMenu?(path: string, x: number, y: number): void;
+  /** 行右键（slice 5 / ADR-0010）：app 负责弹菜单；上报路径、屏幕坐标与节点类型（菜单启用态用）。 */
+  onContextMenu?(path: string, x: number, y: number, kind: JsonKind): void;
 }
 
 export interface TreeSearchState {
@@ -155,7 +155,9 @@ export class TreeView {
     const path = rowEl.dataset.path;
     if (!path || !this.opts.onContextMenu) return;
     event.preventDefault();
-    this.opts.onContextMenu(path, event.clientX, event.clientY);
+    // 行 DOM 上带数据集里的节点类型（row-renderer 写入），避免 app 再查一遍行窗口
+    const kind = (rowEl.dataset.kind ?? 'null') as JsonKind;
+    this.opts.onContextMenu(path, event.clientX, event.clientY, kind);
   };
 
   constructor(host: HTMLElement, opts: TreeViewOptions) {

@@ -158,8 +158,13 @@
   </div>
 </div>
 
-<!-- slice 5：树行右键菜单（仅「编辑此节点 JSON」一项） -->
+<!-- 树行右键菜单（slice 5 编辑 + ADR-0010 复制四格式） -->
 <div class="ctxmenu" id="ctxMenu" role="menu" hidden>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-subtree">复制子树 JSON</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-path">复制路径</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-value">复制原始值</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-key">复制键名</button>
+  <div class="ctxmenu__sep" role="separator"></div>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="edit">编辑此节点 JSON</button>
 </div>
 

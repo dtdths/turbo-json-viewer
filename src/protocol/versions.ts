@@ -18,6 +18,10 @@ export const EDIT_UNDO_DEPTH = 100;
 export const SEARCH_LIMIT = 50_000;
 /** 自适应展开阈值：加载时「全展开行数」（= 节点数）不超过该值则直接全展开（ADR-0002 修订 / #9） */
 export const ADAPTIVE_EXPAND_ROWS = 500;
+/** 复制：子树 JSON 缩进（ADR-0010 §5；设置面板落地前固定 2，与 exportDoc 默认一致） */
+export const COPY_INDENT = 2;
+/** 复制：子树 JSON 字节上限（与编辑器 5MB 守卫同口径；超限引导用「导出」，不静默截断） */
+export const COPY_MAX_BYTES = 5 * 1024 * 1024;
 
 /** 行窗口回包是否过期：seq 之后到、或 rowVersion 不符 */
 export function isStaleRow(

@@ -3,6 +3,7 @@
  * Command 是唯一跨线程写入口；CoreApi 是同一批操作的领域门面。
  */
 import type {
+  CopyFormat,
   DocumentMeta,
   DocumentProfile,
   Hit,
@@ -31,6 +32,7 @@ export type Command =
   | { t: 'search'; rootId: RootId; seq: number; query: string; opts?: SearchOpts }
   | { t: 'cancelSearch'; seq: number }
   | { t: 'getNodeJson'; rootId: RootId; path: Path }
+  | { t: 'copyNode'; rootId: RootId; path: Path; format: CopyFormat }
   | { t: 'replaceNode'; rootId: RootId; path: Path; docRevision: Rev; jsonText: string }
   | { t: 'undo'; rootId: RootId }
   | { t: 'redo'; rootId: RootId }
@@ -86,6 +88,14 @@ export interface NodeJsonReply {
   kind?: JsonKind;
 }
 
+/** 复制回包（ADR-0010 §6）：文本在 core 侧生成，主线程只负责写剪贴板与反馈。 */
+export interface CopyReply {
+  text: string;
+  /** UTF-8 字节数 */
+  bytes: number;
+  format: CopyFormat;
+}
+
 export interface TrailReply {
   trail: MapTrail;
 }
@@ -113,6 +123,7 @@ export interface ReplyByKind {
   search: SearchReply;
   cancelSearch: void;
   getNodeJson: NodeJsonReply;
+  copyNode: CopyReply;
   replaceNode: EditReply;
   undo: EditReply;
   redo: EditReply;
