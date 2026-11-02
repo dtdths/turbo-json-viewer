@@ -116,10 +116,25 @@ try {
     await sleep(100);
     out.selectedBefore = window.__tjv.state().selected;
 
+    const samples = [];
+    const tSample = performance.now();
+    let running = true;
+    const tick = () => {
+      const s = window.__tjv.state();
+      const b = document.getElementById('expandAllBtn');
+      const c = document.getElementById('collapseAllBtn');
+      samples.push({ t: Math.round(performance.now() - tSample), rows: visible().length, start: s.start, rv: s.rowVersion, total: s.totalRows, btnDisabled: Boolean(b?.disabled || c?.disabled) });
+      if (running && performance.now() - tSample < 4000) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
     const t0 = performance.now();
     clickBtn('expandAllBtn');
     out.expanded = await waitState((s) => s.totalRows > 500000, 30000);
     out.expandAllMs = Math.round(performance.now() - t0);
+    await sleep(250);
+    running = false;
+    out.expandSamples = samples;
     out.renderedAfterExpand = visible().length;
     out.scrollTopAfterExpand = window.__tjv.state().scrollTop;
     out.selectedAfterExpand = window.__tjv.state().selected;
@@ -145,7 +160,18 @@ try {
     let running = true;
     const tick = () => {
       const s = window.__tjv.state();
-      samples.push({ t: Math.round(performance.now() - t0), rows: visibleCount(), start: s.start, rv: s.rowVersion, total: s.totalRows, scrollTop: Math.round(scroller.scrollTop) });
+      const expandBtn = document.getElementById('expandAllBtn');
+      const collapseBtn = document.getElementById('collapseAllBtn');
+      samples.push({
+        t: Math.round(performance.now() - t0),
+        rows: visibleCount(),
+        start: s.start,
+        rv: s.rowVersion,
+        total: s.totalRows,
+        scrollTop: Math.round(scroller.scrollTop),
+        // 回归（2026-11-02）：命令在途时不得禁用按钮（disabled 有 opacity .45 → 两按钮一起「闪」）
+        btnDisabled: Boolean(expandBtn?.disabled || collapseBtn?.disabled),
+      });
       if (running && performance.now() - t0 < 3000) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -218,6 +244,16 @@ const collapseOk = report.collapsePhase?.after?.totalRows === report.collapsedDe
 
 // 闪帧回归（2026-11-02）：滚动后收起必须「回顶 + 换版本」原子完成——
 // 新 rowVersion 的每一帧都必须 start=0，且任何一帧都不能塌成 0 行（旧实现会出现 1 行/start=2 的闪帧）。
+// 展开路径同理：新 rowVersion 帧 start=0、无 0 行帧、且按钮全程不得禁用。
+const expandSamples = report.expandSamples ?? [];
+const expandNewRv = report.expanded?.rowVersion;
+const expandNewRvFrames = expandSamples.filter((s) => s.rv === expandNewRv);
+const expandNoFlashFrame =
+  expandNewRvFrames.length > 0 &&
+  expandNewRvFrames.every((s) => s.start === 0 && s.rows > 0) &&
+  expandSamples.every((s) => s.rows > 0) &&
+  expandSamples.every((s) => s.btnDisabled === false);
+
 const collapseSamples = report.collapsePhase?.samples ?? [];
 const collapseScrolledFirst = report.collapsePhase?.before?.scrollTop > 0;
 const collapseNewRv = report.collapsePhase?.after?.rowVersion;
@@ -226,7 +262,8 @@ const collapseNoFlashFrame =
   collapseScrolledFirst &&
   collapseNewRvFrames.length > 0 &&
   collapseNewRvFrames.every((s) => s.start === 0 && s.rows > 0) &&
-  collapseSamples.every((s) => s.rows > 0);
+  collapseSamples.every((s) => s.rows > 0) &&
+  collapseSamples.every((s) => s.btnDisabled === false);
 
 const budgetRejectOk =
   report.budget?.collapsed?.totalRows > 0 &&
@@ -244,6 +281,7 @@ const checks = {
   '10mb:expand-all': expandOk,
   '10mb:selection-kept': selectionKept,
   '10mb:collapse-all': collapseOk,
+  '10mb:expand-no-flash-frame': expandNoFlashFrame,
   '10mb:collapse-no-flash-frame': collapseNoFlashFrame,
   '50mb:budget-reject': budgetRejectOk,
   'perf:no-long-task-no-console-error': perfOk,
