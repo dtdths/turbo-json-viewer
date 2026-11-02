@@ -310,6 +310,12 @@ export class RowModel {
     return rows;
   }
 
+  /** 路径处的值；路径不存在抛 BAD_COMMAND（根路径返回根值）。 */
+  valueAt(path: Path): unknown {
+    const chain = this.locateChain(path);
+    return chain.length === 0 ? this.rootValue : (chain[chain.length - 1] as ChainEntry).node;
+  }
+
   /** 路径的可见行号；不在视图中（祖先折叠）或不存在 → -1。 */
   rowOfPath(path: Path): number {
     const chain = this.locateChain(path);

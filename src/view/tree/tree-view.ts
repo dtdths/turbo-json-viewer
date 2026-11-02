@@ -24,6 +24,10 @@ export interface TreeViewOptions {
   onScroll(scrollTopPx: number): void;
   onToggle(path: string, open: boolean): void;
   onSelect(path: string): void;
+  /** 编辑意图（slice 5）：行双击 / F2。不提供时该入口静默不可用。 */
+  onEdit?(path: string): void;
+  /** 行右键（slice 5）：app 负责弹菜单；TreeView 只上报路径与屏幕坐标。 */
+  onContextMenu?(path: string, x: number, y: number): void;
 }
 
 export interface TreeSearchState {
@@ -49,6 +53,8 @@ export class TreeView {
   private totalRows = 0;
 
   private selectedPath: string | null = null;
+  /** Apply 后短暂高亮的路径（行池复用下按路径匹配，见 applyChangedClass） */
+  private changedPath: string | null = null;
   private hitPaths = new Set<string>();
   private currentHitPath: string | null = null;
   private searchTerm: string | undefined;
@@ -114,9 +120,42 @@ export class TreeView {
         }
         break;
       }
+      // 编辑（slice 5）：Enter 沿用「切换展开」的既有契约，编辑键用 F2（偏差见报告）
+      case 'F2': {
+        if (this.selectedPath !== null && this.opts.onEdit) {
+          event.preventDefault();
+          this.opts.onEdit(this.selectedPath);
+        }
+        break;
+      }
       default:
         break;
     }
+  };
+
+  /** 行双击 → 编辑意图（caret/行操作按钮除外，避免与展开/操作冲突）。 */
+  private readonly onDblClickBound = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    const rowEl = target.closest('.row') as HTMLElement | null;
+    if (!rowEl) return;
+    if (target.closest('.row__caret') || target.closest('.row__actions')) return;
+    const path = rowEl.dataset.path;
+    if (!path || !this.opts.onEdit) return;
+    event.preventDefault();
+    this.opts.onEdit(path);
+  };
+
+  /** 行右键 → 菜单意图；只接管行上的 contextmenu，空白区保留浏览器默认菜单。 */
+  private readonly onContextMenuBound = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    const rowEl = target.closest('.row') as HTMLElement | null;
+    if (!rowEl) return;
+    const path = rowEl.dataset.path;
+    if (!path || !this.opts.onContextMenu) return;
+    event.preventDefault();
+    this.opts.onContextMenu(path, event.clientX, event.clientY);
   };
 
   constructor(host: HTMLElement, opts: TreeViewOptions) {
@@ -156,6 +195,8 @@ export class TreeView {
     scroller.addEventListener('scroll', this.onScrollBound, { passive: true });
     scroller.addEventListener('click', this.onClickBound);
     scroller.addEventListener('keydown', this.onKeyDownBound);
+    scroller.addEventListener('dblclick', this.onDblClickBound);
+    scroller.addEventListener('contextmenu', this.onContextMenuBound);
   }
 
   /** 渲染一帧窗口：只做定位与状态映射，不发请求。 */
@@ -195,6 +236,9 @@ export class TreeView {
       const handle = this.handles[i];
       if (handle) renderer.setVisible(handle, false);
     }
+
+    // 行池复用：每帧按路径重新打标记，滚出再滚回、以及隐藏槽位复用到别的行都不会留旧 class
+    this.applyChangedClass();
   }
 
   setSelected(path: string | null): void {
@@ -205,6 +249,16 @@ export class TreeView {
     const index = this.indexOfSelected();
     const handle = index >= 0 ? this.handles[index] ?? null : null;
     renderer.setSelected(handle);
+  }
+
+  /**
+   * Apply 后的短暂高亮（slice 5）：给路径匹配的行加 `.is-changed`，null 清除。
+   * 行池复用安全——每次 render 结束都按当前帧路径重打一遍，旧槽位不会残留。
+   */
+  setChangedPath(path: string | null): void {
+    if (this.changedPath === path) return;
+    this.changedPath = path;
+    this.applyChangedClass();
   }
 
   setSearch(state: TreeSearchState | null): void {
@@ -269,6 +323,8 @@ export class TreeView {
       scroller.removeEventListener('scroll', this.onScrollBound);
       scroller.removeEventListener('click', this.onClickBound);
       scroller.removeEventListener('keydown', this.onKeyDownBound);
+      scroller.removeEventListener('dblclick', this.onDblClickBound);
+      scroller.removeEventListener('contextmenu', this.onContextMenuBound);
       scroller.remove();
     }
     this.renderer?.destroy();
@@ -317,6 +373,16 @@ export class TreeView {
       this.scrollToPx(top);
     } else if (top + rowHeight > viewBottom) {
       this.scrollToPx(top + rowHeight - scroller.clientHeight);
+    }
+  }
+
+  /** 按路径匹配当前渲染行打 `.is-changed`（先清后加，行池/隐藏槽位都安全）。 */
+  private applyChangedClass(): void {
+    const host = this.rowsHost;
+    if (!host) return;
+    const target = this.changedPath;
+    for (const el of host.querySelectorAll<HTMLElement>('.row')) {
+      el.classList.toggle('is-changed', target !== null && el.dataset.path === target);
     }
   }
 }

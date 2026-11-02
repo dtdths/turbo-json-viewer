@@ -211,10 +211,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 3 page 外壳 + `TreeView`/`RowRenderer` + `RowWindowSource` + `WorkerTransport` | ✅ | 10MB 首帧（load→首行）**58ms**、50MB **246ms**；主线程长任务 **0**；滚动换窗 start 14,869 @ scrollTop 357k px |
 | 4 搜索面板 + 命中跳转 | ✅ | `viewmodel/search-state.ts`（begin/apply + seq/docRevision 过期 + 过滤 + 虚拟窗口，36 用例）、`view/panels/search-panel.ts`（44px 两行虚拟结果列表 + C 样式）、`app/main.ts` 接线（上下条 / Enter / ⌘G / F3 / 树命中高亮 + `<mark>`）；`.mock/1.json` `hotel` 27.3ms/186 命中，10MB `hotel` 91.3ms/50,000 截断（raw 74,378），跳转 2.7ms，列表滚动渲染恒 22 行、0 长任务 |
 | 4.5 全部展开 / 全部收起 + 小文档自适应展开（#9 / ADR-0002 修订） | ✅ | `RowModel.countAllExpandedRows/expandAll/expandIfAtMost/collapseAll` + `DocService` 的 `expandAll`/`collapseAll` 命令（changed 才 `rowVersion++`）+ `load` 自适应（≤500 节点全展开，带限计数早停 0.14ms）；顶部工具栏两个图标按钮（`#expandAllBtn`/`#collapseAllBtn`，无快捷键）；**单测 137**（新增 21） |
-| 5 子树编辑 + undo | ⏳ 命令已留 | `getNodeJson/replaceNode/undo/redo/reset` 在 DocService 抛 `BAD_COMMAND` |
+| 5 子树编辑 + undo + 导出（#16 / ADR-0006） | ✅ | `core/edit-history.ts`（深度 100、redo 截断、LIFO reset）+ `DocService` 的 `getNodeJson/replaceNode/undo/redo/reset/exportDoc`（5MB `TOO_LARGE`、`PARSE` 带行列、no-op 不推进版本、`STALE_DOC` 守卫、每根一份历史）；`viewmodel/edit-state.ts` + 树意图（dblclick / 右键菜单 / F2 / `setChangedPath`）；`view/panels/{code-editor,subtree-editor}.ts`（CM6 懒加载、lint 门控 Apply、720×520 弹层）；`main.ts` 接线（徽标 / ⌘Z ⇧⌘Z / 重置 / `-edited` 导出 / 未保存确认）；**单测 177** |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`）：`page.js` **18.3KB gz**（预算 45）、`worker.js` **7.9KB gz**、`page.css` **5.4KB gz**；构建 12–17ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **17.0KB gz**（预算 45）、`worker.js` **6.3KB gz**、`page.css` **5.6KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -238,7 +238,16 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **闪帧修复（2026-11-02）**：滚动后点「收起/展开」曾出现 1–2 帧空白+塌陷（旧 `start` 的保留帧被新 `totalRows` 裁掉、中间窗口按旧滚动位置算出 `start=2/count=1`）。改为 `RowWindowSource.setRoot(..., { scrollTopPx })` 把「回顶」与换版本原子化——保留帧一起锚到顶部、目标窗口一次算对；smoke 逐帧断言新 `rowVersion` 的每一帧 `start=0` 且无 0 行帧（`expand-no-flash-frame` / `collapse-no-flash-frame`）。
 - **按钮闪动修复（2026-11-02）**：防重入原先把两按钮 `disabled`（全局 `button:disabled{opacity:.45}`）→ 用户看到「两个按钮一起灰一下」；改为内部锁 `expandAllBusy`，按钮禁用态只保留「未加载文档」一种；smoke 逐帧断言按钮全程不变灰（已用变异测试确认可红）。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
+**slice 5 编辑验收**（2026-11-02，CfT headless 1440×900；`scripts/smoke-edit.mjs` **14/14**）：
+
+- **弹层 / Apply**：`getNodeJson` → CM6 弹层（路径 / 类型 / 大小 + 行号 / 高亮 / lint）；数组加元素 8→9 行、标量改值、对象改结构 9→10 行均即时反映；Apply 后弹层关闭 + 选中变更节点 + 900ms 高亮 + 徽标「已修改 N 处」。
+- **undo/redo/reset**：undo 回原行数、redo 复现、reset 全部回原文档（`totalRows` 回 8、徽标隐藏、undo 变 no-op）。
+- **守卫**：非法 JSON → Apply 禁用 + 行列错误；core `PARSE` 错误留层不关（不产生修改）；编辑后搜索命中 stale（「文档已修改，搜索结果已清空」）。
+- **导出**：`exportDoc`（不受 5MB 限制）→ Blob 下载；无修改 `原名.json`、有修改 `原名-edited.json`；reset 后内容逐字节等于原始 pretty JSON。
+- **性能**（10MB 样本，core 临时基准）：`getNodeJson` 中层 item **0.22ms**、同形状 Apply **0.24ms**、undo/redo **0.05/0.04ms**；展开态 item 12→2000 字段 Apply **0.85ms**（+1988 行）/ undo 0.15ms；首开编辑器（130.6KB gz）0 长任务。
+- **回归**：`npm run smoke` / `smoke:ext` / `smoke-search` **82/82** / `smoke-extension-search` **56/56** / `smoke-expand` **11/11** 全绿；截图 `.spike/smoke/edit-{open,applied,reset}.png`。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
@@ -249,7 +258,8 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - 搜索高亮 helper 在 `row-renderer` 与 `search-panel` 各一份；大小写折叠对 `İ/ẞ` 等字符会错位（罕见）；smoke 脚本的 reference walk 与 `core/search.ts` 是两份实现。
 - `44px` / `SEARCH_LIMIT=50,000` 在常量、CSS、smoke 脚本多处重复；结果列表滚动直接重绘、未做 rAF 合并（实测 0 长任务）。
 - 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
-- slice 5 编辑接入后：「替换文档 / 关闭文档」需要未保存临时修改的确认（当前无编辑，故未做）。
+- 编辑：弹层未做 **focus trap**（Tab 可离开面板）；CM6 对「文档末尾」的 lint 诊断是空范围（只有 gutter marker，无行内下划线）；`getNodeJson` 先 stringify 再判 5MB（超大子树会先在 Worker 内付出 stringify 成本才拒绝，建议预计算子树大小）；50MB 文档导出（stringify + 50MB postMessage）未实测。
+- 「替换文档」已有未保存确认；「关闭文档」功能本身尚未存在（随 #11 最近文档 / 多标签再做）。
 - 「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）；「N=500 可关」的设置开关待设置面板（`ViewStateStore` 未接线）。
 - `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。
 
