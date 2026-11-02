@@ -125,6 +125,7 @@ kbd {
   white-space: nowrap;
 }
 .btn:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text); }
+.btn svg { width: 13px; height: 13px; display: block; }
 .iconbtn {
   display: inline-flex;
   align-items: center;
