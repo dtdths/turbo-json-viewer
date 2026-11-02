@@ -108,8 +108,17 @@ export class RowWindowSource {
     };
   }
 
-  /** 换根或换行版本：清空目标与在途目标；同根换版本时保留上一帧（stale）避免闪烁。 */
-  setRoot(next: { rootId: RootId; rowVersion: number; totalRows: number }): void {
+  /**
+   * 换根或换行版本：清空目标与在途目标；同根换版本时保留上一帧（stale）避免闪烁。
+   * `opts.scrollTopPx`：与换版本同一拍复位滚动锚点（expand-all / collapse-all 的「回顶」）。
+   * 不传时保持旧滚动位置（toggle 等「原地变化」路径不变）。传 0 时也必须把保留帧的
+   * `start` 一起归零，否则旧 start 的保留帧会被新的小 `totalRows` 裁到视口外（空白帧），
+   * 且紧接着的请求会按旧滚动位置算出一个被夹扁的中间窗口（1 行闪帧）。
+   */
+  setRoot(
+    next: { rootId: RootId; rowVersion: number; totalRows: number },
+    opts: { scrollTopPx?: number } = {},
+  ): void {
     const rootChanged = next.rootId !== this.rootId;
     this.rootId = next.rootId;
     this.rowVersion = next.rowVersion;
@@ -118,6 +127,14 @@ export class RowWindowSource {
     if (rootChanged) {
       this.scrollTopPx = 0;
       this.lastRequestScrollTopPx = 0;
+    }
+    const anchorPx =
+      opts.scrollTopPx !== undefined && Number.isFinite(opts.scrollTopPx)
+        ? Math.max(0, opts.scrollTopPx)
+        : null;
+    if (anchorPx !== null) {
+      this.scrollTopPx = anchorPx;
+      this.lastRequestScrollTopPx = anchorPx;
     }
 
     // 旧 in-flight 不取消：靠 epoch 校验丢弃回包；排队目标清空
@@ -131,6 +148,8 @@ export class RowWindowSource {
         rootId: next.rootId,
         totalRows: this.totalRows,
         rowVersion: next.rowVersion,
+        // 显式锚点时保留帧跟着锚点走（顶部），避免裁切出空白
+        start: anchorPx !== null ? Math.floor(anchorPx / this.rowHeight) : this.current.start,
         stale: true,
         scrollTopPx: this.scrollTopPx,
       };
@@ -145,6 +164,8 @@ export class RowWindowSource {
         scrollTopPx: this.scrollTopPx,
       };
     }
+    // 显式锚点：目标窗口在 emit 前就算好，后续 requestWindow 不会从旧滚动位置取中间窗口
+    if (anchorPx !== null) this.desired = this.computeTarget(this.scrollTopPx);
     this.emit();
   }
 

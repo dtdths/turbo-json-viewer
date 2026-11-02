@@ -314,4 +314,38 @@ describe('RowWindowSource — 度量 / 锚点 / 换根', () => {
     expect(source.snapshot().scrollTopPx).toBe(0);
     expect(source.snapshot().rows).toHaveLength(0);
   });
+
+  it('setRoot 带 scrollTopPx：锚点原子复位（回顶）、保留上一帧、只请求新锚点（#9 闪帧回归）', async () => {
+    const { api, source } = setup();
+    source.scrollTo(0);
+    await api.resolveNext();
+    await flush();
+
+    // 滚到 200 行并拿到该窗口
+    source.scrollTo(200 * ROW_H);
+    await api.resolveNext();
+    await flush();
+    const rowsBefore = source.snapshot().rows.slice();
+    expect(source.snapshot().start).toBe(200 - OVERSCAN);
+
+    // 全部收起/展开：换 rowVersion + totalRows 骤降，同时明确「回到顶部」
+    source.setRoot({ rootId: 'doc', rowVersion: 2, totalRows: 3 }, { scrollTopPx: 0 });
+
+    expect(source.snapshot().scrollTopPx).toBe(0);
+    // 复位后这一刻的上一帧必须锚在顶部（否则旧 start 的 85 行会被 spacer 裁到视口外 = 空白帧）
+    expect(source.snapshot().start).toBe(0);
+    expect(source.snapshot().rows).toEqual(rowsBefore); // 保留上一帧避免空白
+    expect(source.snapshot().stale).toBe(true);
+
+    // 紧接着取窗口：必须请求顶部窗口，而不是被夹到 totalRows-1 的旧锚点
+    source.requestWindow();
+    expect(api.requests.at(-1)?.start).toBe(0);
+    expect(api.requests.at(-1)?.count).toBe(3);
+
+    await api.resolveNext();
+    await flush();
+    expect(source.snapshot().start).toBe(0);
+    expect(source.snapshot().rows).toHaveLength(3);
+    expect(source.snapshot().stale).toBe(false);
+  });
 });

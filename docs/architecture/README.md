@@ -210,7 +210,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 2 `RowModel`(Fenwick)/identity/path | ✅ | `src/core/row-model.ts`（per-open Fenwick + lowerBound 下潜）、`src/shared/path.ts`；core 60 用例、viewmodel 15 用例全绿 |
 | 3 page 外壳 + `TreeView`/`RowRenderer` + `RowWindowSource` + `WorkerTransport` | ✅ | 10MB 首帧（load→首行）**58ms**、50MB **246ms**；主线程长任务 **0**；滚动换窗 start 14,869 @ scrollTop 357k px |
 | 4 搜索面板 + 命中跳转 | ✅ | `viewmodel/search-state.ts`（begin/apply + seq/docRevision 过期 + 过滤 + 虚拟窗口，36 用例）、`view/panels/search-panel.ts`（44px 两行虚拟结果列表 + C 样式）、`app/main.ts` 接线（上下条 / Enter / ⌘G / F3 / 树命中高亮 + `<mark>`）；`.mock/1.json` `hotel` 27.3ms/186 命中，10MB `hotel` 91.3ms/50,000 截断（raw 74,378），跳转 2.7ms，列表滚动渲染恒 22 行、0 长任务 |
-| 4.5 全部展开 / 全部收起 + 小文档自适应展开（#9 / ADR-0002 修订） | ✅ | `RowModel.countAllExpandedRows/expandAll/expandIfAtMost/collapseAll` + `DocService` 的 `expandAll`/`collapseAll` 命令（changed 才 `rowVersion++`）+ `load` 自适应（≤500 节点全展开，带限计数早停 0.14ms）；顶部工具栏两个图标按钮（`#expandAllBtn`/`#collapseAllBtn`，无快捷键）；**单测 136**（新增 20） |
+| 4.5 全部展开 / 全部收起 + 小文档自适应展开（#9 / ADR-0002 修订） | ✅ | `RowModel.countAllExpandedRows/expandAll/expandIfAtMost/collapseAll` + `DocService` 的 `expandAll`/`collapseAll` 命令（changed 才 `rowVersion++`）+ `load` 自适应（≤500 节点全展开，带限计数早停 0.14ms）；顶部工具栏两个图标按钮（`#expandAllBtn`/`#collapseAllBtn`，无快捷键）；**单测 137**（新增 21） |
 | 5 子树编辑 + undo | ⏳ 命令已留 | `getNodeJson/replaceNode/undo/redo/reset` 在 DocService 抛 `BAD_COMMAND` |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
@@ -229,12 +229,13 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 附注：旧基准 `58 / 37,189` 是旧口径（37,189 恰为 10MB 键名命中数），当前 `core/search.ts` 同时匹配键名与字符串值；`docs/design/qa-editing-and-search.md` §2.3 已加复核注记。
 
-**slice 4.5 展开/收起验收**（2026-11-02，CfT headless 1440×900；`scripts/smoke-expand.mjs` **9/9**）：
+**slice 4.5 展开/收起验收**（2026-11-02，CfT headless 1440×900；`scripts/smoke-expand.mjs` **10/10**）：
 
 - **自适应展开**：8 节点文档加载即全展开（`totalRows` 8）；`>500` 节点保持默认折叠（判定 = 带限计数、超阈值早停，实测 **0.14ms**）。
 - **10MB（595,030 节点，预算内）**：load→首帧 **41ms**；点「全部展开」端到端 **68ms**（Worker 内计数+重建 **37.3ms**、heap +26.7MB），`totalRows` 595,030；渲染行 **51**、滚回顶部、**选中路径保留**（Q7）；0 长任务、0 console 错误；全开后窗口 p95 0.062ms。
 - **50MB（2,958,550 节点，超 `ROW_BUDGET`）**：dry-run 早停 **11.7ms**、拒绝 **17.1ms**（Worker 内），回包 `totalRows`/`rowVersion` 不变（**零部分修改**）+ toast `TOO_MANY_ROWS`；「全部收起」回默认行数。
 - **回归**：`npm run smoke` / `smoke:ext` / `smoke-search` **82/82** / `smoke-extension-search` **56/56** 全绿；截图 `.spike/smoke/expand-{adaptive,all,collapse,budget}.png`。
+- **闪帧修复（2026-11-02）**：滚动后点「收起/展开」曾出现 1–2 帧空白+塌陷（旧 `start` 的保留帧被新 `totalRows` 裁掉、中间窗口按旧滚动位置算出 `start=2/count=1`）。改为 `RowWindowSource.setRoot(..., { scrollTopPx })` 把「回顶」与换版本原子化——保留帧一起锚到顶部、目标窗口一次算对；smoke 逐帧断言新 `rowVersion` 的每一帧 `start=0` 且无 0 行帧（`collapse-no-flash-frame`）。
 
 **复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
 
