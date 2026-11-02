@@ -16,7 +16,7 @@ import { SearchPanel } from '../view/panels/search-panel';
 import { CoreError } from '../protocol/errors';
 import { ROW_HEIGHT } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
-import type { DocumentMeta } from '../protocol/types';
+import type { CopyFormat, DocumentMeta, JsonKind } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
@@ -86,9 +86,9 @@ const tree = new TreeView(treeHost, {
   onEdit: (path: string) => {
     void openEditor(path);
   },
-  onContextMenu: (path: string, x: number, y: number) => {
+  onContextMenu: (path: string, x: number, y: number, kind: JsonKind) => {
     setSelection(path);
-    showContextMenu(path, x, y);
+    showContextMenu(path, x, y, kind);
   },
 });
 tree.mount();
@@ -403,12 +403,37 @@ editBadge.addEventListener('click', () => {
 ctxMenu.addEventListener('click', (event: MouseEvent) => {
   const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-act]');
   if (!item) return;
+  const act = item.dataset.act ?? '';
   const path = ctxPath;
   hideContextMenu();
-  if (item.dataset.act === 'edit' && path) void openEditor(path);
+  if (!path) return;
+  const format = copyFormatOfAct(act);
+  if (format) {
+    void copyNodeFromMenu(path, format);
+    return;
+  }
+  if (act === 'edit') void openEditor(path);
 });
+/** 菜单键盘（ADR-0010 §8）：↑/↓ 在可用项间循环、Home/End、Esc 关闭；Enter 由按钮原生触发。 */
 ctxMenu.addEventListener('keydown', (event: KeyboardEvent) => {
-  if (event.key === 'Escape') hideContextMenu();
+  if (event.key === 'Escape') {
+    hideContextMenu();
+    return;
+  }
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
+    return;
+  }
+  event.preventDefault();
+  const items = enabledCtxItems();
+  if (items.length === 0) return;
+  const current = document.activeElement as HTMLElement | null;
+  const index = current ? items.findIndex((item) => item === current) : -1;
+  let next: number;
+  if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length;
+  else next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length;
+  items[next]?.focus();
 });
 document.addEventListener(
   'pointerdown',
@@ -639,19 +664,133 @@ async function exportDoc(): Promise<void> {
   }
 }
 
-function showContextMenu(path: string, x: number, y: number): void {
+function showContextMenu(path: string, x: number, y: number, kind: JsonKind): void {
   ctxPath = path;
   ctxMenu.hidden = false;
+  // 启用规则（ADR-0010 §1）：容器没有原始值；根没有键名。其余项所有节点可用。
+  setCtxItemDisabled(COPY_ACT.subtree, false);
+  setCtxItemDisabled(COPY_ACT.path, false);
+  setCtxItemDisabled(COPY_ACT.value, kind === 'object' || kind === 'array', '容器没有原始值，请用「复制子树 JSON」');
+  setCtxItemDisabled(COPY_ACT.key, path === ROOT_PATH, '根节点没有键名');
+  setCtxItemDisabled('edit', false);
   const rect = ctxMenu.getBoundingClientRect();
   ctxMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
   ctxMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
-  ctxMenu.querySelector<HTMLElement>('[data-act="edit"]')?.focus();
+  // 焦点落第一个可用项（此前固定落「编辑」，现在「编辑」在最后）
+  (enabledCtxItems()[0] ?? null)?.focus();
 }
 
 function hideContextMenu(): void {
   if (ctxMenu.hidden) return;
+  const hadFocus = ctxMenu.contains(document.activeElement);
   ctxMenu.hidden = true;
   ctxPath = null;
+  // a11y：键盘关闭（Esc/激活项）后焦点还给树，避免掉到 body（opener 即树滚动容器）
+  if (hadFocus) treeHost.querySelector<HTMLElement>('.tjv-tree')?.focus();
+}
+
+/* ---------------- 复制四格式（ADR-0010） ---------------- */
+
+const COPY_LABELS: Record<CopyFormat, string> = {
+  subtree: '子树 JSON',
+  path: '路径',
+  value: '原始值',
+  key: '键名',
+};
+
+/** 菜单 data-act ↔ 协议 format（固定顺序，见 ADR-0010 §1） */
+const COPY_ACT: Record<CopyFormat, string> = {
+  subtree: 'copy-subtree',
+  path: 'copy-path',
+  value: 'copy-value',
+  key: 'copy-key',
+};
+
+function copyFormatOfAct(act: string): CopyFormat | null {
+  switch (act) {
+    case COPY_ACT.subtree:
+      return 'subtree';
+    case COPY_ACT.path:
+      return 'path';
+    case COPY_ACT.value:
+      return 'value';
+    case COPY_ACT.key:
+      return 'key';
+    default:
+      return null;
+  }
+}
+
+function ctxItems(): HTMLButtonElement[] {
+  return Array.from(ctxMenu.querySelectorAll<HTMLButtonElement>('[data-act]'));
+}
+
+function enabledCtxItems(): HTMLButtonElement[] {
+  return ctxItems().filter((item) => !item.disabled);
+}
+
+function setCtxItemDisabled(act: string, disabled: boolean, why?: string): void {
+  const item = ctxMenu.querySelector<HTMLButtonElement>(`[data-act="${act}"]`);
+  if (!item) return;
+  item.disabled = disabled;
+  if (disabled) {
+    if (why) item.title = why;
+    item.setAttribute('aria-disabled', 'true');
+  } else {
+    item.removeAttribute('title');
+    item.removeAttribute('aria-disabled');
+  }
+}
+
+/**
+ * 菜单复制：core 生成文本（ADR-0010 §6）→ 零权限写剪贴板（§7）→ toast 反馈。
+ * 只读操作，不推进版本；TOO_LARGE 引导用「导出」而不是静默截断。
+ */
+async function copyNodeFromMenu(path: string, format: CopyFormat): Promise<void> {
+  if (!rootId) return;
+  try {
+    const reply = await core.copyNode({ rootId, path, format });
+    const copied = await writeClipboard(reply.text);
+    if (copied) showToast(`已复制：${COPY_LABELS[format]}`);
+    else showToast('复制失败：请手动选中文本后按 ⌘C', 4000);
+  } catch (error) {
+    const coreError = CoreError.from(error);
+    if (coreError.code === 'TOO_LARGE') {
+      showError(
+        new CoreError({
+          code: 'TOO_LARGE',
+          message: `子树过大（${formatBytes(coreError.bytes ?? 0)}），超过 5 MB，请用「导出」`,
+        }),
+      );
+      return;
+    }
+    showError(error);
+  }
+}
+
+/** 零权限剪贴板：clipboard.writeText → execCommand 兜底（不声明 clipboardWrite，ADR-0010 §7）。 */
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    /* 无剪贴板权限/非安全上下文 → 降级 */
+  }
+  try {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.top = '0';
+    area.style.left = '-9999px';
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 function setSelection(path: string | null): void {
@@ -912,12 +1051,20 @@ function formatCoreError(error: unknown): string {
   return `${coreError.code}: ${coreError.message}${detail}`;
 }
 
-function showError(error: unknown): void {
-  toast.textContent = formatCoreError(error);
+let toastTimer = 0;
+
+/** 短暂反馈（复制成功等）；错误走 showError（4s）。共用 #toast，后到的消息重置计时。 */
+function showToast(text: string, ms = 2000): void {
+  toast.textContent = text;
   toast.hidden = false;
-  window.setTimeout(() => {
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
     toast.hidden = true;
-  }, 4000);
+  }, ms);
+}
+
+function showError(error: unknown): void {
+  showToast(formatCoreError(error), 4000);
 }
 
 /* ---------------- resize ---------------- */
@@ -1068,5 +1215,59 @@ if (!isExtension) {
       return { bytes: reply.bytes, text: reply.text, name: exportName(meta?.name ?? 'doc.json', editState.dirty) };
     },
     editBadgeText: () => ({ hidden: editBadge.hidden, text: editBadge.textContent }),
+
+    // ---- 复制四格式 dev hook（契约见 docs/adr/0010-copy-formats-and-clipboard.md §9）----
+
+    /** 模拟右键打开菜单（走真实 showContextMenu）；返回菜单项文案/禁用态（DOM 顺序）。 */
+    ctxOpen: (path: string, fallbackKind: JsonKind = 'object') => {
+      const rowEl = treeHost.querySelector<HTMLElement>(`.row[data-path="${CSS.escape(path)}"]`);
+      const rect = rowEl?.getBoundingClientRect();
+      // 与真实右键同源：优先取行 DOM 上的节点类型（row-renderer 写入），取不到才用调用方给的兜底
+      const kind = (rowEl?.dataset.kind as JsonKind | undefined) ?? fallbackKind;
+      showContextMenu(path, (rect?.left ?? 40) + 24, (rect?.top ?? 80) + 12, kind);
+      return {
+        hidden: ctxMenu.hidden,
+        items: ctxItems().map((item) => ({
+          act: item.dataset.act ?? '',
+          label: item.textContent ?? '',
+          disabled: item.disabled,
+        })),
+      };
+    },
+    /** 点菜单项（真实 DOM click），等到 toast 变化后返回（复制是异步的）。 */
+    ctxClick: async (act: string) => {
+      const item = ctxMenu.querySelector<HTMLButtonElement>(`[data-act="${act}"]`);
+      if (!item) return { clicked: false, toast: '', hidden: ctxMenu.hidden };
+      const before = toast.textContent ?? '';
+      item.click();
+      for (let i = 0; i < 25; i++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
+        if ((toast.textContent ?? '') !== before) break;
+      }
+      return {
+        clicked: true,
+        toast: toast.hidden ? '' : (toast.textContent ?? ''),
+        hidden: ctxMenu.hidden,
+      };
+    },
+    /** 走 core 的复制路径但不写剪贴板（逐字断言用）。 */
+    copyResolve: async (path: string, format: CopyFormat) => {
+      if (!rootId) return { error: { code: 'NO_ROOT', message: 'no document loaded' } };
+      try {
+        const reply = await core.copyNode({ rootId, path, format });
+        return { text: reply.text, bytes: reply.bytes, format: reply.format };
+      } catch (error) {
+        const coreError = CoreError.from(error);
+        return { error: { code: coreError.code, message: coreError.message, bytes: coreError.bytes } };
+      }
+    },
+    clipboardText: async () => {
+      try {
+        return await navigator.clipboard.readText();
+      } catch {
+        return null;
+      }
+    },
+    toastText: () => (toast.hidden ? '' : (toast.textContent ?? '')),
   };
 }

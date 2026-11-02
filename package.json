@@ -13,6 +13,7 @@
     "size": "node build.mjs --analyze",
     "smoke": "node scripts/smoke.mjs .spike/samples/10mb.json",
     "smoke:ext": "node scripts/smoke-extension.mjs .spike/samples/10mb.json",
+    "smoke:copy": "node scripts/smoke-copy.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

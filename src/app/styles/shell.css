@@ -484,6 +484,13 @@ body.rail-collapsed .rail { display: none; }
 }
 .ctxmenu__item:hover,
 .ctxmenu__item:focus-visible { background: var(--bg-hover); color: var(--text); }
+.ctxmenu__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-subtle, var(--border));
+}
+.ctxmenu__item:disabled { color: var(--faint); cursor: default; }
+.ctxmenu__item:disabled:hover { background: transparent; color: var(--faint); }
 
 /* 编辑过的行：左侧 accent 条 + 淡底 */
 .tjv-tree .row.is-changed {

@@ -11,6 +11,12 @@ export type Path = string;
 
 export type JsonKind = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
 
+/**
+ * 复制格式（ADR-0010 §2–§5）：子树 JSON / 规范路径 / 标量原始值 / 键名。
+ * 四值即协议值，UI 菜单项 `data-act` 与 dev hook 也用它。
+ */
+export type CopyFormat = 'subtree' | 'path' | 'value' | 'key';
+
 /** 一行可见数据。行窗口协议的最小载荷（40 行 ≈3.1KB）。 */
 export interface Row {
   /** 该行的完整规范路径（根为 `$`） */

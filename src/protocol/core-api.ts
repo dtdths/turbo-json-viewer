@@ -9,6 +9,7 @@
 import type {
   Command,
   CoreEvent,
+  CopyReply,
   EditReply,
   ExpandReply,
   ExportReply,
@@ -20,6 +21,7 @@ import type {
   TrailReply,
 } from './messages';
 import type {
+  CopyFormat,
   DocumentProfile,
   Path,
   Rev,
@@ -73,6 +75,8 @@ export interface CoreApi {
   cancelSearch(seq: number): void;
 
   getNodeJson(req: { rootId: RootId; path: Path }): Promise<NodeJsonReply>;
+  /** 复制四格式（ADR-0010）：文本在 core 侧生成；只读，不推进版本。 */
+  copyNode(req: { rootId: RootId; path: Path; format: CopyFormat }): Promise<CopyReply>;
   replaceNode(req: ReplaceRequest): Promise<EditReply>;
   undo(rootId: RootId): Promise<EditReply>;
   redo(rootId: RootId): Promise<EditReply>;
@@ -109,6 +113,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     search: (req) => send({ t: 'search', ...req }),
     cancelSearch: (seq) => fire({ t: 'cancelSearch', seq }),
     getNodeJson: (req) => send({ t: 'getNodeJson', ...req }),
+    copyNode: (req) => send({ t: 'copyNode', ...req }),
     replaceNode: (req) => send({ t: 'replaceNode', ...req }),
     undo: (rootId) => send({ t: 'undo', rootId }),
     redo: (rootId) => send({ t: 'redo', rootId }),

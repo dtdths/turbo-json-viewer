@@ -13,7 +13,7 @@
 
 | # | seam | interface | v1 adapter | 测试 adapter | 接口背后藏什么（depth） |
 |---|---|---|---|---|---|
-| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 17 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
+| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 18 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
 | S2 | viewmodel → view | `RowWindowSource.snapshot()` | `TransportRowSource` | `ScriptedRowSource` | 单飞、合并、seq 丢弃、版本校验、overscan、预取、锚点换算 |
 | S3 | TreeView → 单行 | `RowRenderer` | `DomRowPool` | `RecordingRowRenderer` | 行池复用、textContent、选中/命中态、固定行高纪律 |
 | S4 | 全局 → 样式 | `ThemeController` + `RowMetrics` | `tokens.css`（`data-theme`） | `FixedThemeController` | token 名与语义、双主题、Canvas palette 读取 |
