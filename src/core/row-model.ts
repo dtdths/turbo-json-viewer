@@ -172,6 +172,65 @@ class Fenwick {
 }
 
 /* ------------------------------------------------------------------------- */
+/* 全展开计数（自适应展开 / expand-all 的 dry-run）                           */
+/* ------------------------------------------------------------------------- */
+
+interface WalkFrame {
+  container: Container;
+  /** 对象容器的键序（数组为 null）；键序即行序 */
+  keys: string[] | null;
+  slot: number;
+  count: number;
+}
+
+interface BuildFrame extends WalkFrame {
+  /** 子项可见行数（按 slot 顺序收集，结束时交给 Fenwick） */
+  sizes: number[];
+  /** 已收集子项的可见行数之和 */
+  sum: number;
+}
+
+function frameOf(container: Container): WalkFrame {
+  if (Array.isArray(container)) return { container, keys: null, slot: 0, count: container.length };
+  const keys = Object.keys(container);
+  return { container, keys, slot: 0, count: keys.length };
+}
+
+function childAtSlot(frame: WalkFrame): unknown {
+  return frame.keys
+    ? (frame.container as Record<string, unknown>)[frame.keys[frame.slot] as string]
+    : (frame.container as unknown[])[frame.slot];
+}
+
+function buildFrameOf(container: Container): BuildFrame {
+  return { ...frameOf(container), sizes: [], sum: 0 };
+}
+
+/**
+ * 「全展开后的可见行数」= 值图节点数（全展开时每个节点恰好一行）。
+ * 超过 limit 立即返回 limit + 1：早停保证大文档（50MB / 2.96M 节点）也只走 ≤ limit+1 个节点。
+ */
+export function countAllExpandedRows(value: unknown, limit: number): number {
+  let count = 1;
+  if (count > limit) return limit + 1;
+  if (!isContainer(value)) return count;
+  const stack: WalkFrame[] = [frameOf(value)];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1] as WalkFrame;
+    if (frame.slot >= frame.count) {
+      stack.pop();
+      continue;
+    }
+    const child = childAtSlot(frame);
+    frame.slot += 1;
+    count += 1;
+    if (count > limit) return limit + 1;
+    if (isContainer(child)) stack.push(frameOf(child));
+  }
+  return count;
+}
+
+/* ------------------------------------------------------------------------- */
 /* RowModel                                                                  */
 /* ------------------------------------------------------------------------- */
 
@@ -330,6 +389,53 @@ export class RowModel {
   }
 
   /**
+   * 全部展开（#9 / ADR-0002 修订）：先 dry-run 计数，count > limit 抛 TOO_MANY_ROWS 且**零部分修改**；
+   * 预算内一次性重建全 open 行模型（所有非空容器进 expanded 并建 Fenwick），不逐节点 toggle。
+   * changed=false 表示本来就已全展开（视觉等价，不重建）。
+   */
+  expandAll(limit: number = this.rowBudget): { changed: boolean; totalRows: number } {
+    // 显式 limit 只能收紧、不能绕过 rowBudget（行预算不变量）
+    const effective = Math.min(limit, this.rowBudget);
+    const count = countAllExpandedRows(this.rootValue, effective);
+    if (count > effective) throw this.tooManyRows(count);
+    if (!isContainer(this.rootValue)) return { changed: false, totalRows: this.totalRows };
+    if (this.totalRows === count) return { changed: false, totalRows: count };
+    this.rebuildAllOpen();
+    return { changed: true, totalRows: count };
+  }
+
+  /**
+   * 自适应展开（ADR-0002 修订 / Q3）：全展开行数 ≤ threshold 才展开，**不抛错**（load 不因自适应失败）。
+   * 返回是否已处于全展开状态（标量根 / 超阈值返回 false）。
+   */
+  expandIfAtMost(threshold: number): boolean {
+    const limit = Math.min(threshold, this.rowBudget);
+    if (!isContainer(this.rootValue) || !Number.isFinite(limit) || limit < 1) return false;
+    const count = countAllExpandedRows(this.rootValue, limit);
+    if (count > limit) return false;
+    if (this.totalRows === count) return true;
+    this.rebuildAllOpen();
+    return true;
+  }
+
+  /**
+   * 全部收起（#9）：折叠除根外所有容器（根永远 open），复用 clear() 释放全部索引。
+   * changed = 除根外是否有 open 容器；no-op 时不重建，避免制造行窗口抖动。
+   */
+  collapseAll(): { changed: boolean; totalRows: number } {
+    let changed = false;
+    for (const container of this.expanded) {
+      if (container !== this.rootValue) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return { changed: false, totalRows: this.totalRows };
+    this.clear();
+    return { changed: true, totalRows: this.totalRows };
+  }
+
+  /**
    * 子树整体替换（编辑语义，见 ADR-0006：S1 = 保留被替换节点自身展开态、子节点折叠）。
    * 骨架 slice 未接 DocService，但行模型语义先落地，供编辑实现复用。
    */
@@ -408,6 +514,52 @@ export class RowModel {
     const sizes = new Array<number>(count).fill(1);
     this.expanded.add(root);
     this.indexes.set(root, new Fenwick(sizes));
+  }
+
+  /**
+   * 一次性重建「全 open」行模型（expandAll 的实现；调用方已做预算检查）。
+   * 迭代后序：先收集容器帧，子容器完成后把「子树行数」回填给父容器作可见尺寸；
+   * 不使用递归（深 JSON 不爆栈）。expanded 是 Root 共享的 Set，只能 clear/add，不能重新赋值。
+   */
+  private rebuildAllOpen(): void {
+    const root = this.rootValue as Container;
+    for (const container of this.indexes.keys()) this.indexes.delete(container);
+    this.expanded.clear();
+    this.expanded.add(root);
+    const rootCount = Array.isArray(root) ? root.length : Object.keys(root).length;
+    if (rootCount === 0) {
+      this.indexes.set(root, new Fenwick([]));
+      return;
+    }
+    const stack: BuildFrame[] = [buildFrameOf(root)];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1] as BuildFrame;
+      if (frame.slot < frame.count) {
+        const child = childAtSlot(frame);
+        frame.slot += 1;
+        if (isContainer(child)) {
+          const childCount = Array.isArray(child) ? child.length : Object.keys(child).length;
+          if (childCount > 0) {
+            this.expanded.add(child);
+            stack.push(buildFrameOf(child));
+            continue; // 父容器的该槽位在子帧结束时回填
+          }
+          // 空容器：1 行，且不进 expanded（没有可展开的内容，open=false 才符合语义）
+        }
+        // 标量或空容器：恰好 1 行
+        frame.sizes.push(1);
+        frame.sum += 1;
+        continue;
+      }
+      this.indexes.set(frame.container, new Fenwick(frame.sizes));
+      const subtreeRows = 1 + frame.sum;
+      stack.pop();
+      const parent = stack[stack.length - 1];
+      if (parent) {
+        parent.sizes.push(subtreeRows);
+        parent.sum += subtreeRows;
+      }
+    }
   }
 
   private tooManyRows(totalRows: number): CoreError {

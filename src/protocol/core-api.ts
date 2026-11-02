@@ -65,6 +65,8 @@ export interface CoreApi {
   window(req: WindowRequest): Promise<RowWindow>;
   toggle(req: ToggleRequest): Promise<EditReply>;
   expandTo(req: { rootId: RootId; path: Path }): Promise<ExpandReply>;
+  expandAll(rootId: RootId): Promise<EditReply>;
+  collapseAll(rootId: RootId): Promise<EditReply>;
 
   search(req: SearchRequest): Promise<SearchReply>;
   cancelSearch(seq: number): void;
@@ -99,6 +101,8 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     window: (req) => send({ t: 'window', ...req }),
     toggle: (req) => send({ t: 'toggle', ...req }),
     expandTo: (req) => send({ t: 'expandTo', ...req }),
+    expandAll: (rootId) => send({ t: 'expandAll', rootId }),
+    collapseAll: (rootId) => send({ t: 'collapseAll', rootId }),
     search: (req) => send({ t: 'search', ...req }),
     cancelSearch: (seq) => fire({ t: 'cancelSearch', seq }),
     getNodeJson: (req) => send({ t: 'getNodeJson', ...req }),

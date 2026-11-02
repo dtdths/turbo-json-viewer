@@ -26,6 +26,8 @@ export type Command =
   | { t: 'window'; rootId: RootId; rowVersion: Rev; seq: number; start: number; count: number }
   | { t: 'toggle'; rootId: RootId; path: Path; open: boolean }
   | { t: 'expandTo'; rootId: RootId; path: Path }
+  | { t: 'expandAll'; rootId: RootId }
+  | { t: 'collapseAll'; rootId: RootId }
   | { t: 'search'; rootId: RootId; seq: number; query: string; opts?: SearchOpts }
   | { t: 'cancelSearch'; seq: number }
   | { t: 'getNodeJson'; rootId: RootId; path: Path }
@@ -88,6 +90,8 @@ export interface ReplyByKind {
   window: RowWindow;
   toggle: EditReply;
   expandTo: ExpandReply;
+  expandAll: EditReply;
+  collapseAll: EditReply;
   search: SearchReply;
   cancelSearch: void;
   getNodeJson: NodeJsonReply;

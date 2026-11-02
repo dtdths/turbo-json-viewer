@@ -14,6 +14,8 @@ export const ROW_BUDGET = 1_000_000;
 export const EDIT_MAX_BYTES = 5 * 1024 * 1024;
 /** 搜索命中上限 */
 export const SEARCH_LIMIT = 50_000;
+/** 自适应展开阈值：加载时「全展开行数」（= 节点数）不超过该值则直接全展开（ADR-0002 修订 / #9） */
+export const ADAPTIVE_EXPAND_ROWS = 500;
 
 /** 行窗口回包是否过期：seq 之后到、或 rowVersion 不符 */
 export function isStaleRow(

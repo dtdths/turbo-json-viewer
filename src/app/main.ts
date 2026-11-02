@@ -40,6 +40,8 @@ const fileChip = el<HTMLButtonElement>('fileChip');
 const fileName = el('fileName');
 const fileMeta = el('fileMeta');
 const exportBtn = el<HTMLButtonElement>('exportBtn');
+const expandAllBtn = el<HTMLButtonElement>('expandAllBtn');
+const collapseAllBtn = el<HTMLButtonElement>('collapseAllBtn');
 const fileInput = el<HTMLInputElement>('fileInput');
 const empty = el('empty');
 const emptyInner = el('emptyInner');
@@ -254,6 +256,8 @@ function onLoaded(reply: LoadReply): void {
   fileName.textContent = reply.meta.name;
   fileMeta.textContent = formatBytes(reply.meta.bytes);
   exportBtn.disabled = false;
+  expandAllBtn.disabled = false;
+  collapseAllBtn.disabled = false;
 
   rowSource.setRoot({ rootId: rid, rowVersion, totalRows });
   rowSource.setMetrics(metrics());
@@ -346,6 +350,13 @@ fileInput.addEventListener('change', () => {
   fileInput.value = '';
 });
 
+expandAllBtn.addEventListener('click', () => {
+  void applyExpandAll(true);
+});
+collapseAllBtn.addEventListener('click', () => {
+  void applyExpandAll(false);
+});
+
 /* ---------------- tree intents ---------------- */
 
 async function toggleNode(path: string, open: boolean): Promise<void> {
@@ -359,6 +370,35 @@ async function toggleNode(path: string, open: boolean): Promise<void> {
     updateStatus();
   } catch (error) {
     showError(error);
+  }
+}
+
+/**
+ * 全部展开 / 全部收起（#9 / ADR-0002 修订）。
+ * 预算护栏在 core（超 ROW_BUDGET 抛 TOO_MANY_ROWS，零部分修改）；失败走 toast。
+ * Q7：成功后滚回顶部，选中路径保留、不强行滚动到选中行。
+ */
+async function applyExpandAll(open: boolean): Promise<void> {
+  if (!rootId) return;
+  // 防重入：命令在途时禁用两个按钮（同时给出「处理中」的视觉反馈）
+  expandAllBtn.disabled = true;
+  collapseAllBtn.disabled = true;
+  try {
+    const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
+    rowVersion = reply.rowVersion;
+    totalRows = reply.totalRows;
+    rowSource.setRoot({ rootId, rowVersion, totalRows });
+    rowSource.requestWindow();
+    rowSource.scrollTo(0);
+    tree.scrollToPx(0);
+    // 命中集仍按路径有效（docRevision 未变），重推高亮
+    applySearchToTree();
+    updateStatus();
+  } catch (error) {
+    showError(error);
+  } finally {
+    expandAllBtn.disabled = false;
+    collapseAllBtn.disabled = false;
   }
 }
 
@@ -665,11 +705,14 @@ if (!isExtension) {
     loadText: (text: string, name = 'sample.json') => importBuffer('file', text, name),
     scrollToPx: (px: number) => tree.scrollToPx(px),
     togglePath: (path: string, open: boolean) => toggleNode(path, open),
+    expandAll: () => applyExpandAll(true),
+    collapseAll: () => applyExpandAll(false),
     state: () => ({
       rootId,
       totalRows,
       rowVersion,
       docRevision,
+      selected,
       rendered: rowSource.snapshot().rows.length,
       start: rowSource.snapshot().start,
       scrollTop: tree.scrollTopPx(),
