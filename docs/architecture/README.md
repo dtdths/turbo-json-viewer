@@ -278,3 +278,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 **实现期重点风险**：同一 `doc` rootId + 版本重置为 1 时，迟到回包只靠 `seq`/`loadSeq` 兜底（单文档的模块级守卫）——多标签必须改成「rootId 不复用 + 按 rootId 路由/丢弃回包」；
 8 × 50MB 标签 ≈ 584MB Worker 堆（软上限 8 与内存提示的来源）；切回旧标签的窗口可能 stale → 1 帧重取。
+
+**其它想法（仅记录、未拍板）**：**节点子键按规则排序**（痛点：一个节点下很多 key，想按规则排以快速定位；方向：只改「显示顺序」、不改数据顺序，见 #19）。
+约束与待拍板问题已记在 #19（键序是产品承诺 → 排序只能是视图状态；`RowModel.keysOf` 需要容器级顺序覆盖 + 缓存失效；
+设置入口受 `ViewStateStore`/`SettingsPanel` 未接线影响）。后续用 grilling 从该票的「待拍板问题」续，拍板后再落 ADR / 实现。
