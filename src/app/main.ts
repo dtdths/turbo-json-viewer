@@ -377,12 +377,15 @@ async function toggleNode(path: string, open: boolean): Promise<void> {
  * 全部展开 / 全部收起（#9 / ADR-0002 修订）。
  * 预算护栏在 core（超 ROW_BUDGET 抛 TOO_MANY_ROWS，零部分修改）；失败走 toast。
  * Q7：成功后滚回顶部，选中路径保留、不强行滚动到选中行。
+ *
+ * 防重入用内部锁**不动按钮禁用态**：两个按钮共享一次命令，改成 disabled 会让它们
+ * 一起灰一下（opacity .45）——用户反馈这就是「按钮闪」；视觉上保持稳定。
  */
+let expandAllBusy = false;
+
 async function applyExpandAll(open: boolean): Promise<void> {
-  if (!rootId) return;
-  // 防重入：命令在途时禁用两个按钮（同时给出「处理中」的视觉反馈）
-  expandAllBtn.disabled = true;
-  collapseAllBtn.disabled = true;
+  if (!rootId || expandAllBusy) return;
+  expandAllBusy = true;
   try {
     const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
     rowVersion = reply.rowVersion;
@@ -398,8 +401,7 @@ async function applyExpandAll(open: boolean): Promise<void> {
   } catch (error) {
     showError(error);
   } finally {
-    expandAllBtn.disabled = false;
-    collapseAllBtn.disabled = false;
+    expandAllBusy = false;
   }
 }
 
