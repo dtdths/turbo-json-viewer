@@ -135,6 +135,8 @@ kbd {
   color: var(--muted);
 }
 .iconbtn:hover { background: var(--bg-hover); color: var(--text); }
+.iconbtn:disabled { cursor: not-allowed; }
+.iconbtn:hover:disabled { background: transparent; color: var(--muted); }
 .iconbtn svg { width: 15px; height: 15px; display: block; }
 .linkbtn { color: var(--accent-text, var(--accent)); text-decoration: none; border-bottom: 1px dashed currentColor; }
 

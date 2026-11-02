@@ -202,7 +202,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29，slice 1–4）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 自适应）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -210,6 +210,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 2 `RowModel`(Fenwick)/identity/path | ✅ | `src/core/row-model.ts`（per-open Fenwick + lowerBound 下潜）、`src/shared/path.ts`；core 60 用例、viewmodel 15 用例全绿 |
 | 3 page 外壳 + `TreeView`/`RowRenderer` + `RowWindowSource` + `WorkerTransport` | ✅ | 10MB 首帧（load→首行）**58ms**、50MB **246ms**；主线程长任务 **0**；滚动换窗 start 14,869 @ scrollTop 357k px |
 | 4 搜索面板 + 命中跳转 | ✅ | `viewmodel/search-state.ts`（begin/apply + seq/docRevision 过期 + 过滤 + 虚拟窗口，36 用例）、`view/panels/search-panel.ts`（44px 两行虚拟结果列表 + C 样式）、`app/main.ts` 接线（上下条 / Enter / ⌘G / F3 / 树命中高亮 + `<mark>`）；`.mock/1.json` `hotel` 27.3ms/186 命中，10MB `hotel` 91.3ms/50,000 截断（raw 74,378），跳转 2.7ms，列表滚动渲染恒 22 行、0 长任务 |
+| 4.5 全部展开 / 全部收起 + 小文档自适应展开（#9 / ADR-0002 修订） | ✅ | `RowModel.countAllExpandedRows/expandAll/expandIfAtMost/collapseAll` + `DocService` 的 `expandAll`/`collapseAll` 命令（changed 才 `rowVersion++`）+ `load` 自适应（≤500 节点全展开，带限计数早停 0.14ms）；顶部工具栏两个图标按钮（`#expandAllBtn`/`#collapseAllBtn`，无快捷键）；**单测 136**（新增 20） |
 | 5 子树编辑 + undo | ⏳ 命令已留 | `getNodeJson/replaceNode/undo/redo/reset` 在 DocService 抛 `BAD_COMMAND` |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
@@ -228,7 +229,14 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 附注：旧基准 `58 / 37,189` 是旧口径（37,189 恰为 10MB 键名命中数），当前 `core/search.ts` 同时匹配键名与字符串值；`docs/design/qa-editing-and-search.md` §2.3 已加复核注记。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
+**slice 4.5 展开/收起验收**（2026-11-02，CfT headless 1440×900；`scripts/smoke-expand.mjs` **9/9**）：
+
+- **自适应展开**：8 节点文档加载即全展开（`totalRows` 8）；`>500` 节点保持默认折叠（判定 = 带限计数、超阈值早停，实测 **0.14ms**）。
+- **10MB（595,030 节点，预算内）**：load→首帧 **41ms**；点「全部展开」端到端 **68ms**（Worker 内计数+重建 **37.3ms**、heap +26.7MB），`totalRows` 595,030；渲染行 **51**、滚回顶部、**选中路径保留**（Q7）；0 长任务、0 console 错误；全开后窗口 p95 0.062ms。
+- **50MB（2,958,550 节点，超 `ROW_BUDGET`）**：dry-run 早停 **11.7ms**、拒绝 **17.1ms**（Worker 内），回包 `totalRows`/`rowVersion` 不变（**零部分修改**）+ toast `TOO_MANY_ROWS`；「全部收起」回默认行数。
+- **回归**：`npm run smoke` / `smoke:ext` / `smoke-search` **82/82** / `smoke-extension-search` **56/56** 全绿；截图 `.spike/smoke/expand-{adaptive,all,collapse,budget}.png`。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
@@ -240,18 +248,20 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - `44px` / `SEARCH_LIMIT=50,000` 在常量、CSS、smoke 脚本多处重复；结果列表滚动直接重绘、未做 rAF 合并（实测 0 长任务）。
 - 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
 - slice 5 编辑接入后：「替换文档 / 关闭文档」需要未保存临时修改的确认（当前无编辑，故未做）。
+- 「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）；「N=500 可关」的设置开关待设置面板（`ViewStateStore` 未接线）。
+- `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。
 
-## 12. 未实现设计（2026-10-30）：全部展开/收起 + 工作区多标签
+## 12. 未实现设计（多文档工作区标签，#18）
 
-> 两项后续需求已定设计、**尚未实现**（用户明确「后续版本再做」）。决策记录：#9（展开/收起）、#18（多文档标签）；
-> 术语：`CONTEXT.md`（自适应展开 / 全部展开 / 工作区 / 文档标签）；决策：ADR-0002「修订（2026-10-30）」、ADR-0009。
+> 设计已定、**尚未实现**。两项后续需求中「全部展开 / 收起 + 自适应展开」**已于 2026-11-02 实现**（见 §11 slice 4.5）；
+> 本节只剩「多文档标签」。决策记录：#18；术语：`CONTEXT.md`（工作区 / 文档标签）；决策：ADR-0009。
 
 | 层 | 计划改动 | 现状 |
 |---|---|---|
-| `protocol` | 新增 `closeRoot { rootId }`；`load` 回带 `doc:N`；`versions.ts` 加自适应阈值（500）与标签上限（8）常量 | 15 条命令，无关闭根；`load` 只回 `DOC_ROOT_ID` |
-| `core` | `RootStore` doc 根释放（`release`/`close` 收口）；`DocService.load` 不覆盖已有根；`RowModel.expandAll`（dry-run 计数 + 一次性重建） | `load` 写死 `DOC_ROOT_ID`；`RowModel.clear()` 已可作 collapse-all |
+| `protocol` | 新增 `closeRoot { rootId }`；`load` 回带 `doc:N`；`versions.ts` 加标签上限（8）与标签条高（32）常量 | 17 条命令（15 + `expandAll`/`collapseAll`），无关闭根；`load` 写死 `DOC_ROOT_ID` |
+| `core` | `RootStore` doc 根释放（`release`/`close` 收口）；`DocService.load` 不覆盖已有根 | `load` 写死 `DOC_ROOT_ID`；doc 根无释放路径 |
 | `viewmodel` | 新增 `WorkspaceState` / `TabState`；`RowWindowSource` / `SearchState` 按标签实例化 | 各一份模块级实例（`main.ts`） |
-| `view` | 新增 `TabStrip`（32px、≥2 文档才显示）；工具栏两个「全部展开 / 全部收起」图标 | 无 |
+| `view` | 新增 `TabStrip`（32px、≥2 文档才显示、`role=tablist`） | 无 |
 | `app` | 导入层区分「替换当前标签 / 新标签」；拖放按落点分流；关闭标签 → `closeRoot` | 导入层已实现（在 `main.ts`） |
 
 **实现期重点风险**：同一 `doc` rootId + 版本重置为 1 时，迟到回包只靠 `seq`/`loadSeq` 兜底（单文档的模块级守卫）——多标签必须改成「rootId 不复用 + 按 rootId 路由/丢弃回包」；

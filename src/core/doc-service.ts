@@ -22,6 +22,7 @@ import type {
   StatsReply,
 } from '../protocol/messages';
 import type { RowWindow } from '../protocol/types';
+import { ADAPTIVE_EXPAND_ROWS } from '../protocol/versions';
 import { loadDocument } from './import';
 import { RowModel } from './row-model';
 import { DOC_ROOT_ID, RootStore, type Root } from './root-store';
@@ -77,6 +78,10 @@ export class DocService {
         return this.toggle(cmd);
       case 'expandTo':
         return this.expandTo(cmd);
+      case 'expandAll':
+        return this.expandAll(cmd);
+      case 'collapseAll':
+        return this.collapseAll(cmd);
       case 'search':
         return this.search(cmd);
       case 'cancelSearch':
@@ -122,6 +127,9 @@ export class DocService {
 
       this.emit({ t: 'load-progress', loadId, phase: 'model' });
       const rowModel = new RowModel(value);
+      // 自适应展开（ADR-0002 修订 / #9）：小文档加载即全展开；超阈值保持默认折叠。
+      // 不抛错——自适应失败不能拖垮 load。
+      rowModel.expandIfAtMost(ADAPTIVE_EXPAND_ROWS);
       const totalRows = rowModel.totalRows;
 
       const now = Date.now();
@@ -206,6 +214,32 @@ export class DocService {
       rootId: root.rootId,
       rowVersion: root.rowVersion,
       row: result.row,
+      totalRows: result.totalRows,
+    };
+  }
+
+  /* ---------------------- expandAll / collapseAll ---------------------- */
+
+  private expandAll(cmd: Cmd<'expandAll'>): EditReply {
+    const root = this.roots.require(cmd.rootId);
+    const result = root.rowModel.expandAll();
+    if (result.changed) root.rowVersion += 1;
+    return {
+      rootId: root.rootId,
+      docRevision: root.docRevision,
+      rowVersion: root.rowVersion,
+      totalRows: result.totalRows,
+    };
+  }
+
+  private collapseAll(cmd: Cmd<'collapseAll'>): EditReply {
+    const root = this.roots.require(cmd.rootId);
+    const result = root.rowModel.collapseAll();
+    if (result.changed) root.rowVersion += 1;
+    return {
+      rootId: root.rootId,
+      docRevision: root.docRevision,
+      rowVersion: root.rowVersion,
       totalRows: result.totalRows,
     };
   }
