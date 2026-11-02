@@ -128,16 +128,37 @@ try {
   Object.assign(report, phase2);
   await page.screenshot(path.join(SHOTS, 'expand-all.png'));
 
-  // ---- phase 3：全收起 → 回默认（选中保留） ----
+  // ---- phase 3：滚到 40% 后全收起 → 回默认（选中保留 + 逐帧无空白/无塌陷闪帧） ----
   const phase3 = await page.eval(`(async () => {
     const { clickBtn, waitState, sleep } = window.__smoke;
     const defaultRows = window.__collapsedRows;
+    const scroller = document.getElementById('tree');
+    const visibleCount = () => [...document.querySelectorAll('.row[data-path]')].filter((el) => !el.hidden).length;
+
+    // 模拟真实用法：文档展开到 59 万行后先滚到 40%，再点「全部收起」
+    window.__tjv.scrollToPx(Math.floor(window.__tjv.state().totalRows * 0.4) * 24);
+    await sleep(400);
+    const before = window.__tjv.state();
+
+    const samples = [];
+    const t0 = performance.now();
+    let running = true;
+    const tick = () => {
+      const s = window.__tjv.state();
+      samples.push({ t: Math.round(performance.now() - t0), rows: visibleCount(), start: s.start, rv: s.rowVersion, total: s.totalRows, scrollTop: Math.round(scroller.scrollTop) });
+      if (running && performance.now() - t0 < 3000) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
     clickBtn('collapseAllBtn');
     const after = await waitState((s) => s.totalRows === defaultRows, 15000);
-    await sleep(150);
+    await sleep(250);
+    running = false;
     return {
       defaultRows,
+      before,
       after,
+      samples,
       scrollTopAfterCollapse: window.__tjv.state().scrollTop,
       selectedAfterCollapse: window.__tjv.state().selected,
     };
@@ -194,6 +215,19 @@ const selectionKept =
   report.selectedAfterExpand === report.selectedBefore &&
   report.collapsePhase?.selectedAfterCollapse === report.selectedBefore;
 const collapseOk = report.collapsePhase?.after?.totalRows === report.collapsedDefaultRows;
+
+// 闪帧回归（2026-11-02）：滚动后收起必须「回顶 + 换版本」原子完成——
+// 新 rowVersion 的每一帧都必须 start=0，且任何一帧都不能塌成 0 行（旧实现会出现 1 行/start=2 的闪帧）。
+const collapseSamples = report.collapsePhase?.samples ?? [];
+const collapseScrolledFirst = report.collapsePhase?.before?.scrollTop > 0;
+const collapseNewRv = report.collapsePhase?.after?.rowVersion;
+const collapseNewRvFrames = collapseSamples.filter((s) => s.rv === collapseNewRv);
+const collapseNoFlashFrame =
+  collapseScrolledFirst &&
+  collapseNewRvFrames.length > 0 &&
+  collapseNewRvFrames.every((s) => s.start === 0 && s.rows > 0) &&
+  collapseSamples.every((s) => s.rows > 0);
+
 const budgetRejectOk =
   report.budget?.collapsed?.totalRows > 0 &&
   report.budget?.afterReject?.totalRows === report.budget?.collapsed?.totalRows &&
@@ -210,6 +244,7 @@ const checks = {
   '10mb:expand-all': expandOk,
   '10mb:selection-kept': selectionKept,
   '10mb:collapse-all': collapseOk,
+  '10mb:collapse-no-flash-frame': collapseNoFlashFrame,
   '50mb:budget-reject': budgetRejectOk,
   'perf:no-long-task-no-console-error': perfOk,
 };

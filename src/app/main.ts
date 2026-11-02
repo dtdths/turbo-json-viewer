@@ -387,10 +387,11 @@ async function applyExpandAll(open: boolean): Promise<void> {
     const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
     rowVersion = reply.rowVersion;
     totalRows = reply.totalRows;
-    rowSource.setRoot({ rootId, rowVersion, totalRows });
-    rowSource.requestWindow();
-    rowSource.scrollTo(0);
+    // 回顶与换版本同一拍完成：避免「旧 start 的保留帧被新 totalRows 裁到视口外」（空白帧）
+    // 与「按旧滚动位置算出的中间窗口」（1 行闪帧）。见 RowWindowSource.setRoot 的 opts.scrollTopPx。
+    rowSource.setRoot({ rootId, rowVersion, totalRows }, { scrollTopPx: 0 });
     tree.scrollToPx(0);
+    rowSource.requestWindow();
     // 命中集仍按路径有效（docRevision 未变），重推高亮
     applySearchToTree();
     updateStatus();
