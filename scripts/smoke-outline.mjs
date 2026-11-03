@@ -30,8 +30,9 @@ const SMALL = JSON.stringify({ a: 1, b: { c: [1, 2] }, d: [{ e: 1 }, { e: 2 }], 
 const WEIRD = JSON.stringify({ 'a.b': { c: 1 }, "it's": [1, 2] });
 /** 450 项数组：200/200/50 三页 + 哨兵行 */
 const PAGED = JSON.stringify({ items: Array.from({ length: 450 }, (_, i) => ({ i })) });
-/** 非标识符键在规范路径里的形态（ADR-0010 §2）：`$['a.b']` */
+/** 非标识符键在规范路径里的形态（ADR-0010 §2）：`$['a.b']` / `$['it\'s']` */
 const WEIRD_PATH = "$['a.b']";
+const IT_PATH = "$['it\\'s']";
 
 const server = await startStaticServer(REPO_ROOT);
 const chrome = await launchChrome({ windowSize: '1440,900' });
@@ -89,8 +90,17 @@ window.__outlineWindowInfo = () => {
     spacerHeight: spacer ? spacer.offsetHeight : -1,
     firstRowHeight: firstRow ? getComputedStyle(firstRow).height : null,
     activeDescendant: scroller.getAttribute('aria-activedescendant'),
+    activeDescendantPath: (() => {
+      const id = scroller.getAttribute('aria-activedescendant');
+      return id ? (document.getElementById(id)?.dataset.path ?? null) : null;
+    })(),
     hasCurrent: Boolean(scroller.querySelector('.outline-row.is-current')),
   };
+};
+window.__outlineScrollTo = (px) => {
+  const scroller = document.querySelector('#outlineScroll');
+  scroller.scrollTop = px;
+  return scroller.scrollTop;
 };
 window.__outlineClose = () => {
   document.querySelector('#leftPanel [data-panel-close]')?.click();
@@ -146,8 +156,8 @@ try {
       const out = {};
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      h.outlineOpen();
-      await sleep(200);
+      window.__outlineClickActiveBtn();
+      await sleep(250);
       out.empty = {
         panel: document.body.dataset.panel,
         title: document.querySelector('#panelTitle')?.textContent ?? null,
@@ -224,6 +234,8 @@ try {
         rows: window.__outlinePaths(),
         currentRows: window.__outlineRows().filter((r) => r.current).map((r) => r.path),
         activeDescendant: window.__outlineWindowInfo().activeDescendant,
+        activeDescendantPath: window.__outlineWindowInfo().activeDescendantPath,
+        currentRow: window.__outlineRows().find((r) => r.current) ?? null,
       };
       // 点击行 = 跳树 + 选中 + 大纲高亮
       out.small.rowClicked = window.__outlineClickRow('$.d[1]');
@@ -233,6 +245,8 @@ try {
         viewMode: h.state().viewMode,
         treeSelected: document.querySelector('.row.is-selected[data-path="$.d[1]"]')?.dataset.path ?? null,
         outlineCurrent: window.__outlineRows().filter((r) => r.current).map((r) => r.path),
+        currentRow: window.__outlineRows().find((r) => r.current) ?? null,
+        activeDescendantPath: window.__outlineWindowInfo().activeDescendantPath,
       };
       // 关闭面板 → 现场保留；重开 → 原展开集合与行数不变
       out.small.beforeClose = { rows: window.__outlinePaths(), expanded: h.outlineState().expanded };
@@ -284,6 +298,18 @@ try {
       await sleep(150);
       out.keyboard.afterDown3 = h.state().selected;
       out.keyboard.treeAfterDown = { totalRows: h.state().totalRows, scrollTop: h.state().scrollTop };
+      // ↑ 回退一行；Home 回首行
+      window.__outlineKey('ArrowUp');
+      await sleep(150);
+      out.keyboard.afterUp = h.state().selected;
+      window.__outlineKey('Home');
+      await sleep(150);
+      out.keyboard.afterHome = h.state().selected;
+      // 回到 $.d（下行 3 次）
+      for (let i = 0; i < 3; i++) {
+        window.__outlineKey('ArrowDown');
+        await sleep(120);
+      }
       // 当前行 $.d 是容器：←→ 必须真翻转 aria-expanded / .is-open
       out.keyboard.rowBefore = window.__outlineRows().find((r) => r.current) ?? null;
       window.__outlineKey('ArrowRight');
@@ -300,7 +326,11 @@ try {
       };
       window.__outlineKey('Enter');
       await sleep(400);
-      out.keyboard.afterEnter = { selected: h.state().selected, viewMode: h.state().viewMode };
+      out.keyboard.afterEnter = {
+        selected: h.state().selected,
+        viewMode: h.state().viewMode,
+        treeSelected: document.querySelector('.row.is-selected[data-path="$.d"]')?.dataset.path ?? null,
+      };
       out.keyboard.focusInPanel = Boolean(document.activeElement?.closest?.('#outlinePanel'));
       return out;
     })()`,
@@ -320,6 +350,7 @@ try {
       out.weird = {
         paths: window.__outlinePaths(),
         expandWeird: await h.outlineToggle(${JSON.stringify(WEIRD_PATH)}, true),
+        expandIt: await h.outlineToggle(${JSON.stringify(IT_PATH)}, true),
         rows: window.__outlinePaths(),
       };
       return out;
@@ -376,7 +407,38 @@ try {
       };
       // 已到末页：hook 返回 false，不再发请求
       out.paging.moreAtEnd = await h.outlineLoadMore('$.items');
+      // 大文档（451 节点 > 500 阈值 → 树默认折叠，totalRows=2）：行点击必须 expandTo 祖先 + 居中
+      out.paging.treeBeforeJump = { totalRows: h.state().totalRows, scrollTop: h.state().scrollTop };
+      window.__outlineScrollTo(300 * 24);
+      await sleep(300);
+      out.paging.rowClicked = window.__outlineClickRow('$.items[300]');
+      await sleep(600);
+      out.paging.rowJump = {
+        totalRows: h.state().totalRows,
+        scrollTop: h.state().scrollTop,
+        treeSelected: document.querySelector('.row.is-selected[data-path="$.items[300]"]')?.dataset.path ?? null,
+        selected: h.state().selected,
+      };
+      // Enter 跳转（End 选到末行后再 Enter）：同样应展开祖先 + 滚动
+      h.collapseAll();
+      await sleep(400);
+      h.outlineOpen();
+      await sleep(200);
+      document.querySelector('#outlineScroll')?.focus();
+      window.__outlineKey('End');
+      await sleep(300);
+      out.paging.enterSelected = h.state().selected;
+      out.paging.treeBeforeEnter = { totalRows: h.state().totalRows, scrollTop: h.state().scrollTop };
+      window.__outlineKey('Enter');
+      await sleep(600);
+      out.paging.enterJump = {
+        totalRows: h.state().totalRows,
+        scrollTop: h.state().scrollTop,
+        treeSelected: document.querySelector('.row.is-selected[data-path="$.items[449]"]')?.dataset.path ?? null,
+        selected: h.state().selected,
+      };
       // 滚到底的窗口纪律 + spacer 精确高度
+      await toBottom();
       out.paging.bottom = { info: window.__outlineWindowInfo(), lastVisible: [...document.querySelectorAll('.outline-row[data-path]')].at(-1)?.dataset.path ?? null };
       await toTop();
       out.paging.top = window.__outlineWindowInfo();
@@ -545,6 +607,10 @@ try {
         emptyText: document.querySelector('#outlineEmpty')?.textContent ?? null,
         longTasksAfterReload: { longTasks: window.__outlineLongTasks, hasLongTaskObserver: window.__outlineHasLongTaskObserver },
       };
+      // 展开态不持久化：刷新后重新载入文档，只有根展开
+      await h.loadText(${JSON.stringify(SMALL)}, 'persist2.json');
+      await sleep(500);
+      out.reloaded.afterLoad = { expanded: h.outlineState().expanded, rows: window.__outlinePaths() };
       return out;
     })()`,
   );
@@ -604,7 +670,8 @@ const checks = {
     report.small?.scroller?.tabindex === '0' &&
     rowAt(report.small?.rows, '$.b')?.role === 'treeitem' &&
     rowAt(report.small?.rows, '$.b')?.level === '2' &&
-    rowAt(report.small?.rows, '$.b')?.expanded === 'false',
+    rowAt(report.small?.rows, '$.b')?.expanded === 'false' &&
+    rowAt(report.small?.rows, '$.b')?.selected === 'false',
   'small:root-not-collapsible':
     report.small?.rootToggle?.open === true &&
     (report.small?.rootAfter?.expanded ?? []).includes('$') &&
@@ -628,12 +695,16 @@ const checks = {
   'small:reveal-after-expand':
     report.small?.afterReveal?.currentRows?.length === 1 &&
     report.small?.afterReveal?.currentRows[0] === '$.b.c' &&
-    /^outline-row-\d+$/.test(report.small?.afterReveal?.activeDescendant ?? ''),
+    /^outline-row-\d+$/.test(report.small?.afterReveal?.activeDescendant ?? '') &&
+    report.small?.afterReveal?.activeDescendantPath === '$.b.c' &&
+    report.small?.afterReveal?.currentRow?.selected === 'true',
   'small:row-jump':
     report.small?.afterJump?.selected === '$.d[1]' &&
     report.small?.afterJump?.viewMode === 'tree' &&
     report.small?.afterJump?.treeSelected === '$.d[1]' &&
-    close(report.small?.afterJump?.outlineCurrent, ['$.d[1]']),
+    close(report.small?.afterJump?.outlineCurrent, ['$.d[1]']) &&
+    report.small?.afterJump?.activeDescendantPath === '$.d[1]' &&
+    report.small?.afterJump?.currentRow?.selected === 'true',
   'small:close-preserves':
     report.small?.closed?.panel === 'doc' &&
     report.small?.closed?.rows === report.small?.afterReveal?.rows?.length,
@@ -644,10 +715,12 @@ const checks = {
   'small:active-button-back-to-doc': report.small?.activeToggle?.panel === 'doc',
 
   // 键盘
-  'keyboard:arrow-down-moves':
+  'keyboard:arrow-moves':
     report.keyboard?.afterDown1 === '$.a' &&
     report.keyboard?.afterDown2 === '$.b' &&
-    report.keyboard?.afterDown3 === '$.d',
+    report.keyboard?.afterDown3 === '$.d' &&
+    report.keyboard?.afterUp === '$.b' &&
+    report.keyboard?.afterHome === '$',
   'keyboard:no-tree-move':
     report.keyboard?.treeAfterDown?.totalRows === report.keyboard?.treeBefore?.totalRows &&
     report.keyboard?.treeAfterDown?.scrollTop === report.keyboard?.treeBefore?.scrollTop,
@@ -661,14 +734,20 @@ const checks = {
     report.keyboard?.afterLeft?.row?.open === false &&
     report.keyboard?.afterLeft?.row?.expanded === 'false' &&
     close(report.keyboard?.afterLeft?.rows, ['$', '$.a', '$.b', '$.d', '$.e']),
-  'keyboard:enter-jumps': report.keyboard?.afterEnter?.selected === '$.d' && report.keyboard?.afterEnter?.viewMode === 'tree',
+  'keyboard:enter-jumps':
+    report.keyboard?.afterEnter?.selected === '$.d' &&
+    report.keyboard?.afterEnter?.viewMode === 'tree' &&
+    report.keyboard?.afterEnter?.treeSelected === '$.d',
   'keyboard:focus-stays': report.keyboard?.focusInPanel === true,
 
   // 路径转义
   'weird:escaped-path':
     (report.weird?.paths ?? []).includes("$['a.b']") &&
+    (report.weird?.paths ?? []).includes("$['it\\'s']") &&
     report.weird?.expandWeird?.ok === true &&
-    (report.weird?.rows ?? []).includes("$['a.b'].c"),
+    report.weird?.expandIt?.ok === true &&
+    (report.weird?.rows ?? []).includes("$['a.b'].c") &&
+    (report.weird?.rows ?? []).includes("$['it\\'s'][0]"),
 
   // 分页
   'paging:page1':
@@ -694,6 +773,19 @@ const checks = {
     report.paging?.bottom?.lastVisible === '$.items[449]' &&
     /已渲染 \d+ \/ 452 行/.test(report.paging?.bottom?.info?.foot ?? ''),
   'paging:no-more-at-end': report.paging?.moreAtEnd?.ok === false,
+  'paging:row-jump-expand':
+    report.paging?.treeBeforeJump?.totalRows === 2 &&
+    report.paging?.rowClicked === true &&
+    report.paging?.rowJump?.totalRows === 452 &&
+    (report.paging?.rowJump?.scrollTop ?? 0) > 0 &&
+    report.paging?.rowJump?.treeSelected === '$.items[300]' &&
+    report.paging?.rowJump?.selected === '$.items[300]',
+  'paging:enter-jumps':
+    report.paging?.enterSelected === '$.items[449]' &&
+    report.paging?.treeBeforeEnter?.totalRows === 2 &&
+    report.paging?.enterJump?.totalRows === 452 &&
+    (report.paging?.enterJump?.scrollTop ?? 0) > 0 &&
+    report.paging?.enterJump?.treeSelected === '$.items[449]',
 
   // 行高跟随设置
   'rowheight:default-24':
@@ -745,7 +837,8 @@ const checks = {
     report.reloaded?.title === '大纲' &&
     report.reloaded?.ui?.panel === 'outline' &&
     report.reloaded?.state?.phase === 'idle' &&
-    /导入文档后显示结构大纲/.test(report.reloaded?.emptyText ?? ''),
+    /导入文档后显示结构大纲/.test(report.reloaded?.emptyText ?? '') &&
+    close(report.reloaded?.afterLoad?.expanded, ['$']),
 
   // 长任务 / 异常
   'perf:no-long-task':
@@ -753,6 +846,7 @@ const checks = {
     (report.longTasksBeforeReload?.longTasks?.length ?? 1) === 0 &&
     report.reloaded?.longTasksAfterReload?.hasLongTaskObserver === true &&
     (report.reloaded?.longTasksAfterReload?.longTasks?.length ?? 1) === 0,
+  'console:no-phase-errors': report.errors === undefined,
   'console:no-exception-no-error':
     (report.consoleErrors?.length ?? 0) === 0 && (report.consoleErrorLogs?.length ?? 0) === 0,
 };
@@ -777,12 +871,17 @@ if (Object.values(checks).some((ok) => !ok)) {
     },
     keyboard: report.keyboard,
     weird: report.weird,
+    weird: report.weird,
     paging: {
       page1: report.paging?.page1,
       page2: report.paging?.page2,
       page3: report.paging?.page3 && { ...report.paging.page3, info: undefined },
       spacer: report.paging?.page3?.info,
       bottom: report.paging?.bottom?.info,
+      rowJump: report.paging?.rowJump,
+      enterJump: report.paging?.enterJump,
+      treeBeforeJump: report.paging?.treeBeforeJump,
+      treeBeforeEnter: report.paging?.treeBeforeEnter,
     },
     rowheight: report.rowheight,
     resetEdit: report.resetEdit,
