@@ -1338,7 +1338,7 @@ if (!isExtension) {
     },
     toastText: () => (toast.hidden ? '' : (toast.textContent ?? '')),
 
-    // ---- 截断修复 dev hook（契约见 docs/adr/0004 修订 §5）----
+    // ---- 截断修复 dev hook（契约见 docs/adr/0004 修订 §6 验收）----
     repairState: () => ({
       status: meta?.repair?.status ?? 'none',
       visible: !repairBar.hidden,

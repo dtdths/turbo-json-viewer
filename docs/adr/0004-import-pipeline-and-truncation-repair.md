@@ -112,7 +112,15 @@ RepairOp = { at, op: 'insert' | 'delete', text, scope: 'container'|'string'|'tok
 
 `base` + `-truncated-repaired` +（有临时修改时 `-edited`）+ `.json`；内容 = 修复后的值图。
 
-### 5. 验收
+### 5. 边界：非截断语法错误不修（含「完整 JSON 多尾逗号」）
+
+- `{"a": {"b": 1,}}`、`[1,2,]` 这类**文本完整、只是多了尾逗号**的输入**不属于截断修复**：错误不在 EOF，
+  按 §6.2 规则 6 返回 `unrepairable / not-eof`，仍抛 `PARSE`（**不自动删逗号**）。
+- 理由：截断修复的前提是「末尾缺内容」，而这类输入是「原文多了一个符号」；自动修等于工具擅自改原文，
+  且会滑向 JSON5 宽松解析的范围失控。宽松解析（JSON5 子集 / 尾逗号容错）单独记票讨论：**#20**（仅记录、暂不实现）。
+- 两者未来若都做，共用修复条/摘要 UI，但 provenance 需区分 `truncated` 与 `lenient`。
+
+### 6. 验收
 
 - 单测：`tests/unit/core/repair.test.ts` 覆盖 `reassess-fidelity.md` §6.1 的 **18 个 fixture**（16 截断 + 2 无需修复）
   + 4 个 `unrepairable` 反例；断言修复文本逐字、`counts`、`ops` 偏移、`summaryText`、自校验。
