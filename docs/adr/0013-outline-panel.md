@@ -151,15 +151,15 @@ export interface OutlineReply {
 - **冒烟** `scripts/smoke-outline.mjs`：面板打开与空态 / 根行与三层展开 / caret 与行点击语义 / 键盘 / 当前高亮 / 分页「加载更多」 / 大数组虚拟化（渲染行 ≤ 屏行 + 2×overscan）/ 换文档重置 / 编辑后刷新 / 原文视图跳转切回树 / 持久化 / 0 长任务 0 console error。截图 `.spike/smoke/outline-*.png`。
 - **性能**（10MB 样本）：打开面板到首屏 < 100ms；展开 `data` / `items` 页请求 < 20ms；滚动 0 长任务。
 - **回归**：`npm run check` + 全部 12 套冒烟（含既有 11 套）全绿。
-- **体积**：`page.js` minify 后 gz 增量 ≤ +2.5KB（预算 45）。
+- **体积**：`page.js` minify 后 gz 增量目标 ≤ +2.5KB（预算 45）。**实测 +3.6KB，目标未达成**（见验收结果；偏差是否接受待用户拍板）。
 
 ## 验收结果（2026-11-03 实测）
 
 - **单测 410/410**（17 文件；+56：outline core 12 / doc-service 12 / outline-state 32；settings 断言 +3）。`tsc --noEmit` 0 error。
-- **冒烟 12/12 全绿**：新增 `smoke-outline` **50/50**，既有 11 套全部通过（`smoke-search` 82/82、`smoke-extension-search` 56/56、`smoke-expand` 11/11、`smoke-edit` 14/14、`smoke-copy` 27/27、`smoke-repair` 14/14、`smoke-settings` 21/21、`smoke-export` 16/16、`smoke-raw` 25/25、`smoke`/`smoke:ext` OK）。
+- **冒烟 12/12 全绿**：新增 `smoke-outline` **53/53**，既有 11 套全部通过（`smoke-search` 82/82、`smoke-extension-search` 56/56、`smoke-expand` 11/11、`smoke-edit` 14/14、`smoke-copy` 27/27、`smoke-repair` 14/14、`smoke-settings` 21/21、`smoke-export` 16/16、`smoke-raw` 25/25、`smoke`/`smoke:ext` OK）。
 - **性能**：10MB 导入→大纲根页 `ready` **63ms**（含导入）；展开 `$.data` / `$.data.items` 各 **1ms**；450 项数组分页 203→403→452 行；滚到底渲染 **38 行**（末窗 = `min(屏行 31 + 2×overscan 6, size − start = 452 − 414)`，被尾部截断为 38）；全程 **0 长任务 / 0 异常 / 0 console error**。
 - **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，**超 +2.5 目标 1.1KB**，仍远低于预算 45）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2（+0.4）。
-  超目标来自虚拟列表 + 键盘 + 分页 + a11y 完整实现（含 `aria-activedescendant`/`aria-selected`、`shared/window` 抽公共窗口计算）；**登记豁免**（预算 45 未动、无新增依赖）；后续 #21 视觉走查时复查、可压。
+  超目标来自虚拟列表 + 键盘 + 分页 + a11y 完整实现（含 `aria-activedescendant`/`aria-selected`、`shared/window` 抽公共窗口计算）。**该偏差不静默豁免**：预算 45 未动、无新增依赖，但是否接受 +3.6（超目标 1.1KB）需用户拍板；#21 视觉走查时复查、可再压。
 
 ## 已知差距（记录，不在本 slice 实现）
 
