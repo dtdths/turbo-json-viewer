@@ -11,8 +11,10 @@
  *      键名（`b.c` / 数组下标 `0`）、容器原值与根键名 → BAD_COMMAND。
  *   3) 真实菜单点击 → toast 反馈 + 菜单关闭 + 剪贴板读回（headless 默认拒绝 readText，脚本经 CDP
  *      给静态服务 origin 授读权限；授权失败则读回为 null、只验 toast/菜单/状态并报告）。
- *   4) 超大子树（>5MB 标量）→ `copyResolve` 返 TOO_LARGE + 点击复制 toast 引导导出。
- *   5) 复制只读：docRevision / rowVersion / totalRows 不变；0 page 异常 / 0 console error。
+ *   4) 行尾操作浮条（ADR-0010 修订）：2 个真实 `<button>`（aria-label / tabindex=-1）、hover 显示、
+ *      点复制 = 子树 JSON 快路径（容器行与标量行）、点编辑 = 打开子树弹层且路径正确。
+ *   5) 超大子树（>5MB 标量）→ `copyResolve` 返 TOO_LARGE + 点击复制 toast 引导导出。
+ *   6) 复制只读：docRevision / rowVersion / totalRows 不变；0 page 异常 / 0 console error。
  *
  * 截图落 .spike/smoke/copy-*.png；走 HTTP + `window.__tjv`（同 smoke-edit.mjs harness）。
  * 钩子缺失（特性尚未构建）时只报 FAIL，不中断其余断言。
@@ -210,6 +212,103 @@ try {
   );
   await page.screenshot(path.join(SHOTS, 'copy-toast.png'));
 
+  // ---- phase 4.5：行尾操作浮条（ADR-0010 修订：复制=子树 JSON 快路径 / 编辑=弹层） ----
+  const rowActionProbe = await page.eval(`(async () => {
+    const out = {};
+    const row = document.querySelector('.row[data-path="$.a"]');
+    const wrap = row?.querySelector('.row__actions') ?? null;
+    const acts = row ? [...row.querySelectorAll('.row__action')] : [];
+    out.buttons = acts.map((b) => ({
+      tag: b.tagName,
+      action: b.dataset.action,
+      label: b.getAttribute('aria-label'),
+      tabIndex: b.tabIndex,
+    }));
+    out.ariaHidden = wrap ? wrap.getAttribute('aria-hidden') : 'missing';
+    out.opacityBeforeHover = wrap ? getComputedStyle(wrap).opacity : null;
+    const box = acts[0]?.getBoundingClientRect();
+    out.anchor = box ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null;
+    return out;
+  })()`);
+  report.rowActionButtons = rowActionProbe.buttons;
+  report.rowActionAriaHidden = rowActionProbe.ariaHidden;
+  report.rowActionOpacityBeforeHover = rowActionProbe.opacityBeforeHover;
+  if (rowActionProbe.anchor) {
+    // 真实指针移入行 → 触发 CSS :hover（浮条 opacity 0→1，过渡 110ms）
+    await chrome.browser.send(
+      'Input.dispatchMouseEvent',
+      { type: 'mouseMoved', x: rowActionProbe.anchor.x, y: rowActionProbe.anchor.y, buttons: 0 },
+      page.sessionId,
+    );
+    await new Promise((r) => setTimeout(r, 260));
+  }
+  report.rowActionOpacityHover = await page.eval(
+    `(() => { const row = document.querySelector('.row[data-path="$.a"]'); const w = row?.querySelector('.row__actions'); return w ? getComputedStyle(w).opacity : null; })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'copy-row-actions.png'));
+
+  // 点浮条「复制」：容器行 → 子树 JSON + toast + 选中该行
+  report.rowActionCopy = await page.eval(`(async () => {
+    const h = window.__tjv;
+    const btn = document.querySelector('.row[data-path="$.a"] .row__action[data-action="copy"]');
+    if (!btn) return { clicked: false };
+    const before = h.toastText();
+    btn.click();
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      if (h.toastText() !== before) break;
+    }
+    let clipboard = null;
+    try { clipboard = await h.clipboardText(); } catch {}
+    return {
+      clicked: true,
+      toast: h.toastText(),
+      tone: document.getElementById('toast')?.dataset.tone ?? null,
+      clipboard,
+      selected: h.state().selected,
+    };
+  })()`);
+
+  // 点浮条「复制」：标量行 → `10`（不是容器缩进）
+  report.rowActionCopyScalar = await page.eval(`(async () => {
+    const h = window.__tjv;
+    const btn = document.querySelector('.row[data-path="$.arr[0]"] .row__action[data-action="copy"]');
+    if (!btn) return { clicked: false };
+    const before = h.toastText();
+    btn.click();
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      if (h.toastText() !== before) break;
+    }
+    let clipboard = null;
+    try { clipboard = await h.clipboardText(); } catch {}
+    return { clicked: true, toast: h.toastText(), clipboard };
+  })()`);
+
+  // 点浮条「编辑」：与双击/F2 同一 openEditor 流程 → 弹层打开、路径正确、可关闭
+  report.rowActionEdit = await page.eval(`(async () => {
+    const h = window.__tjv;
+    const btn = document.querySelector('.row[data-path="$.arr[0]"] .row__action[data-action="edit"]');
+    if (!btn) return { clicked: false };
+    btn.click();
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+      if (document.getElementById('editModal')?.hidden === false) break;
+    }
+    const modalOpen = document.getElementById('editModal')?.hidden === false;
+    const out = {
+      clicked: true,
+      modalOpen,
+      path: document.getElementById('editPath')?.textContent ?? '',
+      text: typeof h.editText === 'function' ? h.editText() : null,
+    };
+    if (modalOpen) h.editClose();
+    await new Promise((r) => setTimeout(r, 80));
+    out.closed = document.getElementById('editModal')?.hidden === true;
+    return out;
+  })()`);
+
+
   // ---- phase 5：超大子树（>5MB 标量）→ TOO_LARGE + toast 引导导出 ----
   await runPhase(
     'too-large',
@@ -239,6 +338,7 @@ try {
       }
       await sleep(120);
       out.bigToast = typeof h.toastText === 'function' ? h.toastText() : '';
+      out.bigToastTone = document.getElementById('toast')?.dataset.tone ?? null;
       out.bigStateAfter = h.state();
       return out;
     })()`,
@@ -375,6 +475,34 @@ const checks = {
     clickOk(report.keyClick, '键名') &&
     clipboardOk(report.keyClick, 'b.c'),
 
+  'row-action:buttons':
+    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.tag)) === JSON.stringify(['BUTTON', 'BUTTON']) &&
+    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.action)) === JSON.stringify(['copy', 'edit']) &&
+    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.label)) ===
+      JSON.stringify(['复制子树 JSON', '编辑此节点 JSON']) &&
+    (report.rowActionButtons ?? []).every((b) => b.tabIndex === -1),
+  // 浮条容器不再 aria-hidden（按钮自带 aria-label，AT 可读）
+  'row-action:no-aria-hidden': report.rowActionAriaHidden === null,
+  'row-action:visible-on-hover':
+    report.rowActionOpacityBeforeHover === '0' && report.rowActionOpacityHover === '1',
+  'row-action:copy-subtree':
+    report.rowActionCopy?.clicked === true &&
+    /已复制/.test(report.rowActionCopy?.toast ?? '') &&
+    (report.rowActionCopy?.toast ?? '').includes('子树 JSON') &&
+    (report.rowActionCopy?.clipboard == null || report.rowActionCopy?.clipboard === SUBTREE_A) &&
+    report.rowActionCopy?.tone === 'success' &&
+    report.rowActionCopy?.selected === PATHS.a,
+  'row-action:copy-scalar':
+    report.rowActionCopyScalar?.clicked === true &&
+    (report.rowActionCopyScalar?.clipboard == null || report.rowActionCopyScalar?.clipboard === '10'),
+  'row-action:edit-modal':
+    report.rowActionEdit?.clicked === true &&
+    report.rowActionEdit?.modalOpen === true &&
+    report.rowActionEdit?.path === PATHS.arr0 &&
+    report.rowActionEdit?.text === '10' &&
+    report.rowActionEdit?.closed === true,
+
+
   'too-large:resolve':
     report.bigResolve?.error?.code === 'TOO_LARGE' &&
     report.bigResolve?.text === undefined,
@@ -383,7 +511,8 @@ const checks = {
   'too-large:menu-toast':
     bigClickRes?.clicked === true &&
     bigClickRes?.hidden === true &&
-    (/5\s*MB/i.test(bigToast) || /导出/.test(bigToast)),
+    (/5\s*MB/i.test(bigToast) || /导出/.test(bigToast)) &&
+    report.bigToastTone === 'error',
 
   'readonly:copy-does-not-bump-versions':
     versionsEqual(report.copiesStart, report.copiesEnd) &&

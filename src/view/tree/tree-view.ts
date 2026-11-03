@@ -28,6 +28,8 @@ export interface TreeViewOptions {
   onEdit?(path: string): void;
   /** 行右键（slice 5 / ADR-0010）：app 负责弹菜单；上报路径、屏幕坐标与节点类型（菜单启用态用）。 */
   onContextMenu?(path: string, x: number, y: number, kind: JsonKind): void;
+  /** 行尾浮条动作（ADR-0010 修订）：鼠标快路径 copy=子树 JSON / edit=弹层；未提供时按钮无动作。 */
+  onRowAction?(path: string, action: 'copy' | 'edit'): void;
 }
 
 export interface TreeSearchState {
@@ -79,7 +81,16 @@ export class TreeView {
       if (row && row.hasChildren) this.opts.onToggle(path, !row.open);
       return;
     }
-    if (target.closest('.row__actions')) return; // 行操作由 app 层接管
+    // 行尾浮条（ADR-0010 修订）：先选中该行（与右键菜单一致），再交给 app 执行动作
+    const actionEl = target.closest<HTMLElement>('.row__action');
+    if (actionEl) {
+      const action = actionEl.dataset.action;
+      if (action !== 'copy' && action !== 'edit') return;
+      this.opts.onSelect(path);
+      this.opts.onRowAction?.(path, action);
+      return;
+    }
+    if (target.closest('.row__actions')) return;
     this.opts.onSelect(path);
   };
 

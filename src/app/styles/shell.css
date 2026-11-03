@@ -342,13 +342,16 @@ body.rail-collapsed .rail { display: none; }
   max-width: 640px;
   padding: 9px 14px;
   border-radius: var(--radius-md, 8px);
-  border: 1px solid var(--danger, #ff7a85);
+  /* 语义色随 tone 走：默认中性，错误=danger，成功=success（复制反馈） */
+  border: 1px solid var(--border, #232937);
   background: var(--bg-elevated);
   color: var(--text);
   font-size: 12px;
   box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.4));
   z-index: 60;
 }
+.toast[data-tone="error"] { border-color: var(--danger, #ff7a85); }
+.toast[data-tone="success"] { border-color: var(--success, #6fd3b5); }
 
 /* ==========================================================================
    slice 5：子树编辑弹层 / 右键菜单 / 修改标记（只新增，不改既有规则）

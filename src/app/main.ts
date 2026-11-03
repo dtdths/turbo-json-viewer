@@ -90,6 +90,11 @@ const tree = new TreeView(treeHost, {
     setSelection(path);
     showContextMenu(path, x, y, kind);
   },
+  // 行尾浮条（ADR-0010 修订）：鼠标快路径，复制固定子树 JSON；编辑与双击/F2 同一流程
+  onRowAction: (path: string, action: 'copy' | 'edit') => {
+    if (action === 'copy') void copyNodeToClipboard(path, 'subtree');
+    else void openEditor(path);
+  },
 });
 tree.mount();
 
@@ -409,7 +414,7 @@ ctxMenu.addEventListener('click', (event: MouseEvent) => {
   if (!path) return;
   const format = copyFormatOfAct(act);
   if (format) {
-    void copyNodeFromMenu(path, format);
+    void copyNodeToClipboard(path, format);
     return;
   }
   if (act === 'edit') void openEditor(path);
@@ -743,16 +748,17 @@ function setCtxItemDisabled(act: string, disabled: boolean, why?: string): void 
 }
 
 /**
- * 菜单复制：core 生成文本（ADR-0010 §6）→ 零权限写剪贴板（§7）→ toast 反馈。
+ * 复制入口共用实现（右键菜单 4 格式 + 行尾浮条的子集快路径）：
+ * core 生成文本（ADR-0010 §6）→ 零权限写剪贴板（§7）→ toast 反馈。
  * 只读操作，不推进版本；TOO_LARGE 引导用「导出」而不是静默截断。
  */
-async function copyNodeFromMenu(path: string, format: CopyFormat): Promise<void> {
+async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<void> {
   if (!rootId) return;
   try {
     const reply = await core.copyNode({ rootId, path, format });
     const copied = await writeClipboard(reply.text);
-    if (copied) showToast(`已复制：${COPY_LABELS[format]}`);
-    else showToast('复制失败：请手动选中文本后按 ⌘C', 4000);
+    if (copied) showToast(`已复制：${COPY_LABELS[format]}`, 2000, 'success');
+    else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
   } catch (error) {
     const coreError = CoreError.from(error);
     if (coreError.code === 'TOO_LARGE') {
@@ -1053,9 +1059,13 @@ function formatCoreError(error: unknown): string {
 
 let toastTimer = 0;
 
-/** 短暂反馈（复制成功等）；错误走 showError（4s）。共用 #toast，后到的消息重置计时。 */
-function showToast(text: string, ms = 2000): void {
+/**
+ * 短暂反馈；错误走 showError（4s）。共用 #toast，后到的消息重置计时。
+ * tone 决定边框语义色（默认中性）：成功 = success、失败/错误 = danger。
+ */
+function showToast(text: string, ms = 2000, tone: 'info' | 'success' | 'error' = 'info'): void {
   toast.textContent = text;
+  toast.dataset.tone = tone;
   toast.hidden = false;
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => {
@@ -1064,7 +1074,7 @@ function showToast(text: string, ms = 2000): void {
 }
 
 function showError(error: unknown): void {
-  showToast(formatCoreError(error), 4000);
+  showToast(formatCoreError(error), 4000, 'error');
 }
 
 /* ---------------- resize ---------------- */
