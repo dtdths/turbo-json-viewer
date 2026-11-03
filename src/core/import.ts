@@ -17,6 +17,8 @@ export interface LoadDocumentInput {
   source: LoadSource;
   data: ArrayBuffer | string;
   name?: string;
+  /** false = 关闭截断自动修复（设置面板「导入时自动修复截断」；ADR-0011 §5） */
+  repair?: boolean;
 }
 
 export interface LoadDocumentResult {
@@ -89,6 +91,8 @@ export function loadDocument(input: LoadDocumentInput): LoadDocumentResult {
     value = JSON.parse(text) as unknown;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // 设置关闭了自动修复（ADR-0011 §1）：不尝试修复，直接抛原 PARSE
+    if (input.repair === false) throw parseError(text, message);
     // 截断修复（ADR-0004 §6）：只做语法闭合；非 EOF 形态 → unrepairable，仍抛原 PARSE
     const attempt = repairTruncatedJson(text);
     if (attempt.status !== 'repaired' || attempt.text === undefined) {

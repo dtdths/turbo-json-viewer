@@ -15,6 +15,7 @@
     "smoke:ext": "node scripts/smoke-extension.mjs .spike/samples/10mb.json",
     "smoke:copy": "node scripts/smoke-copy.mjs",
     "smoke:repair": "node scripts/smoke-repair.mjs",
+    "smoke:settings": "node scripts/smoke-settings.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

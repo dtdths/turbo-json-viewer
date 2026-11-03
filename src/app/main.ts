@@ -6,6 +6,7 @@ import '../view/styles/tokens.css';
 import './styles/shell.css';
 import '../view/tree/tree.css';
 import '../view/panels/search-panel.css';
+import '../view/panels/settings-panel.css';
 
 import { createWorkerCore } from './transport/worker-transport';
 import { RowWindowSource } from '../viewmodel/row-window-source';
@@ -14,12 +15,14 @@ import { TreeView } from '../view/tree/tree-view';
 import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
 import { CoreError } from '../protocol/errors';
-import { ROW_HEIGHT } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
 import type { CopyFormat, DocumentMeta, JsonKind } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
+import { SettingsState, type SettingsKey } from '../viewmodel/settings-state';
+import { SettingsPanel } from '../view/panels/settings-panel';
+import { createViewStateStore } from './storage';
 
 const chromeApi = (globalThis as { chrome?: { runtime?: { id?: string; getURL(path: string): string } } }).chrome;
 const isExtension = Boolean(chromeApi?.runtime?.id);
@@ -64,6 +67,8 @@ const importBtn = el<HTMLButtonElement>('importBtn');
 const pickBtn = el<HTMLButtonElement>('pickBtn');
 const toast = el('toast');
 const searchHost = el('searchPanel');
+const panelTitle = el('panelTitle');
+const settingsHost = el('settingsPanel');
 const selPath = el('selPath');
 const selMeta = el('selMeta');
 const repairBar = el('repairBar');
@@ -72,6 +77,17 @@ const repairToggle = el<HTMLButtonElement>('repairToggle');
 const repairOps = el('repairOps');
 const repairClose = el<HTMLButtonElement>('repairClose');
 
+/* ---------------- 设置（ADR-0011）：先读盘再装配，避免主题/布局闪烁 ---------------- */
+
+const viewStateStore = createViewStateStore();
+const settings = new SettingsState();
+// ESM top-level await：拿不到（隐私模式/配额）就用默认值继续，不阻塞
+await settings.load(viewStateStore);
+if (settings.uiState().railCollapsed) {
+  document.body.classList.add('rail-collapsed');
+  el('railToggle').setAttribute('aria-pressed', 'false');
+}
+
 /* ---------------- core + viewmodel + view ---------------- */
 
 const workerUrl = isExtension && chromeApi?.runtime ? chromeApi.runtime.getURL('worker.js') : './worker.js';
@@ -79,10 +95,10 @@ const worker = new Worker(workerUrl, { type: 'module' });
 const workerCore = createWorkerCore(worker);
 const core = workerCore.api;
 
-const rowSource = new RowWindowSource(core, { rowHeight: ROW_HEIGHT });
+const rowSource = new RowWindowSource(core, { rowHeight: settings.get('rowHeight') });
 const tree = new TreeView(treeHost, {
-  rowHeight: ROW_HEIGHT,
-  renderer: (host: HTMLElement) => new DomRowPool(host, { rowHeight: ROW_HEIGHT }),
+  rowHeight: settings.get('rowHeight'),
+  renderer: (host: HTMLElement) => new DomRowPool(host, { rowHeight: settings.get('rowHeight') }),
   onScroll: (top: number) => rowSource.scrollTo(top),
   onToggle: (path: string, open: boolean) => {
     void toggleNode(path, open);
@@ -95,9 +111,9 @@ const tree = new TreeView(treeHost, {
     setSelection(path);
     showContextMenu(path, x, y, kind);
   },
-  // 行尾浮条（ADR-0010 修订）：鼠标快路径，复制固定子树 JSON；编辑与双击/F2 同一流程
+  // 行尾浮条（ADR-0010 修订）：鼠标快路径；复制格式跟随设置（ADR-0011 §1 defaultCopyFormat）
   onRowAction: (path: string, action: 'copy' | 'edit') => {
-    if (action === 'copy') void copyNodeToClipboard(path, 'subtree');
+    if (action === 'copy') void copyNodeToClipboard(path, settings.get('defaultCopyFormat'));
     else void openEditor(path);
   },
 });
@@ -155,13 +171,38 @@ let editingPath: string | null = null;
 let ctxPath: string | null = null;
 
 function metrics(): { rowHeight: number; viewportRows: number } {
-  return { rowHeight: ROW_HEIGHT, viewportRows: Math.max(1, tree.viewportRows()) };
+  return { rowHeight: settings.get('rowHeight'), viewportRows: Math.max(1, tree.viewportRows()) };
 }
 
 rowSource.subscribe((snapshot) => {
   tree.render(snapshot);
   updateStatus();
 });
+
+/* ---------------- 设置面板 + 应用（ADR-0011 §1/§4） ---------------- */
+
+const settingsPanel = new SettingsPanel(settingsHost, {
+  onChange: (key, value) => {
+    // 单一写入口：set 会校验 + 持久化 + 通知订阅者；applySettings 负责落到 DOM/几何
+    settings.set(key, value);
+  },
+});
+settingsPanel.mount();
+
+/** 把当前设置落到 DOM/视图几何上（幂等；订阅变化后重放）。 */
+function applySettings(): void {
+  const current = settings.snapshot();
+  setTheme(current.theme);
+  tree.setRowHeight(current.rowHeight);
+  rowSource.setMetrics(metrics());
+  if (rootId) rowSource.requestWindow();
+  document.documentElement.style.setProperty('--row-indent', `${current.indent}px`);
+  tree.setTypeColumn(current.typeColumn);
+  settingsPanel.render(current);
+}
+
+settings.subscribe(() => applySettings());
+applySettings();
 
 /* ---------------- import layer（文档入口层） ---------------- */
 
@@ -264,7 +305,14 @@ async function importBuffer(
     setImportBusy(true);
   }
   try {
-    const reply = await core.load({ loadId, source, data, name });
+    const reply = await core.load({
+      loadId,
+      source,
+      data,
+      name,
+      // ADR-0011 §1/§5：设置关闭修复/自适应时按偏好导入
+      opts: { repair: settings.get('repairTruncated'), adaptiveExpand: settings.get('adaptiveExpand') },
+    });
     if (loadId !== loadSeq) return;
     onLoaded(reply);
   } catch (error) {
@@ -771,7 +819,7 @@ function setCtxItemDisabled(act: string, disabled: boolean, why?: string): void 
 async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<void> {
   if (!rootId) return;
   try {
-    const reply = await core.copyNode({ rootId, path, format });
+    const reply = await core.copyNode({ rootId, path, format, indent: settings.get('copyIndent') });
     const copied = await writeClipboard(reply.text);
     if (copied) showToast(`已复制：${COPY_LABELS[format]}`, 2000, 'success');
     else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
@@ -826,8 +874,15 @@ function setSelection(path: string | null): void {
 
 /* ---------------- search ---------------- */
 
-function setPanel(panel: 'doc' | 'search'): void {
+const PANEL_TITLES: Record<'doc' | 'search' | 'settings', string> = {
+  doc: '文档',
+  search: '搜索',
+  settings: '设置',
+};
+
+function setPanel(panel: 'doc' | 'search' | 'settings'): void {
   document.body.dataset.panel = panel;
+  panelTitle.textContent = PANEL_TITLES[panel];
   const buttons = document.querySelectorAll<HTMLElement>('.actbtn[data-panel-btn]');
   buttons.forEach((button) => {
     const active = button.dataset.panelBtn === panel;
@@ -837,17 +892,28 @@ function setPanel(panel: 'doc' | 'search'): void {
     else button.removeAttribute('aria-current');
   });
   if (panel === 'search') searchPanel.focusInput();
+  if (panel === 'settings') settingsPanel.focus();
+  // 布局态持久化（ADR-0011 §2）：下次启动恢复
+  settings.setUi({ panel });
 }
 
 document.querySelectorAll<HTMLElement>('[data-panel-btn]').forEach((button) => {
   button.addEventListener('click', () => {
     const panel = button.dataset.panelBtn;
-    setPanel(panel === 'search' ? 'search' : 'doc');
+    // 点击当前已激活的模式 → 回到文档视图（与「关闭面板」一致）
+    const next = panel === 'search' || panel === 'settings' ? panel : 'doc';
+    setPanel(document.body.dataset.panel === next ? 'doc' : next);
   });
 });
 document.querySelectorAll<HTMLElement>('[data-panel-close]').forEach((button) => {
   button.addEventListener('click', () => setPanel('doc'));
 });
+
+// 启动时恢复上次的左面板模式（放在 PANEL_TITLES / 视图都初始化之后，避免 TDZ）
+{
+  const restoredPanel = settings.uiState().panel;
+  if (restoredPanel !== 'none') setPanel(restoredPanel);
+}
 
 /** 输入 250ms debounce；清空查询也走这里（清空结果 + 树高亮）。 */
 function queueSearch(query: string): void {
@@ -944,8 +1010,9 @@ async function gotoHit(index: number): Promise<number> {
     rowSource.requestWindow();
 
     const viewportPx = tree.clientHeightPx();
-    const centerOffset = Math.max(0, Math.floor((viewportPx - ROW_HEIGHT) / 2 / ROW_HEIGHT)) * ROW_HEIGHT;
-    tree.scrollToPx(Math.max(0, reply.row * ROW_HEIGHT - centerOffset));
+    const rowH = settings.get('rowHeight');
+    const centerOffset = Math.max(0, Math.floor((viewportPx - rowH) / 2 / rowH)) * rowH;
+    tree.scrollToPx(Math.max(0, reply.row * rowH - centerOffset));
 
     searchState.select(index);
     searchJumped = true;
@@ -991,12 +1058,13 @@ function setTheme(theme: 'dark' | 'light'): void {
 }
 
 el('themeToggle').addEventListener('click', () => {
-  setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  settings.set('theme', settings.get('theme') === 'dark' ? 'light' : 'dark');
 });
 
 function toggleRail(): void {
   const collapsed = document.body.classList.toggle('rail-collapsed');
   el('railToggle').setAttribute('aria-pressed', collapsed ? 'false' : 'true');
+  settings.setUi({ railCollapsed: collapsed });
 }
 
 el('railToggle').addEventListener('click', toggleRail);
@@ -1322,7 +1390,7 @@ if (!isExtension) {
     copyResolve: async (path: string, format: CopyFormat) => {
       if (!rootId) return { error: { code: 'NO_ROOT', message: 'no document loaded' } };
       try {
-        const reply = await core.copyNode({ rootId, path, format });
+        const reply = await core.copyNode({ rootId, path, format, indent: settings.get('copyIndent') });
         return { text: reply.text, bytes: reply.bytes, format: reply.format };
       } catch (error) {
         const coreError = CoreError.from(error);
@@ -1339,6 +1407,44 @@ if (!isExtension) {
     toastText: () => (toast.hidden ? '' : (toast.textContent ?? '')),
 
     // ---- 截断修复 dev hook（契约见 docs/adr/0004 修订 §6 验收）----
+    // ---- 设置 dev hook（契约见 docs/adr/0011 §7）----
+    settingsState: () => ({
+      ...settings.snapshot(),
+      ui: settings.uiState(),
+      loadedFromStore: settings.loadedFromStore,
+    }),
+    setSetting: (key: SettingsKey, value: unknown) => {
+      const changed = settings.set(key, value);
+      return { changed, ...settings.snapshot() };
+    },
+    /** 打开设置面板（走真实 setPanel），返回面板状态与焦点位置。 */
+    settingsOpen: () => {
+      setPanel('settings');
+      return {
+        panel: document.body.dataset.panel ?? null,
+        title: panelTitle.textContent ?? '',
+        focused: settingsHost.contains(document.activeElement) || document.activeElement === settingsHost,
+        rows: [...settingsHost.querySelectorAll<HTMLElement>('[data-setting]')].map((row) => row.dataset.setting ?? ''),
+      };
+    },
+    /** 行高/缩进/类型列等几何视图态（冒烟断言用）。 */
+    treeGeometry: () => {
+      // --row-h 设在树滚动容器上（tree-view mount 时写入），不是 :root
+      const scroller = document.querySelector<HTMLElement>('.tjv-tree');
+      const firstRow = document.querySelector<HTMLElement>('.row');
+      return {
+        rowHeight: tree.rowHeightPx(),
+        viewportRows: tree.viewportRows(),
+        totalRows,
+        rowHeightCss: scroller ? getComputedStyle(scroller).getPropertyValue('--row-h').trim() : '',
+        rowHeightComputed: firstRow ? getComputedStyle(firstRow).height : '',
+        indentCss: getComputedStyle(document.documentElement).getPropertyValue('--row-indent').trim(),
+        typeColumnVisible: [...settingsHost.ownerDocument.querySelectorAll<HTMLElement>('.row__type')].some(
+          (el) => !el.hidden,
+        ),
+        spacerHeight: document.querySelector<HTMLElement>('.tjv-tree__spacer')?.style.height ?? null,
+      };
+    },
     repairState: () => ({
       status: meta?.repair?.status ?? 'none',
       visible: !repairBar.hidden,

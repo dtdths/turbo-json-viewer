@@ -13,6 +13,7 @@ import type {
   EditReply,
   ExpandReply,
   ExportReply,
+  LoadOptions,
   LoadReply,
   NodeJsonReply,
   ReplyOf,
@@ -35,6 +36,8 @@ export interface LoadRequest {
   source: 'paste' | 'file' | 'clipboard';
   data: ArrayBuffer | string;
   name?: string;
+  /** 导入选项（ADR-0011 §5）：缺省 = 全开 */
+  opts?: LoadOptions;
 }
 export interface WindowRequest {
   rootId: RootId;
@@ -76,7 +79,7 @@ export interface CoreApi {
 
   getNodeJson(req: { rootId: RootId; path: Path }): Promise<NodeJsonReply>;
   /** 复制四格式（ADR-0010）：文本在 core 侧生成；只读，不推进版本。 */
-  copyNode(req: { rootId: RootId; path: Path; format: CopyFormat }): Promise<CopyReply>;
+  copyNode(req: { rootId: RootId; path: Path; format: CopyFormat; indent?: number }): Promise<CopyReply>;
   replaceNode(req: ReplaceRequest): Promise<EditReply>;
   undo(rootId: RootId): Promise<EditReply>;
   redo(rootId: RootId): Promise<EditReply>;

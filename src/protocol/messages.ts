@@ -21,8 +21,23 @@ import type { CoreErrorShape } from './errors';
 
 export type LoadSource = 'paste' | 'file' | 'clipboard';
 
+/** 导入选项（ADR-0011 §5）：缺省 = 全开（保持既有行为）；设置面板落地后按偏好传入 */
+export interface LoadOptions {
+  /** false = 关闭截断自动修复（截断文本直接 PARSE） */
+  repair?: boolean;
+  /** false = 关闭小文档自适应展开（一律默认折叠） */
+  adaptiveExpand?: boolean;
+}
+
 export type Command =
-  | { t: 'load'; loadId: number; source: LoadSource; data: ArrayBuffer | string; name?: string }
+  | {
+      t: 'load';
+      loadId: number;
+      source: LoadSource;
+      data: ArrayBuffer | string;
+      name?: string;
+      opts?: LoadOptions;
+    }
   | { t: 'cancelLoad'; loadId: number }
   | { t: 'window'; rootId: RootId; rowVersion: Rev; seq: number; start: number; count: number }
   | { t: 'toggle'; rootId: RootId; path: Path; open: boolean }
@@ -32,7 +47,7 @@ export type Command =
   | { t: 'search'; rootId: RootId; seq: number; query: string; opts?: SearchOpts }
   | { t: 'cancelSearch'; seq: number }
   | { t: 'getNodeJson'; rootId: RootId; path: Path }
-  | { t: 'copyNode'; rootId: RootId; path: Path; format: CopyFormat }
+  | { t: 'copyNode'; rootId: RootId; path: Path; format: CopyFormat; indent?: number }
   | { t: 'replaceNode'; rootId: RootId; path: Path; docRevision: Rev; jsonText: string }
   | { t: 'undo'; rootId: RootId }
   | { t: 'redo'; rootId: RootId }

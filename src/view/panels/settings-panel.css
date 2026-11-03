@@ -1,0 +1,100 @@
+/* ==========================================================================
+   view/panels/settings-panel — 设置面板（ADR-0011 §1 / §4，左面板第三种模式）
+   8 行 = 标签 + 控件（segmented / checkbox）+ 可选说明；宽度由宿主 320px 决定。
+   视觉 token 来自 view/styles/tokens.css，外框（.panel / .side）在 shell.css。
+   本组件不引入动画/过渡，reduced-motion 无需额外处理。
+   ========================================================================== */
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px 18px;
+  font-size: 11.5px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* ---------------- row ---------------- */
+
+.settings-panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+.settings-panel__row:last-child {
+  border-bottom: 0;
+}
+
+.settings-panel__label {
+  flex: 1 1 auto;
+  color: var(--text-2);
+}
+
+.settings-panel__hint {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+/* ---------------- segmented ---------------- */
+
+.settings-panel__seg {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-app);
+}
+
+.settings-panel__segbtn {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.settings-panel__segbtn:hover {
+  background: var(--bg-hover);
+}
+.settings-panel__segbtn.is-active {
+  background: var(--bg-selected);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--accent-border, var(--accent));
+}
+/* 键盘焦点环要压过 .is-active 的 inset 阴影（同 shell.css 的全局 :focus-visible） */
+.settings-panel__segbtn:focus-visible {
+  box-shadow: var(--focus-ring, 0 0 0 2px var(--accent));
+}
+
+/* 行高/缩进的行尾单位（`px`），按钮文案里不带 */
+.settings-panel__unit {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* ---------------- checkbox ---------------- */
+
+.settings-panel__checkbox {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}

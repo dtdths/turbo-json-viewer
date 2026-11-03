@@ -17,6 +17,13 @@ import type { RowContext, RowHandle, RowRenderer, RowRendererFactory } from './r
 
 export type { RowRendererFactory } from './row-renderer';
 
+/** 行高兜底：设置值只允许 12–48 的整数像素（防脏数据把几何撑坏） */
+function clampRowHeight(px: number): number {
+  const n = Number(px);
+  if (!Number.isFinite(n)) return 24;
+  return Math.min(48, Math.max(12, Math.round(n)));
+}
+
 export interface TreeViewOptions {
   /** 行渲染器工厂：TreeView 提供行容器，app 决定用哪个 adapter */
   renderer: RowRendererFactory;
@@ -49,6 +56,8 @@ export class TreeView {
   private renderer: RowRenderer | null = null;
   private mounted = false;
 
+  /** 行高真值（RowMetricsSource，ADR-0011 §6）：构造时取 opts.rowHeight，设置变化后 setRowHeight 同步 */
+  private rowHeight: number;
   private handles: Array<RowHandle | null> = [];
   private rows: Row[] = [];
   private lastSnapshot: WindowSnapshot | null = null;
@@ -174,6 +183,7 @@ export class TreeView {
   constructor(host: HTMLElement, opts: TreeViewOptions) {
     this.host = host;
     this.opts = opts;
+    this.rowHeight = clampRowHeight(opts.rowHeight);
   }
 
   mount(): void {
@@ -185,7 +195,7 @@ export class TreeView {
     scroller.tabIndex = 0;
     scroller.setAttribute('role', 'tree');
     scroller.setAttribute('aria-label', 'JSON 树视图');
-    scroller.style.setProperty('--row-h', `${this.opts.rowHeight}px`);
+    scroller.style.setProperty('--row-h', `${this.rowHeight}px`);
 
     const spacer = document.createElement('div');
     spacer.className = 'tjv-tree__spacer';
@@ -223,7 +233,7 @@ export class TreeView {
     const renderer = this.renderer;
     if (!this.mounted || !scroller || !spacer || !renderer) return;
 
-    const rowHeight = this.opts.rowHeight;
+    const rowHeight = this.rowHeight;
     const contentPx = Math.min(this.totalRows * rowHeight, MAX_SCROLL_PX);
     spacer.style.height = `${contentPx}px`;
     scroller.classList.toggle('is-stale', snapshot.stale);
@@ -289,6 +299,25 @@ export class TreeView {
     this.refresh();
   }
 
+  /**
+   * 行高变化（设置面板 / RowMetricsSource，ADR-0011 §6）：更新 CSS 变量、spacer 高度并按当前快照重排。
+   * 只影响渲染与滚动几何，不改行号/路径/选中。
+   */
+  setRowHeight(px: number): void {
+    const next = clampRowHeight(px);
+    if (next === this.rowHeight) return;
+    this.rowHeight = next;
+    this.scroller?.style.setProperty('--row-h', `${next}px`);
+    if (this.spacer) {
+      this.spacer.style.height = `${Math.min(this.totalRows * next, MAX_SCROLL_PX)}px`;
+    }
+    this.refresh();
+  }
+
+  rowHeightPx(): number {
+    return this.rowHeight;
+  }
+
   setTypeColumn(enabled: boolean): void {
     if (this.typeColumn === enabled) return;
     this.typeColumn = enabled;
@@ -321,7 +350,7 @@ export class TreeView {
   /** 当前视口可容纳的行数（供 RowWindowSource.setMetrics）。 */
   viewportRows(): number {
     const height = this.clientHeightPx();
-    return Math.max(1, Math.floor(height / this.opts.rowHeight));
+    return Math.max(1, Math.floor(height / this.rowHeight));
   }
 
   clientHeightPx(): number {
@@ -377,7 +406,7 @@ export class TreeView {
   private scrollRowIntoView(index: number): void {
     const scroller = this.scroller;
     if (!scroller) return;
-    const rowHeight = this.opts.rowHeight;
+    const rowHeight = this.rowHeight;
     const start = this.lastSnapshot?.start ?? 0;
     const top = (start + index) * rowHeight;
     const viewTop = scroller.scrollTop;
