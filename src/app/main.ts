@@ -6,6 +6,7 @@ import '../view/styles/tokens.css';
 import './styles/shell.css';
 import '../view/tree/tree.css';
 import '../view/panels/search-panel.css';
+import '../view/panels/outline-panel.css';
 import '../view/panels/settings-panel.css';
 import '../view/raw/raw-view.css';
 
@@ -13,10 +14,12 @@ import { createWorkerCore } from './transport/worker-transport';
 import { RowWindowSource } from '../viewmodel/row-window-source';
 import { RawWindowSource } from '../viewmodel/raw-window-source';
 import { SearchState, type SearchFilter } from '../viewmodel/search-state';
+import { OutlineState } from '../viewmodel/outline-state';
 import { TreeView } from '../view/tree/tree-view';
 import { RawView } from '../view/raw/raw-view';
 import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
+import { OutlinePanel } from '../view/panels/outline-panel';
 import { CoreError } from '../protocol/errors';
 import { ROOT_PATH } from '../shared/path';
 import type { CopyFormat, DocumentMeta, JsonKind, RawMeta } from '../protocol/types';
@@ -80,6 +83,7 @@ const toast = el('toast');
 const searchHost = el('searchPanel');
 const panelTitle = el('panelTitle');
 const settingsHost = el('settingsPanel');
+const outlineHost = el('outlinePanel');
 const selPath = el('selPath');
 const selMeta = el('selMeta');
 const repairBar = el('repairBar');
@@ -171,6 +175,33 @@ const searchPanel = new SearchPanel(searchHost, {
 });
 searchPanel.mount();
 
+/* ---------------- 大纲面板（ADR-0013）：结构导航器 ---------------- */
+
+/**
+ * 大纲状态机（viewmodel，无 DOM）：按容器分页 + 大纲自己的展开集合 + 扁平化行。
+ * 数据源只注入 `outline(req)` 子集（ADR-0013 §5），真实实现是 Worker 侧 `core.outline`。
+ */
+const outlineState = new OutlineState({ outline: (req) => core.outline(req) });
+const outlinePanel = new OutlinePanel(outlineHost, {
+  rowHeight: settings.get('rowHeight'),
+  // caret / 键盘 ←→：只改大纲自己的展开态，不影响树
+  onToggle: (path, open) => {
+    void outlineState.setOpen(path, open);
+  },
+  // 点击行 / Enter：跳转（与搜索跳转共用 jumpToPath）
+  onActivate: (path) => {
+    void jumpToPath(path);
+  },
+  // ↑↓/Home/End：移动大纲当前行 = 同步树选中（不跳树、不 expandTo）
+  onSelect: (path) => setSelection(path),
+  onLoadMore: (path) => {
+    void outlineState.loadMore(path);
+  },
+});
+outlinePanel.mount();
+outlineState.subscribe((view) => outlinePanel.render(view));
+outlinePanel.render(outlineState.view());
+
 /** 子树编辑弹层（CM6 懒加载；见 src/view/panels/subtree-editor.ts）。 */
 const subtreeEditor = new SubtreeEditor({
   modal: editModal,
@@ -241,6 +272,8 @@ function applySettings(): void {
   rawView.setRowHeight(current.rowHeight);
   rawSource.setMetrics(rawMetrics());
   if (rootId && isRawView()) rawSource.requestWindow();
+  // 大纲行高跟随设置（20–26），spacer / 窗口重算在面板内部完成
+  outlinePanel.setRowHeight(current.rowHeight);
   document.documentElement.style.setProperty('--row-indent', `${current.indent}px`);
   tree.setTypeColumn(current.typeColumn);
   settingsPanel.render(current);
@@ -417,6 +450,8 @@ function onLoaded(reply: LoadReply): void {
   rowSource.scrollTo(0);
   setSelection(null);
   resetSearch();
+  // 新文档：重置大纲并加载根页（面板此刻可能未打开，数据先备好）
+  void outlineState.open(rid);
   setPanel('doc');
   updateStatus();
   treeHost.focus();
@@ -686,6 +721,8 @@ function applyModelReply(reply: EditReply): void {
     window.setTimeout(() => tree.setChangedPath(null), CHANGED_FLASH_MS);
   }
   editState.sync(reply.history);
+  // 编辑改变 docRevision：大纲回到根展开、丢弃子页（ADR-0013 §5）
+  void outlineState.refresh();
   updateStatus();
 }
 
@@ -1084,6 +1121,8 @@ async function writeClipboard(text: string): Promise<boolean> {
 function setSelection(path: string | null): void {
   selected = path;
   tree.setSelected(path);
+  // 大纲当前高亮唯一来源 = 树选中路径（ADR-0013 §4）
+  outlineState.setSelected(path);
   selPath.textContent = path ?? '—';
   selPath.title = path ?? '';
   selMeta.textContent = path ? 'F2 / 双击编辑' : '';
@@ -1092,13 +1131,14 @@ function setSelection(path: string | null): void {
 
 /* ---------------- search ---------------- */
 
-const PANEL_TITLES: Record<'doc' | 'search' | 'settings', string> = {
+const PANEL_TITLES: Record<'doc' | 'search' | 'outline' | 'settings', string> = {
   doc: '文档',
   search: '搜索',
+  outline: '大纲',
   settings: '设置',
 };
 
-function setPanel(panel: 'doc' | 'search' | 'settings'): void {
+function setPanel(panel: 'doc' | 'search' | 'outline' | 'settings'): void {
   document.body.dataset.panel = panel;
   panelTitle.textContent = PANEL_TITLES[panel];
   const buttons = document.querySelectorAll<HTMLElement>('.actbtn[data-panel-btn]');
@@ -1110,6 +1150,11 @@ function setPanel(panel: 'doc' | 'search' | 'settings'): void {
     else button.removeAttribute('aria-current');
   });
   if (panel === 'search') searchPanel.focusInput();
+  // 大纲：显示只负责重画（不重新取数，ADR-0013 §5）；键盘导航需要焦点
+  if (panel === 'outline') {
+    outlinePanel.refresh();
+    outlinePanel.focus();
+  }
   if (panel === 'settings') settingsPanel.focus();
   // 布局态持久化（ADR-0011 §2）：下次启动恢复
   settings.setUi({ panel });
@@ -1119,7 +1164,7 @@ document.querySelectorAll<HTMLElement>('[data-panel-btn]').forEach((button) => {
   button.addEventListener('click', () => {
     const panel = button.dataset.panelBtn;
     // 点击当前已激活的模式 → 回到文档视图（与「关闭面板」一致）
-    const next = panel === 'search' || panel === 'settings' ? panel : 'doc';
+    const next = panel === 'search' || panel === 'outline' || panel === 'settings' ? panel : 'doc';
     setPanel(document.body.dataset.panel === next ? 'doc' : next);
   });
 });
@@ -1215,15 +1260,17 @@ function applyFilter(filter: SearchFilter): void {
   if (current >= 0) searchPanel.scrollTo(current);
 }
 
-/** 跳转：展开祖先链 → 树滚动（当前行居中）→ 选中 → 同步高亮与结果列表。 */
-async function gotoHit(index: number): Promise<number> {
-  if (!rootId) return -1;
-  // 搜索跳转是树动作：原文视图下先切回树（ADR-0003 修订：两视图 v1 不联动）
+/**
+ * 跳转共享链路（搜索 gotoHit / 大纲点击行共用，ADR-0013 §4）：
+ * expandTo 展开树祖先链 → 树滚动居中 → 选中。原文视图下先切回树。
+ * 返回 `{ ok, row }`（row = 树内行号；失败 -1），错误已在内部提示。
+ */
+async function jumpToPath(path: string): Promise<{ ok: boolean; row: number }> {
+  if (!rootId) return { ok: false, row: -1 };
+  // 跳转是树动作：原文视图下先切回树（ADR-0003 修订：两视图 v1 不联动）
   if (isRawView()) await setViewMode('tree');
-  const hit = searchState.hits[index];
-  if (!hit) return -1;
   try {
-    const reply = await core.expandTo({ rootId, path: hit.path });
+    const reply = await core.expandTo({ rootId, path });
     rowVersion = reply.rowVersion;
     totalRows = reply.totalRows;
     rowSource.setRoot({ rootId, rowVersion, totalRows });
@@ -1234,18 +1281,28 @@ async function gotoHit(index: number): Promise<number> {
     const centerOffset = Math.max(0, Math.floor((viewportPx - rowH) / 2 / rowH)) * rowH;
     tree.scrollToPx(Math.max(0, reply.row * rowH - centerOffset));
 
-    searchState.select(index);
-    searchJumped = true;
-    setSelection(hit.path);
-    applySearchToTree();
-    renderSearch();
-    searchPanel.scrollTo(index);
+    setSelection(path);
     updateStatus();
-    return index;
+    return { ok: true, row: reply.row };
   } catch (error) {
     showError(error);
-    return -1;
+    return { ok: false, row: -1 };
   }
+}
+
+/** 搜索跳转：jumpToPath + 同步搜索态/结果列表（保持 slice 4 行为）。 */
+async function gotoHit(index: number): Promise<number> {
+  const hit = searchState.hits[index];
+  if (!hit) return -1;
+  // 根文档 / 原文视图守卫与「树滚动 + 选中 + updateStatus」都在 jumpToPath 内（单一链路）
+  const jumped = await jumpToPath(hit.path);
+  if (!jumped.ok) return -1;
+  searchState.select(index);
+  searchJumped = true;
+  applySearchToTree();
+  renderSearch();
+  searchPanel.scrollTo(index);
+  return index;
 }
 
 async function searchNext(): Promise<number> {
@@ -1636,6 +1693,24 @@ if (!isExtension) {
     };
   };
 
+  /** 大纲 dev hook 共用的状态快照（契约见 ADR-0013「dev hooks」）。 */
+  const outlineHookState = (): Record<string, unknown> => {
+    const view = outlineState.view();
+    return {
+      phase: view.phase,
+      rows: view.rows.length,
+      current: view.selected,
+      expanded: outlineState.expandedPaths(),
+      loadedContainers: view.loadedContainers,
+      loadedChildren: view.loadedChildren,
+      panel: {
+        open: document.body.dataset.panel === 'outline',
+        rendered: outlinePanel.renderedCount(),
+        scrollTop: outlinePanel.scrollTopPx(),
+      },
+    };
+  };
+
   const stateOf = (): Record<string, unknown> => ({
     rootId,
     totalRows,
@@ -1735,6 +1810,25 @@ if (!isExtension) {
     searchListScrollTo: (px: number) => {
       searchPanel.scrollListTo(px);
       return searchDiagnostics();
+    },
+
+    // ---- 大纲面板 dev hook（契约见 ADR-0013「dev hooks」）----
+    outlineState: () => outlineHookState(),
+    outlineOpen: () => {
+      setPanel('outline');
+    },
+    outlineToggle: async (path: string, open?: boolean) => {
+      const target = open ?? !outlineState.isExpanded(path);
+      const ok = await outlineState.setOpen(path, target);
+      return { ok, rows: outlineState.view().rows.length, open: outlineState.isExpanded(path) };
+    },
+    outlineLoadMore: async (path: string) => {
+      const ok = await outlineState.loadMore(path);
+      return { ok, rows: outlineState.view().rows.length };
+    },
+    outlineJump: async (path: string) => {
+      const jumped = await jumpToPath(path);
+      return { ok: jumped.ok, row: jumped.row };
     },
 
     // ---- slice 5：编辑 dev hook（契约见 docs/design/edit-spec.md §2/§8）----

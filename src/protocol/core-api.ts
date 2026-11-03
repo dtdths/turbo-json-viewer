@@ -24,6 +24,7 @@ import type {
 import type {
   CopyFormat,
   DocumentProfile,
+  OutlineReply,
   Path,
   RawLocateReply,
   RawMeta,
@@ -67,6 +68,16 @@ export interface SearchRequest {
   query: string;
   opts?: SearchOpts;
 }
+/** 大纲页请求（ADR-0013）：按容器分页取子项；只读。 */
+export interface OutlineRequest {
+  rootId: RootId;
+  /** 被查询容器路径（根 `$`） */
+  path: Path;
+  /** 起始子项下标；core 夹取到 [0, total] */
+  start: number;
+  /** 本页数量；core 夹取到 [0, OUTLINE_PAGE_MAX] */
+  count: number;
+}
 
 export interface CoreApi {
   load(req: LoadRequest): Promise<LoadReply>;
@@ -80,6 +91,9 @@ export interface CoreApi {
 
   search(req: SearchRequest): Promise<SearchReply>;
   cancelSearch(seq: number): void;
+
+  /** 大纲页（ADR-0013）：按容器分页取子项；只读、不推版本，不依赖树展开态。 */
+  outline(req: OutlineRequest): Promise<OutlineReply>;
 
   getNodeJson(req: { rootId: RootId; path: Path }): Promise<NodeJsonReply>;
   /** 复制四格式（ADR-0010）：文本在 core 侧生成；只读，不推进版本。 */
@@ -129,6 +143,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     collapseAll: (rootId) => send({ t: 'collapseAll', rootId }),
     search: (req) => send({ t: 'search', ...req }),
     cancelSearch: (seq) => fire({ t: 'cancelSearch', seq }),
+    outline: (req) => send({ t: 'outline', ...req }),
     getNodeJson: (req) => send({ t: 'getNodeJson', ...req }),
     copyNode: (req) => send({ t: 'copyNode', ...req }),
     replaceNode: (req) => send({ t: 'replaceNode', ...req }),

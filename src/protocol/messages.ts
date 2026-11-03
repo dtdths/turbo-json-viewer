@@ -9,6 +9,7 @@ import type {
   Hit,
   JsonKind,
   MapTrail,
+  OutlineReply,
   Path,
   RawLocateReply,
   RawMeta,
@@ -60,6 +61,8 @@ export type Command =
   | { t: 'getTrail'; rootId: RootId; path: Path | null }
   | { t: 'profile'; rootId: RootId }
   | { t: 'stats'; rootId: RootId }
+  /* 大纲面板（ADR-0013）：按容器分页取子项；只读、不推任何版本 */
+  | { t: 'outline'; rootId: RootId; path: Path; start: number; count: number }
   /* 原始文本视图（ADR-0003 修订 2026-11-03）：只读、不推任何版本 */
   | { t: 'rawOpen'; rootId: RootId }
   | { t: 'rawWindow'; rootId: RootId; seq: number; start: number; count: number }
@@ -156,6 +159,7 @@ export interface ReplyByKind {
   getTrail: TrailReply;
   profile: DocumentProfile;
   stats: StatsReply;
+  outline: OutlineReply;
   rawOpen: RawMeta;
   rawWindow: RawWindow;
   rawLocate: RawLocateReply;

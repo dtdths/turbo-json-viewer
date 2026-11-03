@@ -82,11 +82,17 @@ describe('settings-state — 默认值与校验', () => {
     expect(s.typeColumn).toBe(DEFAULT_SETTINGS.typeColumn); // 缺省回落
   });
 
-  it('normalizeUiState：panel 枚举校验 + railCollapsed 布尔 + viewMode 枚举（ADR-0003 修订）', () => {
+  it('normalizeUiState：panel 枚举校验（含大纲，ADR-0013）+ railCollapsed 布尔 + viewMode 枚举（ADR-0003 修订）', () => {
     expect(normalizeUiState({ panel: 'settings', railCollapsed: true, viewMode: 'raw' })).toEqual({
       panel: 'settings',
       railCollapsed: true,
       viewMode: 'raw',
+    });
+    // 大纲面板模式（ADR-0013 §1）：持久化恢复
+    expect(normalizeUiState({ panel: 'outline' })).toEqual({
+      panel: 'outline',
+      railCollapsed: false,
+      viewMode: 'tree',
     });
     // UiState 不再持有 exportMode（ADR-0012 修订）：历史字段被忽略
     expect(normalizeUiState({ panel: 'bogus', railCollapsed: 'x', exportMode: 'clipboard' })).toEqual({
@@ -162,6 +168,11 @@ describe('settings-state — load / set / 持久化', () => {
     const last = store.writes.at(-1);
     expect(last?.key).toBe(UI_STORAGE_KEY);
     expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true, viewMode: 'tree' });
+
+    // 大纲面板同样写穿（ADR-0013 §1）
+    state.setUi({ panel: 'outline' });
+    expect(state.uiState().panel).toBe('outline');
+    expect(store.writes.at(-1)?.value).toEqual({ panel: 'outline', railCollapsed: true, viewMode: 'tree' });
   });
 
   it('exportMode 是设置项（ADR-0012 修订）：写穿 settings 键 + 通知', async () => {

@@ -42,8 +42,8 @@ export interface Settings {
 
 /** 布局态（主题之外的工作区 UI 状态，ADR-0011 §2） */
 export interface UiState {
-  /** 左面板模式；`none` = 左面板关闭 */
-  panel: 'none' | 'doc' | 'search' | 'settings';
+  /** 左面板模式；`none` = 左面板关闭（大纲面板 = ADR-0013） */
+  panel: 'none' | 'doc' | 'search' | 'outline' | 'settings';
   /** 右侧工作区折叠 */
   railCollapsed: boolean;
   /** 视图模式（ADR-0003 修订 2026-11-03）：树视图 / 原始文本视图 */
@@ -112,7 +112,10 @@ export function normalizeUiState(raw: unknown): UiState {
   const bag = (raw ?? {}) as Partial<Record<keyof UiState, unknown>>;
   const panel = bag.panel;
   return {
-    panel: panel === 'none' || panel === 'doc' || panel === 'search' || panel === 'settings' ? panel : DEFAULT_UI_STATE.panel,
+    panel:
+      panel === 'none' || panel === 'doc' || panel === 'search' || panel === 'outline' || panel === 'settings'
+        ? panel
+        : DEFAULT_UI_STATE.panel,
     railCollapsed: pickBoolean(bag.railCollapsed, DEFAULT_UI_STATE.railCollapsed),
     viewMode: bag.viewMode === 'raw' ? 'raw' : 'tree',
   };

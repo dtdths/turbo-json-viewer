@@ -18,7 +18,8 @@
     "smoke:settings": "node scripts/smoke-settings.mjs",
     "smoke:export": "node scripts/smoke-export.mjs",
     "check": "npm run typecheck && npm test && npm run build",
-    "smoke:raw": "node scripts/smoke-raw.mjs"
+    "smoke:raw": "node scripts/smoke-raw.mjs",
+    "smoke:outline": "node scripts/smoke-outline.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

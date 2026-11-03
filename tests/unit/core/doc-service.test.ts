@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CoreError } from '../../../src/protocol/errors';
 import { DocService } from '../../../src/core/doc-service';
 import type { Command, CoreEvent, LoadReply } from '../../../src/protocol/messages';
+import { OUTLINE_PAGE_MAX } from '../../../src/protocol/versions';
 
 const DOC = { a: 1, b: { c: 2 } };
 const JSON_TEXT = JSON.stringify(DOC);
@@ -1094,5 +1095,227 @@ describe('DocService — 原始文本是只读的、不随临时编辑变化', (
     ).toBe('NO_ROOT');
     expect((await errorOf(svc.dispatch({ t: 'rawLocate', rootId: 'nope', offset: 0 }))).code).toBe('NO_ROOT');
     expect((await errorOf(svc.dispatch({ t: 'rawSource', rootId: 'nope' }))).code).toBe('NO_ROOT');
+  });
+});
+
+/* ========================= 大纲面板（ADR-0013 §3） ========================= */
+
+/** 大纲 fixture：对象键 / 数组 / 非标识符键（点、引号）/ 嵌套容器 / 空容器。 */
+const OUTLINE_DOC = {
+  name: 'alice',
+  tags: ['x', 'y', 'z'],
+  'a.b': 1,
+  "it's": 2,
+  nested: { items: [{ id: 1 }, { id: 2 }] },
+  empty: {},
+};
+
+async function loadOutlineDoc(svc: DocService): Promise<LoadReply> {
+  return load(svc, JSON.stringify(OUTLINE_DOC));
+}
+
+describe('DocService — outline（大纲分页 / ADR-0013）', () => {
+  it('根页：回包带 rootId/path/kind/total/start 与子项（键 / 类型 / 项数 / 路径）', async () => {
+    const svc = new DocService();
+    await loadOutlineDoc(svc);
+
+    const reply = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$', start: 0, count: 10 });
+    expect(reply).toEqual({
+      rootId: DOC_ROOT,
+      path: '$',
+      kind: 'object',
+      total: 6,
+      start: 0,
+      children: [
+        { key: 'name', idx: false, kind: 'string', count: 0, path: '$.name' },
+        { key: 'tags', idx: false, kind: 'array', count: 3, path: '$.tags' },
+        { key: 'a.b', idx: false, kind: 'number', count: 0, path: "$['a.b']" },
+        { key: "it's", idx: false, kind: 'number', count: 0, path: "$['it\\'s']" },
+        { key: 'nested', idx: false, kind: 'object', count: 1, path: '$.nested' },
+        { key: 'empty', idx: false, kind: 'object', count: 0, path: '$.empty' },
+      ],
+    });
+  });
+
+  it('数组容器：子项为 [i]（idx=true），count = length', async () => {
+    const svc = new DocService();
+    await loadOutlineDoc(svc);
+
+    const reply = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.tags', start: 0, count: 10 });
+    expect(reply).toMatchObject({ path: '$.tags', kind: 'array', total: 3, start: 0 });
+    expect(reply.children).toEqual([
+      { key: '[0]', idx: true, kind: 'string', count: 0, path: '$.tags[0]' },
+      { key: '[1]', idx: true, kind: 'string', count: 0, path: '$.tags[1]' },
+      { key: '[2]', idx: true, kind: 'string', count: 0, path: '$.tags[2]' },
+    ]);
+  });
+
+  it('分页：首 / 中 / 末页，末页 children 少于 count', async () => {
+    const svc = new DocService();
+    await load(svc, COLLAPSED_DOC); // { items: 0..599 }，加载后保持折叠
+
+    const first = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 0, count: 200 });
+    expect(first).toMatchObject({ path: '$.items', kind: 'array', total: 600, start: 0 });
+    expect(first.children).toHaveLength(200);
+    expect(first.children[0]).toEqual({ key: '[0]', idx: true, kind: 'number', count: 0, path: '$.items[0]' });
+
+    const mid = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 200, count: 200 });
+    expect(mid).toMatchObject({ total: 600, start: 200 });
+    expect(mid.children[0]?.key).toBe('[200]');
+
+    const tail = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 550, count: 200 });
+    expect(tail.start).toBe(550);
+    expect(tail.children.map((c) => c.key)).toEqual(Array.from({ length: 50 }, (_, i) => `[${550 + i}]`));
+  });
+
+  it('start / count 夹取：越界 start → total 且空页；负数 → 0；count > OUTLINE_PAGE_MAX → 500', async () => {
+    const svc = new DocService();
+    await load(svc, COLLAPSED_DOC);
+
+    const beyond = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 1000, count: 10 });
+    expect(beyond).toMatchObject({ total: 600, start: 600, children: [] });
+
+    const negative = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: -3, count: -1 });
+    expect(negative).toMatchObject({ total: 600, start: 0, children: [] });
+
+    const capped = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 0, count: 5000 });
+    expect(capped.children).toHaveLength(OUTLINE_PAGE_MAX);
+
+    // 夹取同时受 total-start 限制：剩余 50 项时只回 50 个
+    const nearEnd = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 550, count: 5000 });
+    expect(nearEnd.children).toHaveLength(50);
+    expect(nearEnd.children.at(-1)?.key).toBe('[599]');
+  });
+
+  it('不依赖树展开态：折叠容器也能取子项，且不改变行窗口 / 展开态', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, COLLAPSED_DOC);
+    const before = await svc.dispatch({
+      t: 'window',
+      rootId: DOC_ROOT,
+      rowVersion: loaded.rowVersion,
+      seq: 1,
+      start: 0,
+      count: 10,
+    });
+    expect(windowPaths(before)).toEqual(['$', '$.items']); // 默认折叠
+    expect(before.rows[1]?.open).toBe(false);
+
+    const reply = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.items', start: 0, count: 3 });
+    expect(reply.children.map((c) => c.path)).toEqual(['$.items[0]', '$.items[1]', '$.items[2]']);
+
+    // rowVersion 未推进：旧 rowVersion 的窗口仍可读，items 仍然折叠
+    const after = await svc.dispatch({
+      t: 'window',
+      rootId: DOC_ROOT,
+      rowVersion: loaded.rowVersion,
+      seq: 2,
+      start: 0,
+      count: 10,
+    });
+    expect(windowPaths(after)).toEqual(['$', '$.items']);
+    expect(after.rows[1]?.open).toBe(false);
+  });
+
+  it('嵌套容器：逐层查询，count 反映该容器子项数', async () => {
+    const svc = new DocService();
+    await loadOutlineDoc(svc);
+
+    const nested = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.nested', start: 0, count: 10 });
+    expect(nested).toMatchObject({ path: '$.nested', kind: 'object', total: 1, start: 0 });
+    expect(nested.children).toEqual([
+      { key: 'items', idx: false, kind: 'array', count: 2, path: '$.nested.items' },
+    ]);
+
+    const items = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.nested.items', start: 0, count: 10 });
+    expect(items.children).toEqual([
+      { key: '[0]', idx: true, kind: 'object', count: 1, path: '$.nested.items[0]' },
+      { key: '[1]', idx: true, kind: 'object', count: 1, path: '$.nested.items[1]' },
+    ]);
+  });
+
+  it('标量路径：合法查询 → total 0 / start 0 / children 空（start 也被夹到 0）', async () => {
+    const svc = new DocService();
+    await loadOutlineDoc(svc);
+    const reply = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.name', start: 3, count: 10 });
+    expect(reply).toEqual({
+      rootId: DOC_ROOT,
+      path: '$.name',
+      kind: 'string',
+      total: 0,
+      start: 0,
+      children: [],
+    });
+  });
+
+  it('标量根文档：根路径同样 total 0', async () => {
+    const svc = new DocService();
+    await load(svc, '"just a string"');
+    expect(await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$', start: 0, count: 10 })).toEqual({
+      rootId: DOC_ROOT,
+      path: '$',
+      kind: 'string',
+      total: 0,
+      start: 0,
+      children: [],
+    });
+  });
+
+  it('空对象 / 空数组文档：根回 total 0、children 空', async () => {
+    for (const [text, kind] of [['{}', 'object'], ['[]', 'array']] as const) {
+      const svc = new DocService();
+      await load(svc, text);
+      expect(await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$', start: 0, count: 10 })).toEqual({
+        rootId: DOC_ROOT,
+        path: '$',
+        kind,
+        total: 0,
+        start: 0,
+        children: [],
+      });
+    }
+  });
+
+  it('只读：不推进 docRevision / rowVersion，不改 totalRows', async () => {
+    const svc = new DocService();
+    await loadOutlineDoc(svc);
+    const before = await svc.dispatch({ t: 'stats', rootId: DOC_ROOT });
+
+    await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$', start: 0, count: 5 });
+    await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.nested', start: 0, count: 5 });
+    await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.tags', start: 1, count: 1 });
+
+    expect(await svc.dispatch({ t: 'stats', rootId: DOC_ROOT })).toEqual(before);
+  });
+
+  it('编辑后反映新值图（不缓存容器形状）', async () => {
+    const svc = new DocService();
+    const loaded = await loadOutlineDoc(svc);
+    await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.nested',
+      docRevision: loaded.docRevision,
+      jsonText: '{"z":1}',
+    });
+
+    const reply = await svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path: '$.nested', start: 0, count: 10 });
+    expect(reply).toMatchObject({ path: '$.nested', kind: 'object', total: 1, start: 0 });
+    expect(reply.children.map((c) => c.key)).toEqual(['z']);
+  });
+
+  it('未知根 → NO_ROOT；路径不存在 / 中间段穿越标量 / 下标越界 → BAD_COMMAND', async () => {
+    const svc = new DocService();
+    expect((await errorOf(svc.dispatch({ t: 'outline', rootId: 'nope', path: '$', start: 0, count: 1 }))).code).toBe(
+      'NO_ROOT',
+    );
+
+    await loadOutlineDoc(svc);
+    const badPaths = ['$.absent', '$.name.x', '$.tags[9]', "$['it\\'s'].x"];
+    for (const path of badPaths) {
+      expect((await errorOf(svc.dispatch({ t: 'outline', rootId: DOC_ROOT, path, start: 0, count: 1 }))).code).toBe(
+        'BAD_COMMAND',
+      );
+    }
   });
 });

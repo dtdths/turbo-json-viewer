@@ -13,6 +13,7 @@
  * 契约：docs/design/slice4-search-contract.md §2（权威）。
  */
 import type { Hit } from '../protocol/types';
+import { computeVirtualWindow } from '../shared/window';
 
 export type SearchFilter = 'all' | 'key' | 'value';
 export type SearchPhase = 'idle' | 'searching' | 'ready' | 'stale';
@@ -71,10 +72,8 @@ const clamp = (value: number, min: number, max: number): number =>
 const EMPTY_COUNTS: SearchCounts = { all: 0, key: 0, value: 0 };
 
 /**
- * 结果列表虚拟窗口（纯函数，测试友好）：
- *   start = clamp(floor(scrollTop / rowHeight) - overscan, 0, size)
- *   count = min(viewportRows + 2*overscan, size - start)
- * size <= 0 → 空窗口；scrollTop 负值按 0；viewportRows 向下取整且 >= 0。
+ * 结果列表虚拟窗口（纯函数，测试友好）：口径见 `shared/window.computeVirtualWindow`。
+ * 行高默认 44（SEARCH_RESULT_ROW_HEIGHT）、overscan 默认 4（SEARCH_RESULT_OVERSCAN）。
  */
 export function computeResultWindow(
   size: number,
@@ -82,15 +81,10 @@ export function computeResultWindow(
   viewportRows: number,
   opts: { rowHeight?: number; overscan?: number } = {},
 ): SearchWindow {
-  const rowHeight = opts.rowHeight ?? SEARCH_RESULT_ROW_HEIGHT;
-  const overscan = opts.overscan ?? SEARCH_RESULT_OVERSCAN;
-  if (size <= 0) return { start: 0, count: 0 };
-
-  const rows = Math.max(0, Math.floor(Number.isFinite(viewportRows) ? viewportRows : 0));
-  const scrollPx = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : 0;
-  const start = clamp(Math.floor(scrollPx / rowHeight) - overscan, 0, size);
-  const count = Math.max(0, Math.min(rows + 2 * overscan, size - start));
-  return { start, count };
+  return computeVirtualWindow(size, scrollTop, viewportRows, {
+    rowHeight: opts.rowHeight ?? SEARCH_RESULT_ROW_HEIGHT,
+    overscan: opts.overscan ?? SEARCH_RESULT_OVERSCAN,
+  });
 }
 
 export class SearchState {

@@ -10,6 +10,8 @@
  * 原文视图（ADR-0003 修订 2026-11-03 §4）：rawOpen/rawWindow/rawLocate/rawSource 全部**只读**，
  * 不推进 docRevision / rowVersion；doc 根生命周期即原文版本（原文不随展开/临时编辑变化）。
  *
+ * 大纲（ADR-0013 §3）：`outline` 只读，按容器**分页**枚举子项；不推任何版本、不依赖树展开态、不缓存。
+ *
  * 骨架 slice：getNodeJson / replaceNode / undo / redo / reset / getTrail / profile 只保证签名，
  * 一律抛 BAD_COMMAND('not implemented in skeleton slice')。
  */
@@ -29,6 +31,7 @@ import type {
 } from '../protocol/messages';
 import { ROOT_PATH } from '../shared/path';
 import type {
+  OutlineReply,
   Path,
   RawLocateReply,
   RawMeta,
@@ -43,6 +46,7 @@ import { copyNodeText } from './copy';
 import { EditHistory, type EditEntry } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { jsonKind, RowModel } from './row-model';
+import { outlinePage } from './outline';
 import { DOC_ROOT_ID, RootStore, type Root, type RootSource } from './root-store';
 import { buildRawIndex, type RawTextIndex } from './raw-text';
 import { searchDocument } from './search';
@@ -112,6 +116,8 @@ export class DocService {
         return undefined;
       case 'stats':
         return this.stats(cmd);
+      case 'outline':
+        return this.outline(cmd);
       case 'getNodeJson':
         return this.getNodeJson(cmd);
       case 'copyNode':
@@ -597,6 +603,21 @@ export class DocService {
       rowVersion: root.rowVersion,
       totalRows: root.rowModel.totalRows,
     };
+  }
+
+  /* -------------------------------- 大纲 -------------------------------- */
+
+  /**
+   * 大纲页（ADR-0013 §3）：按容器**分页**返回子项。
+   *
+   * 只读：不推进 docRevision / rowVersion、不改变树展开态（折叠容器同样可查）、不缓存
+   * （每页重新枚举，见 core/outline.ts）。路径解析沿用行模型：路径不存在 / 中间段穿越标量
+   * → `rowModel.valueAt` 抛 BAD_COMMAND（与 getNodeJson 同口径）；标量路径合法，回 total 0。
+   */
+  private outline(cmd: Cmd<'outline'>): OutlineReply {
+    const root = this.roots.require(cmd.rootId);
+    const value = root.rowModel.valueAt(cmd.path);
+    return { rootId: root.rootId, ...outlinePage(value, cmd.path, cmd.start, cmd.count) };
   }
 
   /* ------------------------------- events ------------------------------- */

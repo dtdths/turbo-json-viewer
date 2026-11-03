@@ -254,10 +254,15 @@ kbd {
   position: relative;
   z-index: 31;
 }
-body[data-panel="search"] .side--left, body[data-panel="settings"] .side--left { display: flex; }
-/* 左面板同一时刻只显示一种模式的内容 */
+body[data-panel="search"] .side--left,
+body[data-panel="outline"] .side--left,
+body[data-panel="settings"] .side--left { display: flex; }
+/* 左面板同一时刻只显示一种模式的内容（大纲 = ADR-0013 §1） */
 body[data-panel="settings"] .panel--search { display: none; }
+body[data-panel="outline"] .panel--search { display: none; }
+body[data-panel="outline"] .panel--settings { display: none; }
 body:not([data-panel="settings"]) .panel--settings { display: none; }
+body:not([data-panel="outline"]) .panel--outline { display: none; }
 .side__head {
   display: flex; align-items: center; gap: 8px;
   height: 40px; flex: 0 0 40px; padding: 0 8px 0 14px;

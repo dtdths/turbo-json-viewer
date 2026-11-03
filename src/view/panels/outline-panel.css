@@ -1,0 +1,204 @@
+/* ==========================================================================
+   view/panels/outline-panel — 大纲面板（ADR-0013）
+   虚拟结构列表（行高跟随设置 20–26px）+ 类型 / 项数列 + 空态 + foot。
+   视觉 token 来自 view/styles/tokens.css；布局外框（.panel / .iconbtn）在 shell.css。
+   DOM 契约（#outlineScroll / .outline-row[data-path] / .outline-row__*）见 ADR-0013，
+   冒烟脚本依赖，不要改名。
+   ========================================================================== */
+
+.panel--outline {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---------------- virtual scroll ---------------- */
+
+.outline__scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.outline__scroll:focus-visible {
+  box-shadow: var(--focus-ring-inset);
+  border-radius: 0;
+}
+.outline__spacer {
+  position: relative;
+  width: 100%;
+}
+.outline__window {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------------- row ---------------- */
+
+.outline-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 缩进：每层 14px（--o-depth 由面板按行写入） */
+  /* 缩进跟随设置（--row-indent：12/16/20，与树同源） */
+  padding: 0 8px 0 calc(8px + var(--o-depth, 0) * var(--row-indent, 16px));
+  height: var(--outline-row-h, 24px);
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono, 12.5px);
+  white-space: nowrap;
+}
+/* [hidden] 必须压过 .outline-row{display:flex}（行池复用靠 hidden 隐藏多余节点） */
+.outline-row[hidden] {
+  display: none;
+}
+.outline-row:hover {
+  background: var(--bg-hover);
+}
+/* 当前节点（唯一来源 = 树选中路径，ADR-0013 §4） */
+.outline-row.is-current {
+  background: var(--bg-selected);
+  border-left-color: var(--accent);
+}
+.outline-row.is-current .outline-row__key {
+  color: var(--text);
+}
+
+/* caret：容器才有；根行不可折叠不显示 */
+.outline-row__caret {
+  position: relative;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  cursor: pointer;
+  border-radius: var(--radius-xs, 4px);
+}
+.outline-row__caret[hidden] {
+  display: none;
+}
+.outline-row__caret::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 3px;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--muted);
+  transition: transform var(--dur-fast, 110ms) ease;
+  transform-origin: 2px 4px;
+}
+.outline-row.is-open .outline-row__caret::before {
+  transform: rotate(90deg);
+}
+.outline-row__caret:hover::before {
+  border-left-color: var(--text-2);
+}
+
+/* 键：根 `$` / 对象键原文 / 数组 `[i]`；超长省略 */
+.outline-row__key {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--syntax-key);
+  font-variant-numeric: tabular-nums;
+}
+/* 类型列：原始 kind 字符串（object / array / string / number / boolean / null） */
+.outline-row__type {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  line-height: 13px;
+  color: var(--faint);
+}
+.outline-row__type[hidden] {
+  display: none;
+}
+
+/* 项数：仅容器行（含 `0 项`） */
+.outline-row__count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-ui);
+  font-size: var(--text-micro, 10px);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.outline-row__count[hidden] {
+  display: none;
+}
+
+/* ---------------- 「加载更多」哨兵行 ---------------- */
+
+.outline-row--more {
+  color: var(--accent-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption, 11px);
+  cursor: pointer;
+}
+.outline-row--more .outline-row__key {
+  color: inherit;
+  font-family: inherit;
+}
+.outline-row--more:hover {
+  background: var(--accent-soft);
+}
+
+/* ---------------- empty / loading / error ---------------- */
+
+.outline__empty {
+  padding: 16px 14px;
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.outline__empty[hidden] {
+  display: none;
+}
+
+/* ---------------- foot ---------------- */
+
+.outline__foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-micro, 10px);
+  color: var(--faint);
+  white-space: nowrap;
+}
+/* [hidden] 必须压过 .outline__foot{display:flex} */
+.outline__foot[hidden] {
+  display: none;
+}
+.outline__foot span {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 减少动效偏好：caret 不做旋转过渡（与树一致） */
+@media (prefers-reduced-motion: reduce) {
+  .outline-row__caret::before {
+    transition: none;
+  }
+}

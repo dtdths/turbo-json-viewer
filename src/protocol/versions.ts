@@ -32,6 +32,13 @@ export const RAW_MAX_LINE_LENGTH = 4096;
 /** 单行显示上限（字符；防 DOM 巨行）：超出截断显示，复制原文不受此限 */
 export const RAW_LINE_DISPLAY_MAX = 4096;
 
+/* --------------------- 大纲面板（ADR-0013） --------------------- */
+
+/** 大纲分页：默认每页子项数（「加载更多」每次取一页） */
+export const OUTLINE_PAGE = 200;
+/** 大纲分页：单次 `outline` 请求允许的最大 count（超出由 core 夹取） */
+export const OUTLINE_PAGE_MAX = 500;
+
 /** 行窗口回包是否过期：seq 之后到、或 rowVersion 不符 */
 export function isStaleRow(
   reply: { rowVersion: number; seq: number },

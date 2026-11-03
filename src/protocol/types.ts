@@ -147,6 +147,36 @@ export interface NodeStats {
   rowVersion: Rev;
 }
 
+/* ------------------------- 大纲面板（ADR-0013） ------------------------- */
+
+/** 大纲行：容器的一个子项（键 + 类型 + 项数 + 完整规范路径）。 */
+export interface OutlineChild {
+  /** 对象键原文 / 数组下标（含方括号，如 `[12]`） */
+  key: string;
+  /** true = 数组下标样式（与 Row.idx 同口径） */
+  idx: boolean;
+  kind: JsonKind;
+  /** 容器子项数；标量为 0 */
+  count: number;
+  path: Path;
+}
+
+/**
+ * 大纲页回包（`outline` 命令）：按容器**分页**返回子项；只读、不推任何版本。
+ * 语义：`start`/`count` 夹取；标量路径回 `total: 0`；路径不存在由 core 抛 `BAD_COMMAND`。
+ */
+export interface OutlineReply {
+  rootId: RootId;
+  /** 被查询容器自身 */
+  path: Path;
+  kind: JsonKind;
+  /** 该容器子项总数（分页依据） */
+  total: number;
+  /** 实际生效的起始下标（夹取后） */
+  start: number;
+  children: OutlineChild[];
+}
+
 /* ------------------------- 原始文本视图（ADR-0003 修订） ------------------------- */
 
 /**
