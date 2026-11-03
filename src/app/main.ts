@@ -89,7 +89,6 @@ const repairOps = el('repairOps');
 const repairClose = el<HTMLButtonElement>('repairClose');
 const viewTreeBtn = el<HTMLButtonElement>('viewTreeBtn');
 const viewRawBtn = el<HTMLButtonElement>('viewRawBtn');
-const rawWrap = el('rawWrap');
 const rawHost = el('raw');
 const rawModeLabel = el('rawModeLabel');
 const rawNotice = el('rawNotice');

@@ -6,7 +6,7 @@
 <title>Turbo JSON Viewer</title>
 <link rel="stylesheet" href="./page.css">
 </head>
-<body data-panel="none">
+<body data-panel="none" data-view="tree">
 
 <div class="app">
   <nav class="activity" aria-label="活动栏">
@@ -98,7 +98,7 @@
       </div>
 
       <!-- 原始文本视图（#11 / ADR-0003 修订）：只读、行虚拟化、语法高亮只对屏幕内行 -->
-      <div class="raw-wrap" id="rawWrap" hidden>
+      <div class="raw-wrap" id="rawWrap">
         <div class="raw-head">
           <span class="raw-head__mode" id="rawModeLabel">原文</span>
           <span class="raw-head__notice" id="rawNotice"></span>

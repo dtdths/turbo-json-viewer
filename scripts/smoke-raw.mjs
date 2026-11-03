@@ -183,6 +183,9 @@ try {
       out.repair.after = h.rawState();
       const offset = repair.opsDetail?.[0]?.at ?? 0;
       out.repair.locate = await h.rawLocate(offset);
+      // 截图前收起摘要（展开的摘要面板是浮层，会盖住 1 行的原文内容）
+      h.repairToggle();
+      await sleep(120);
       return out;
     })()`,
   );
