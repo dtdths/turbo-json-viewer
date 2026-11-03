@@ -14,7 +14,8 @@
  *   - 禁止 innerHTML 拼数据：只用 createElement / createTextNode / textContent；
  *   - 固定行高：行内容单行不换行（白空间 pre），行高由 CSS 变量 --row-h 锁死。
  */
-import { lexLine, T } from '../../shared/json-lex';
+import { JsonLexer, TOK } from '../../shared/json-lex';
+import { clampRowHeight } from '../../shared/num';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
 import type { RawSnapshot } from '../../viewmodel/raw-window-source';
 
@@ -28,24 +29,17 @@ export const FLASH_MS = 900;
 /** 单行高亮 run 上限：超长行（≤4096 字符）极端情况下退回纯文本，保 DOM 节点数有界。 */
 const MAX_HIGHLIGHT_RUNS = 512;
 
-/** 行高兜底：与 TreeView 同一口径（设置只允许 20–26，这里防脏数据撑坏几何）。 */
-function clampRowHeight(px: number): number {
-  const n = Number(px);
-  if (!Number.isFinite(n)) return 24;
-  return Math.min(48, Math.max(12, Math.round(n)));
-}
-
 const TOKEN_CLASS: Record<number, string> = {
-  [T.OBJ]: 'tk-punct',
-  [T.ARR]: 'tk-punct',
-  [T.OBJ_END]: 'tk-punct',
-  [T.ARR_END]: 'tk-punct',
-  [T.STR]: 'tk-str',
-  [T.NUM]: 'tk-num',
-  [T.LIT]: 'tk-lit',
-  [T.COLON]: 'tk-punct',
-  [T.COMMA]: 'tk-punct',
-  [T.BAD]: 'tk-bad',
+  [TOK.OBJ]: 'tk-punct',
+  [TOK.ARR]: 'tk-punct',
+  [TOK.OBJ_END]: 'tk-punct',
+  [TOK.ARR_END]: 'tk-punct',
+  [TOK.STR]: 'tk-str',
+  [TOK.NUM]: 'tk-num',
+  [TOK.LIT]: 'tk-lit',
+  [TOK.COLON]: 'tk-punct',
+  [TOK.COMMA]: 'tk-punct',
+  [TOK.BAD]: 'tk-bad',
 };
 
 interface RawSlot {
@@ -62,12 +56,12 @@ interface RawSlot {
  * 把一行文本写进 `.raw-row__code`：token 用 span.tk-*，其余（缩进/空白）用文本节点逐字保留。
  * `highlight=false`（plain 模式）→ 整行一个文本节点，仍逐字。
  */
-function writeLine(code: HTMLSpanElement, line: string, highlight: boolean): void {
+function writeLine(lex: JsonLexer, code: HTMLSpanElement, line: string, highlight: boolean): void {
   if (!highlight) {
     code.textContent = line;
     return;
   }
-  const runs = lexLine(line);
+  const runs = lex.lexLine(line);
   if (runs.length === 0 || runs.length > MAX_HIGHLIGHT_RUNS) {
     code.textContent = line;
     return;
@@ -81,7 +75,7 @@ function writeLine(code: HTMLSpanElement, line: string, highlight: boolean): voi
       fragment.appendChild(document.createTextNode(line.slice(cursor, run.s)));
     }
     // 键判定：字符串 token 后紧跟 COLON（`"key":`），其余字符串是值
-    const isKey = run.t === T.STR && runs[i + 1]?.t === T.COLON;
+    const isKey = run.t === TOK.STR && runs[i + 1]?.t === TOK.COLON;
     const span = document.createElement('span');
     span.className = isKey ? 'tk-key' : (TOKEN_CLASS[run.t] ?? 'tk-bad');
     span.textContent = line.slice(run.s, run.e);
@@ -96,6 +90,8 @@ function writeLine(code: HTMLSpanElement, line: string, highlight: boolean): voi
 
 export class RawView {
   private readonly host: HTMLElement;
+  /** 本视图独占的 lexer（shared 无模块状态） */
+  private readonly lex = new JsonLexer();
   private readonly opts: RawViewOptions;
 
   private scroller: HTMLDivElement | null = null;
@@ -331,7 +327,7 @@ export class RawView {
     slot.el.hidden = false;
     slot.el.dataset.line = String(lineNo);
     slot.ln.textContent = String(lineNo);
-    writeLine(slot.code, text, highlight);
+    writeLine(this.lex, slot.code, text, highlight);
 
     if (truncated > 0) {
       slot.el.dataset.truncated = String(truncated);

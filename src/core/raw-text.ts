@@ -21,10 +21,11 @@
  */
 import type { RawMeta, RawMode } from '../protocol/types';
 import { RAW_CP_EVERY, RAW_LINE_DISPLAY_MAX, RAW_MAX_LINE_LENGTH } from '../protocol/versions';
-import { C, T, last, lexToken, skipWs } from '../shared/json-lex';
+import { CH, JsonLexer, TOK } from '../shared/json-lex';
+import { clampInt } from '../shared/num';
 
 /** 行记录 kind：OPEN/CLOSE 单独成行；KEY = 键 + 值同一行；KEY_OPEN = 键 + 容器开括号；SCALAR = 标量/空容器 */
-const K = {
+const KIND = {
   OPEN: 0,
   CLOSE: 1,
   KEY: 2,
@@ -32,7 +33,7 @@ const K = {
   SCALAR: 4,
 } as const;
 
-type LineKind = (typeof K)[keyof typeof K];
+type LineKind = (typeof KIND)[keyof typeof KIND];
 
 /** 一行 pretty 布局记录；walker 内复用同一个对象，回调方不得持有 */
 interface LineRec {
@@ -81,6 +82,7 @@ export function probeText(text: string): { lines: number; maxLine: number } {
  * @returns 走完的行数（回调提前返回 false 时 = 当前行 + 1）
  */
 function walkPretty(
+  lex: JsonLexer,
   text: string,
   pos: number,
   depth: number,
@@ -89,110 +91,110 @@ function walkPretty(
 ): number {
   const n = text.length;
   let lineIndex = lineIndex0;
-  const rec: LineRec = { start: 0, end: 0, depth: 0, kind: K.SCALAR };
+  const rec: LineRec = { start: 0, end: 0, depth: 0, kind: KIND.SCALAR };
   for (;;) {
-    pos = skipWs(text, pos);
+    pos = lex.skipWs(text, pos);
     if (pos >= n) break;
     const c = text.charCodeAt(pos);
 
-    if (c === C.RBRACE || c === C.RBRACK) {
+    if (c === CH.RBRACE || c === CH.RBRACK) {
       depth--;
       rec.start = pos;
       rec.end = pos + 1;
       rec.depth = depth;
-      rec.kind = K.CLOSE;
+      rec.kind = KIND.CLOSE;
       pos++;
-    } else if (c === C.LBRACE || c === C.LBRACK) {
-      const closer = c === C.LBRACE ? C.RBRACE : C.RBRACK;
-      const p = skipWs(text, pos + 1);
+    } else if (c === CH.LBRACE || c === CH.LBRACK) {
+      const closer = c === CH.LBRACE ? CH.RBRACE : CH.RBRACK;
+      const p = lex.skipWs(text, pos + 1);
       if (text.charCodeAt(p) === closer) {
         rec.start = pos;
         rec.end = p + 1;
         rec.depth = depth;
-        rec.kind = K.SCALAR; // 空 {} / [] 单独一行
+        rec.kind = KIND.SCALAR; // 空 {} / [] 单独一行
         pos = p + 1;
       } else {
         rec.start = pos;
         rec.end = pos + 1;
         rec.depth = depth;
-        rec.kind = K.OPEN;
+        rec.kind = KIND.OPEN;
         depth++;
         pos++;
       }
-    } else if (c === C.QUOTE) {
+    } else if (c === CH.QUOTE) {
       // 字符串：可能是对象键（后跟 ':'），也可能是普通标量值
-      const keyEnd = lexToken(text, pos);
-      const ktype = last.type;
-      let p = skipWs(text, keyEnd);
-      if (ktype === T.STR && text.charCodeAt(p) === C.COLON) {
-        p = skipWs(text, p + 1);
+      const keyEnd = lex.lexToken(text, pos);
+      const ktype = lex.last.type;
+      let p = lex.skipWs(text, keyEnd);
+      if (ktype === TOK.STR && text.charCodeAt(p) === CH.COLON) {
+        p = lex.skipWs(text, p + 1);
         const vc = text.charCodeAt(p);
-        if (vc === C.LBRACE || vc === C.LBRACK) {
-          const closer = vc === C.LBRACE ? C.RBRACE : C.RBRACK;
-          const q = skipWs(text, p + 1);
+        if (vc === CH.LBRACE || vc === CH.LBRACK) {
+          const closer = vc === CH.LBRACE ? CH.RBRACE : CH.RBRACK;
+          const q = lex.skipWs(text, p + 1);
           if (text.charCodeAt(q) === closer) {
             rec.start = pos;
             rec.end = q + 1;
             rec.depth = depth;
-            rec.kind = K.KEY; // "k": {} / [] 同行
+            rec.kind = KIND.KEY; // "k": {} / [] 同行
             pos = q + 1;
           } else {
             rec.start = pos;
             rec.end = p + 1;
             rec.depth = depth;
-            rec.kind = K.KEY_OPEN; // "k": { 换行
+            rec.kind = KIND.KEY_OPEN; // "k": { 换行
             depth++;
             pos = p + 1;
           }
         } else {
-          const ve = lexToken(text, p);
+          const ve = lex.lexToken(text, p);
           rec.start = pos;
           rec.end = ve;
           rec.depth = depth;
-          rec.kind = K.KEY; // "k": scalar
+          rec.kind = KIND.KEY; // "k": scalar
           pos = ve;
         }
       } else {
         rec.start = pos;
         rec.end = keyEnd;
         rec.depth = depth;
-        rec.kind = K.SCALAR;
+        rec.kind = KIND.SCALAR;
         pos = keyEnd;
       }
     } else {
-      const ve = lexToken(text, pos);
+      const ve = lex.lexToken(text, pos);
       rec.start = pos;
       rec.end = ve;
       rec.depth = depth;
-      rec.kind = K.SCALAR;
+      rec.kind = KIND.SCALAR;
       pos = ve;
     }
 
     if (cb(rec, lineIndex) === false) return lineIndex + 1;
     lineIndex++;
     // 统一的尾巴处理：可选的逗号分隔本行与下一行
-    pos = skipWs(text, pos);
-    if (text.charCodeAt(pos) === C.COMMA) pos++;
+    pos = lex.skipWs(text, pos);
+    if (text.charCodeAt(pos) === CH.COMMA) pos++;
   }
   return lineIndex;
 }
 
 /** 用源切片重建一行 pretty 文本（≤ 2 个 token：补缩进 / 冒号 / 逗号，不做值序列化）。 */
-function renderPrettyLine(text: string, rec: LineRec): string {
+function renderPrettyLine(lex: JsonLexer, text: string, rec: LineRec): string {
   const indent = rec.depth > 0 ? ' '.repeat(rec.depth * 2) : '';
   let body: string;
-  if (rec.kind === K.KEY || rec.kind === K.KEY_OPEN) {
-    const keyEnd = lexToken(text, rec.start);
-    let p = skipWs(text, keyEnd);
-    if (text.charCodeAt(p) === C.COLON) p = skipWs(text, p + 1);
+  if (rec.kind === KIND.KEY || rec.kind === KIND.KEY_OPEN) {
+    const keyEnd = lex.lexToken(text, rec.start);
+    let p = lex.skipWs(text, keyEnd);
+    if (text.charCodeAt(p) === CH.COLON) p = lex.skipWs(text, p + 1);
     body = text.slice(rec.start, keyEnd) + ': ' + text.slice(p, rec.end);
   } else {
     body = text.slice(rec.start, rec.end);
   }
   // 源里紧跟在本行后的逗号（OPEN 行后面不会跟逗号）
-  const p = skipWs(text, rec.end);
-  const comma = text.charCodeAt(p) === C.COMMA;
-  return indent + body + (comma && rec.kind !== K.OPEN ? ',' : '');
+  const p = lex.skipWs(text, rec.end);
+  const comma = text.charCodeAt(p) === CH.COMMA;
+  return indent + body + (comma && rec.kind !== KIND.OPEN ? ',' : '');
 }
 
 function now(): number {
@@ -204,12 +206,6 @@ function now(): number {
 /** 毫秒保留 3 位小数（与原型 / RawMeta.buildMs 口径一致） */
 function roundMs(ms: number): number {
   return Math.round(ms * 1000) / 1000;
-}
-
-/** 把 start/count 夹到 [min, max] 的整数（非有限值 → min）。 */
-function clampInt(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(Math.max(min, Math.floor(value)), max);
 }
 
 /**
@@ -228,6 +224,8 @@ export class RawTextIndex {
   readonly cpEvery: number;
   readonly maxLineLength: number;
 
+  /** 本索引独占的 lexer 实例（shared 无模块状态，见 shared/json-lex 头注释） */
+  private readonly lex = new JsonLexer();
   private readonly probe: { lines: number; maxLine: number };
   private built = false;
   private lineCount = 0;
@@ -358,9 +356,9 @@ export class RawTextIndex {
   private buildPretty(): void {
     const text = this.text;
     const every = this.cpEvery;
-    const tmp: number[] = [0, skipWs(text, 0), 0]; // lineIndex, srcOffset, depth
+    const tmp: number[] = [0, this.lex.skipWs(text, 0), 0]; // lineIndex, srcOffset, depth
     let count = 0;
-    walkPretty(text, 0, 0, (rec, li) => {
+    walkPretty(this.lex, text, 0, 0, (rec, li) => {
       if (li > 0 && li % every === 0) tmp.push(li, rec.start, rec.depth);
       count = li + 1;
     });
@@ -382,21 +380,30 @@ export class RawTextIndex {
     }
   }
 
-  private sourceWindow(start: number, need: number, lines: string[], truncated: number[]): void {
-    const text = this.text;
-    const n = this.chars;
+  /**
+   * 二分检查点：返回第 `keySlot` 槽位 ≤ target 的最近检查点下标（该槽位在 cp 里单调递增）。
+   * 三种模式共用（stride = 每检查点槽位数：source/plain 2，pretty 3）。
+   */
+  private bisectCp(stride: number, keySlot: number, target: number): number {
     const cp = this.cp;
-    // 二分：lineIndex <= start 的最近检查点
     let lo = 0;
     let hi = this.cpCount - 1;
     let best = 0;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (cp[mid * 2] <= start) {
+      if (cp[mid * stride + keySlot] <= target) {
         best = mid;
         lo = mid + 1;
       } else hi = mid - 1;
     }
+    return best;
+  }
+
+  private sourceWindow(start: number, need: number, lines: string[], truncated: number[]): void {
+    const text = this.text;
+    const n = this.chars;
+    const cp = this.cp;
+    const best = this.bisectCp(2, 0, start);
     let line = cp[best * 2];
     let pos = cp[best * 2 + 1];
     while (line < start) {
@@ -424,16 +431,7 @@ export class RawTextIndex {
     const n = this.chars;
     const displayMax = RAW_LINE_DISPLAY_MAX;
     const cp = this.cp;
-    let lo = 0;
-    let hi = this.cpCount - 1;
-    let best = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (cp[mid * 2] <= start) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
+    const best = this.bisectCp(2, 0, start);
     let display = cp[best * 2];
     let pos = cp[best * 2 + 1];
     // 从检查点前进到目标显示行（≤ cpEvery 个显示块）
@@ -457,26 +455,18 @@ export class RawTextIndex {
   private prettyWindow(start: number, need: number, lines: string[], truncated: number[]): void {
     const text = this.text;
     const cp = this.cp;
-    let lo = 0;
-    let hi = this.cpCount - 1;
-    let best = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (cp[mid * 3] <= start) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
+    const best = this.bisectCp(3, 0, start);
     const fromLine = cp[best * 3];
     const pos = cp[best * 3 + 1];
     const depth = cp[best * 3 + 2];
     walkPretty(
+      this.lex,
       text,
       pos,
       depth,
       (rec, li) => {
         if (li < start) return;
-        this.pushDisplayLine(renderPrettyLine(text, rec), lines, truncated);
+        this.pushDisplayLine(renderPrettyLine(this.lex, text, rec), lines, truncated);
         return lines.length < need;
       },
       fromLine,
@@ -488,17 +478,7 @@ export class RawTextIndex {
   private locateSource(pos: number): number {
     const text = this.text;
     const cp = this.cp;
-    // 二分：srcOffset <= pos 的最近检查点（cp 的 srcOffset 单调递增）
-    let lo = 0;
-    let hi = this.cpCount - 1;
-    let best = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (cp[mid * 2 + 1] <= pos) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
+    const best = this.bisectCp(2, 1, pos);
     let line = cp[best * 2];
     let at = cp[best * 2 + 1];
     // 只数 pos 之前的 '\n'（pos 处的 '\n' 属于它终止的那行）
@@ -516,16 +496,7 @@ export class RawTextIndex {
     const n = this.chars;
     const displayMax = RAW_LINE_DISPLAY_MAX;
     const cp = this.cp;
-    let lo = 0;
-    let hi = this.cpCount - 1;
-    let best = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (cp[mid * 2 + 1] <= pos) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
+    const best = this.bisectCp(2, 1, pos);
     let display = cp[best * 2];
     let start = cp[best * 2 + 1];
     // 逐显示块前进到包含 pos 的块（≤ cpEvery 块）
@@ -546,19 +517,11 @@ export class RawTextIndex {
   private locatePretty(pos: number): number {
     const text = this.text;
     const cp = this.cp;
-    let lo = 0;
-    let hi = this.cpCount - 1;
-    let best = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (cp[mid * 3 + 1] <= pos) {
-        best = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
+    const best = this.bisectCp(3, 1, pos);
     const fromLine = cp[best * 3];
     let line = fromLine;
     walkPretty(
+      this.lex,
       text,
       cp[best * 3 + 1],
       cp[best * 3 + 2],

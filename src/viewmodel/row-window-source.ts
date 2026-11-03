@@ -16,6 +16,7 @@ import type { CoreApi, WindowRequest } from '../protocol/core-api';
 import type { RootId, Row, RowWindow } from '../protocol/types';
 import { CoreError } from '../protocol/errors';
 import { OVERSCAN, ROW_HEIGHT } from '../protocol/versions';
+import { clampInt } from '../shared/num';
 
 /** 唯一允许从 view 进入逻辑层的视觉参数 */
 export interface RowMetrics {
@@ -64,9 +65,6 @@ interface SentRequest {
   target: Target;
   scrollTopPx: number;
 }
-
-const clamp = (value: number, min: number, max: number): number =>
-  value < min ? min : value > max ? max : value;
 
 export class RowWindowSource {
   private readonly api: CoreApi;
@@ -249,7 +247,7 @@ export class RowWindowSource {
 
   private computeTarget(scrollTopPx: number): Target {
     const maxStart = Math.max(0, this.totalRows - 1);
-    const start = clamp(
+    const start = clampInt(
       Math.floor(scrollTopPx / this.rowHeight) - this.overscan,
       0,
       maxStart,

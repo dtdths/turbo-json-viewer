@@ -196,8 +196,6 @@ let searchTimer = 0;
 /** 首次 next/prev/Enter 先跳到当前命中，之后才移动（编辑器惯例）。 */
 let searchJumped = false;
 
-/** 视图模式（#11 / ADR-0003 修订）：`tree` = 树视图；`raw` = 原始文本视图（只读原文）。 */
-let viewMode: 'tree' | 'raw' = 'tree';
 /** 原文行索引元信息（null = 当前文档尚未进入原文视图 / 索引未构建） */
 let rawMetaInfo: RawMeta | null = null;
 /** 原文 open 竞态守卫（切视图 / 换文档时递增，迟到回包丢弃） */
@@ -242,7 +240,7 @@ function applySettings(): void {
   // 原文视图与树共用行高（ADR-0003 修订：行高是唯一进入逻辑层的视觉参数）
   rawView.setRowHeight(current.rowHeight);
   rawSource.setMetrics(rawMetrics());
-  if (rootId && viewMode === 'raw') rawSource.requestWindow();
+  if (rootId && isRawView()) rawSource.requestWindow();
   document.documentElement.style.setProperty('--row-indent', `${current.indent}px`);
   tree.setTypeColumn(current.typeColumn);
   settingsPanel.render(current);
@@ -620,7 +618,7 @@ let expandAllBusy = false;
 async function applyExpandAll(open: boolean): Promise<void> {
   if (!rootId || expandAllBusy) return;
   // 展开/收起是树动作：原文视图下先切回树（按钮保持可用，不靠禁用态说话）
-  if (viewMode === 'raw') await setViewMode('tree');
+  if (isRawView()) await setViewMode('tree');
   expandAllBusy = true;
   try {
     const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
@@ -1221,7 +1219,7 @@ function applyFilter(filter: SearchFilter): void {
 async function gotoHit(index: number): Promise<number> {
   if (!rootId) return -1;
   // 搜索跳转是树动作：原文视图下先切回树（ADR-0003 修订：两视图 v1 不联动）
-  if (viewMode === 'raw') await setViewMode('tree');
+  if (isRawView()) await setViewMode('tree');
   const hit = searchState.hits[index];
   if (!hit) return -1;
   try {
@@ -1374,6 +1372,11 @@ function renderRepair(): void {
 
 /* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
 
+/** 当前视图的唯一运行期真相 = `body[data-view]`（持久化走 SettingsState，不另存一份变量）。 */
+function isRawView(): boolean {
+  return document.body.dataset.view === 'raw';
+}
+
 /** 原文元信息 + 视图内提示（不新增常驻条；没有要说的就是空串）。 */
 function renderRawChrome(): void {
   const info = rawMetaInfo;
@@ -1405,8 +1408,7 @@ function renderRawChrome(): void {
  */
 async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {}): Promise<void> {
   if (!rootId) return;
-  const changed = mode !== viewMode;
-  viewMode = mode;
+  const changed = mode !== (isRawView() ? 'raw' : 'tree');
   document.body.dataset.view = mode;
   viewTreeBtn.classList.toggle('is-active', mode === 'tree');
   viewTreeBtn.setAttribute('aria-pressed', mode === 'tree' ? 'true' : 'false');
@@ -1430,7 +1432,7 @@ async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {
   try {
     const info = await rawSource.open(rid);
     // 迟到回包：已换文档 / 已切回树 / 有更新的 open → 丢弃
-    if (seq !== rawOpenSeq || rid !== rootId || viewMode !== 'raw') return;
+    if (seq !== rawOpenSeq || rid !== rootId || !isRawView()) return;
     rawMetaInfo = info;
     renderRawChrome();
     rawView.setRowHeight(settings.get('rowHeight'));
@@ -1497,7 +1499,7 @@ function updateStatus(): void {
     statusState.textContent = '只读 · 原文件不变';
     return;
   }
-  if (viewMode === 'raw') {
+  if (isRawView()) {
     const rawSnapshot = rawSource.snapshot();
     const lines = rawMetaInfo?.totalLines ?? rawSnapshot.totalLines;
     statusRows.textContent = `${lines.toLocaleString()} 行 · 原文 · 已渲染 ${rawSnapshot.lines.length}`;
@@ -1587,7 +1589,7 @@ const resizeObserver = new ResizeObserver(() => {
   rowSource.setMetrics(metrics());
   rowSource.requestWindow();
   rawSource.setMetrics(rawMetrics());
-  if (viewMode === 'raw') rawSource.requestWindow();
+  if (isRawView()) rawSource.requestWindow();
 });
 resizeObserver.observe(treeHost);
 resizeObserver.observe(rawHost);
@@ -1646,7 +1648,7 @@ if (!isExtension) {
     editCount: editState.count,
     canUndo: editState.canUndo,
     canRedo: editState.canRedo,
-    viewMode,
+    viewMode: isRawView() ? 'raw' : 'tree',
   });
 
   /** 原文视图 dev hook 共用的状态快照（契约见 ADR-0003 修订 §7）。 */
@@ -1655,7 +1657,7 @@ if (!isExtension) {
     // 行池隐藏槽位没有 data-line（且文本已清空），只统计可见行
     const rows = [...document.querySelectorAll<HTMLElement>('.raw-row[data-line]')];
     return {
-      mode: viewMode,
+      mode: isRawView() ? 'raw' : 'tree',
       view: document.body.dataset.view ?? null,
       buttons: {
         tree: {

@@ -116,7 +116,7 @@ export interface RowWindowSource {
 }
 ```
 
-**原文窗口（同纪律，ADR-0003 修订）**：`RawWindowSource` 复用同一套单飞/合并/`seq` 丢弃/overscan；原文不随展开/编辑变化（doc 根生命周期即版本），所以**没有 `rowVersion`**，快照是 `RawSnapshot { mode, lines, start, totalLines, stale }`。
+**原文窗口（同纪律，ADR-0003 修订）**：`RawWindowSource` 与 `RowWindowSource` 守同一套纪律（单飞/合并/`seq` 丢弃/overscan），但是**独立实现**——原文没有 rowVersion、没有方向预取、没有锚点换算，状态机更小；改 S2 语义要同时看两处（已知重复，见 README §11 已知差距）。快照是 `RawSnapshot { mode, lines, start, totalLines, stale }`。
 
 **契约**
 - **单飞 + 合并**：同一时刻最多 1 个 in-flight；新目标覆盖排队目标，不取消 in-flight（回包后按 `seq` 丢弃）。连续拖动最多 1 个在途请求。

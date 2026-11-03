@@ -103,7 +103,8 @@ export interface RepairOp {
   note: string;
 }
 
-/** 修复 provenance（ADR-0004 §6.3）：挂在 DocumentMeta 上，不随视图切换丢失 */export interface RepairProvenance {
+/** 修复 provenance（ADR-0004 §6.3）：挂在 DocumentMeta 上，不随视图切换丢失 */
+export interface RepairProvenance {
   status: RepairStatus;
   /** 触发修复的 EOF 位置（= 原文本长度） */
   truncatedAt?: number;

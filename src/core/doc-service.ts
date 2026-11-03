@@ -38,6 +38,7 @@ import type {
   RowWindow,
 } from '../protocol/types';
 import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES } from '../protocol/versions';
+import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
 import { EditHistory, type EditEntry } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
@@ -51,11 +52,6 @@ type Cmd<K extends Command['t']> = Extract<Command, { t: K }>;
 const NOT_IMPLEMENTED = 'not implemented in skeleton slice';
 
 /** 把 start/count/offset 夹到 [min, max] 的整数（非有限值 → min）。 */
-function clampInt(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(Math.max(min, Math.floor(value)), max);
-}
-
 export class DocService {
   private readonly roots = new RootStore();
   /** 每根一份编辑历史（多文档标签时按 rootId 隔离；见 ADR-0009 预留） */

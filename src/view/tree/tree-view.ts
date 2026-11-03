@@ -10,19 +10,13 @@
  *   - click 委托：caret → onToggle(path, !open)；行 → onSelect(path)。
  *   - 最小键盘：↑/↓ 移动选中、←/→ 折叠/展开、Enter 切换。
  */
+import { clampRowHeight } from '../../shared/num';
 import type { JsonKind, Row } from '../../protocol/types';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
 import type { WindowSnapshot } from '../../viewmodel/row-window-source';
 import type { RowContext, RowHandle, RowRenderer, RowRendererFactory } from './row-renderer';
 
 export type { RowRendererFactory } from './row-renderer';
-
-/** 行高兜底：设置值只允许 12–48 的整数像素（防脏数据把几何撑坏） */
-function clampRowHeight(px: number): number {
-  const n = Number(px);
-  if (!Number.isFinite(n)) return 24;
-  return Math.min(48, Math.max(12, Math.round(n)));
-}
 
 export interface TreeViewOptions {
   /** 行渲染器工厂：TreeView 提供行容器，app 决定用哪个 adapter */
