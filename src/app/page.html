@@ -50,6 +50,10 @@
         </button>
       </div>
       <button class="btn" type="button" id="editBadge" hidden title="已临时修改，点击重置全部">已修改 0 处</button>
+      <div class="segmented" role="group" aria-label="视图切换">
+        <button class="segmented__btn is-active" type="button" id="viewTreeBtn" aria-pressed="true" title="树视图（默认）" disabled>树</button>
+        <button class="segmented__btn" type="button" id="viewRawBtn" aria-pressed="false" title="原始文本视图（只读原文）" disabled>原文</button>
+      </div>
       <button class="btn" type="button" id="expandAllBtn" disabled title="全部展开" aria-label="全部展开">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8h3.2M11 8h3.2M8 6.2V2.4M5.8 4.4 8 2.2 10.2 4.4M8 9.8v3.8M5.8 11.6 8 13.8 10.2 11.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
         全部展开
@@ -91,6 +95,18 @@
 
       <div class="tree-wrap">
         <div class="tree" id="tree" role="tree" tabindex="0" aria-label="JSON 树视图"></div>
+      </div>
+
+      <!-- 原始文本视图（#11 / ADR-0003 修订）：只读、行虚拟化、语法高亮只对屏幕内行 -->
+      <div class="raw-wrap" id="rawWrap" hidden>
+        <div class="raw-head">
+          <span class="raw-head__mode" id="rawModeLabel">原文</span>
+          <span class="raw-head__notice" id="rawNotice"></span>
+          <span class="raw-head__spacer"></span>
+          <span class="raw-head__meta" id="rawMetaLabel"></span>
+          <button class="btn raw-head__copy" type="button" id="rawCopyBtn" disabled title="复制整份原始文本到剪贴板">复制原文</button>
+        </div>
+        <div class="raw" id="raw"></div>
       </div>
 
       <aside class="rail" id="rail" aria-label="右侧工作区">

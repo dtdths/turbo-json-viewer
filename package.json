@@ -17,7 +17,8 @@
     "smoke:repair": "node scripts/smoke-repair.mjs",
     "smoke:settings": "node scripts/smoke-settings.mjs",
     "smoke:export": "node scripts/smoke-export.mjs",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "smoke:raw": "node scripts/smoke-raw.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

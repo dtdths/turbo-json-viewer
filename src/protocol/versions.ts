@@ -23,6 +23,15 @@ export const COPY_INDENT = 2;
 /** 复制：子树 JSON 字节上限（与编辑器 5MB 守卫同口径；超限引导用「导出」，不静默截断） */
 export const COPY_MAX_BYTES = 5 * 1024 * 1024;
 
+/* --------------------- 原始文本视图（ADR-0003 修订） --------------------- */
+
+/** 原文行索引检查点间隔（行）：每 N 行一个 {lineIndex, srcOffset, depth} */
+export const RAW_CP_EVERY = 2048;
+/** 形状探测阈值：最长行 ≤ 该值 → 源码行虚拟化；否则走检查点 pretty 行走器 */
+export const RAW_MAX_LINE_LENGTH = 4096;
+/** 单行显示上限（字符；防 DOM 巨行）：超出截断显示，复制原文不受此限 */
+export const RAW_LINE_DISPLAY_MAX = 4096;
+
 /** 行窗口回包是否过期：seq 之后到、或 rowVersion 不符 */
 export function isStaleRow(
   reply: { rowVersion: number; seq: number },

@@ -85,6 +85,15 @@ kbd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10.5px;
 }
+/* `at` 可跳原文对应行（#8 / ADR-0003 修订）：按钮化但不抢眼 */
+.repairbar__at {
+  flex: 0 0 auto; padding: 0 3px; border: 0; border-radius: 3px;
+  background: transparent; color: var(--warn); font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;
+}
+.repairbar__at:hover { background: var(--warn-bg, var(--bg-hover)); }
+.repairbar__at:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .repairbar__op span { min-width: 0; }
 
 /* ---------------- activity bar ---------------- */
@@ -595,3 +604,34 @@ body.rail-collapsed .rail { display: none; }
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .tjv-tree .row.is-changed.is-selected { background: var(--bg-selected, rgba(124, 140, 255, 0.14)); }
+
+/* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订 2026-11-03） ---------------- */
+
+.segmented {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); background: var(--bg-panel-2);
+}
+.segmented__btn {
+  height: 24px; padding: 0 10px; border: 0; border-radius: var(--radius-xs, 4px);
+  background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+}
+.segmented__btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.segmented__btn.is-active { background: var(--bg-selected); color: var(--accent); }
+.segmented__btn:disabled { cursor: not-allowed; opacity: 0.45; }
+.segmented__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 两个视图互斥：正文区同一时刻只显示一种（原文视图样式见 view/raw/raw-view.css） */
+body[data-view="raw"] .tree-wrap { display: none; }
+body[data-view="tree"] .raw-wrap { display: none; }
+.raw-wrap { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.raw-head {
+  display: flex; align-items: center; gap: 10px;
+  height: 30px; flex: 0 0 30px; padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle); background: var(--bg-panel);
+}
+.raw-head__mode { font-size: var(--text-caption, 11px); font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.raw-head__notice { min-width: 0; font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.raw-head__spacer { flex: 1 1 auto; }
+.raw-head__meta { font-size: var(--text-micro, 10px); color: var(--faint); font-variant-numeric: tabular-nums; }
+.raw-head__copy { height: 22px; padding: 0 8px; font-size: 11.5px; }
+.raw { flex: 1 1 auto; min-height: 0; display: flex; position: relative; overflow: hidden; }

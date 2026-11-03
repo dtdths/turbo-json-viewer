@@ -1,7 +1,8 @@
 /**
  * core/import — 导入管线。
  *
- * 真相源 = JSON.parse 值图；源文本解析后即释放（不保留原始文本视图，ADR-0003）。
+ * 真相源 = JSON.parse 值图；**解码出的源文本随结果返回并保留在 doc 根上**
+ * （ADR-0003 修订 2026-11-03 §2：原文视图 / 修复摘要跳行的唯一真相；永不落盘、不出 Worker）。
  * 解码在 Worker 内做：ArrayBuffer → TextDecoder('utf-8')（ir-spec §5）。
  *
  * 截断修复（#8 / ADR-0004 修订）：只在 JSON.parse 失败时调用 `core/repair.ts`；
@@ -24,6 +25,8 @@ export interface LoadDocumentInput {
 export interface LoadDocumentResult {
   value: unknown;
   meta: DocumentMeta;
+  /** 解码出的**原始**源文本（截断修复时仍是被修复前的文本，供原文视图展示） */
+  text: string;
 }
 
 const SOURCE_DEFAULT_NAME: Record<LoadSource, string> = {
@@ -117,5 +120,5 @@ export function loadDocument(input: LoadDocumentInput): LoadDocumentResult {
   const name = input.name?.trim() || SOURCE_DEFAULT_NAME[input.source] || 'untitled.json';
   const meta: DocumentMeta = { name, bytes, source: input.source };
   if (repair) meta.repair = repair;
-  return { value, meta };
+  return { value, meta, text };
 }

@@ -1,0 +1,135 @@
+/* ==========================================================================
+   view/raw/raw-view.css — 原始文本视图（ADR-0003 修订 2026-11-03）
+   只引用 token 变量名；值来自 app 层统一引入的 tokens.css（dark 默认 + [data-theme]）。
+   硬约束：行单行不换行（white-space: pre）+ 行高恒定（--row-h）+ 横向滚动；
+   不新增颜色 token，也不覆盖 shell.css / tree.css 的选择器。
+   ========================================================================== */
+
+.tjv-raw {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: none;
+  outline: none;
+  background: var(--bg-app, #0b0d12);
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: var(--text-mono, 12.5px);
+  color: var(--text-2, #c6ccd9);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong, #2e3648) transparent;
+}
+.tjv-raw:focus-visible {
+  box-shadow: inset var(--focus-ring-inset, inset 0 0 0 1px #7c8cff);
+}
+
+/* spacer：高度 = min(totalLines × rowHeight, MAX_SCROLL_PX)（由 RawView 内联写）；
+   横向滚动由行自身的 max-content 宽度撑出（overflow 可见 → 计入 scroller.scrollWidth）。 */
+.tjv-raw__spacer {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+}
+
+/* 行池容器：行绝对定位（top 由 RawView 写入），高度撑满 spacer，保证坐标系与内容高度一致。 */
+.tjv-raw__rows {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 100%;
+  pointer-events: none;
+}
+.tjv-raw__rows .raw-row { pointer-events: auto; }
+
+/* ---------------- 行（绝对定位，top 由 RawView 写入；data-line = 1-based 绝对行号） ---------------- */
+
+.tjv-raw .raw-row {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  height: var(--row-h, 24px);
+  width: max-content;
+  min-width: 100%;
+  white-space: pre;
+  line-height: var(--row-h, 24px);
+  contain: layout paint style;
+}
+.tjv-raw .raw-row[hidden] { display: none; }
+
+.tjv-raw .raw-row:hover { background: var(--bg-hover, rgba(255, 255, 255, 0.045)); }
+
+/* 行号 gutter：横向滚动时固定在左侧（sticky + 不透明底），不参与文本选择。 */
+.tjv-raw .raw-row__ln {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-width: 62px;
+  padding: 0 12px 0 10px;
+  text-align: right;
+  color: var(--faint, #737c8e);
+  background: var(--bg-app, #0b0d12);
+  border-right: 1px solid var(--border-subtle, #1a1f29);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  cursor: default;
+}
+.tjv-raw .raw-row:hover .raw-row__ln {
+  color: var(--muted, #8b93a7);
+  background: var(--bg-panel, #11141b);
+}
+
+/* 行文本：逐字（white-space: pre 保留缩进 / 尾随空白），不换行、不加省略号。 */
+.tjv-raw .raw-row__code {
+  flex: 0 0 auto;
+  padding: 0 24px 0 12px;
+  white-space: pre;
+  color: var(--text-2, #c6ccd9);
+}
+
+/* ---------------- 语法高亮（token 来自 shared/json-lex，不新增颜色 token） ---------------- */
+
+.tjv-raw .raw-row .tk-key { color: var(--syntax-key, #a9b8d8); }
+.tjv-raw .raw-row .tk-str { color: var(--syntax-string, #6fd3b5); }
+.tjv-raw .raw-row .tk-num { color: var(--syntax-number, #e3b778); }
+.tjv-raw .raw-row .tk-lit { color: var(--syntax-boolean, #b49cff); }
+.tjv-raw .raw-row .tk-punct { color: var(--syntax-punct, #737c8e); }
+.tjv-raw .raw-row .tk-bad { color: var(--danger, #ff7a85); }
+
+/* ---------------- stale：保留上一帧，只给一条细提示，不出空白 ---------------- */
+
+.tjv-raw.is-stale::before {
+  content: "";
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: block;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent, #7c8cff), transparent);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* ---------------- flashLine（修复摘要 at 跳行，900ms 自动移除） ---------------- */
+
+@keyframes tjv-raw-flash {
+  0% {
+    background-color: var(--bg-selected-strong, rgba(124, 140, 255, 0.2));
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.tjv-raw .raw-row.is-flash {
+  animation: tjv-raw-flash 900ms var(--ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tjv-raw .raw-row.is-flash {
+    animation: none;
+    background: var(--bg-selected-strong, rgba(124, 140, 255, 0.2));
+  }
+}

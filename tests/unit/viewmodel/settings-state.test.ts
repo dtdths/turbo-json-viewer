@@ -82,17 +82,20 @@ describe('settings-state — 默认值与校验', () => {
     expect(s.typeColumn).toBe(DEFAULT_SETTINGS.typeColumn); // 缺省回落
   });
 
-  it('normalizeUiState：panel 枚举校验 + railCollapsed 布尔', () => {
-    expect(normalizeUiState({ panel: 'settings', railCollapsed: true })).toEqual({
+  it('normalizeUiState：panel 枚举校验 + railCollapsed 布尔 + viewMode 枚举（ADR-0003 修订）', () => {
+    expect(normalizeUiState({ panel: 'settings', railCollapsed: true, viewMode: 'raw' })).toEqual({
       panel: 'settings',
       railCollapsed: true,
+      viewMode: 'raw',
     });
     // UiState 不再持有 exportMode（ADR-0012 修订）：历史字段被忽略
     expect(normalizeUiState({ panel: 'bogus', railCollapsed: 'x', exportMode: 'clipboard' })).toEqual({
       panel: 'doc',
       railCollapsed: false,
+      viewMode: 'tree',
     });
-    expect(normalizeUiState(undefined)).toEqual({ panel: 'doc', railCollapsed: false });
+    expect(normalizeUiState({ viewMode: 'bogus' })).toEqual({ panel: 'doc', railCollapsed: false, viewMode: 'tree' });
+    expect(normalizeUiState(undefined)).toEqual({ panel: 'doc', railCollapsed: false, viewMode: 'tree' });
   });
 });
 
@@ -106,7 +109,7 @@ describe('settings-state — load / set / 持久化', () => {
     await state.load(store);
     expect(state.get('theme')).toBe('light');
     expect(state.get('rowHeight')).toBe(22);
-    expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true });
+    expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true, viewMode: 'tree' });
     expect(state.loadedFromStore).toBe(true);
   });
 
@@ -155,10 +158,10 @@ describe('settings-state — load / set / 持久化', () => {
     await state.load(store);
     state.setUi({ panel: 'settings' });
     state.setUi({ railCollapsed: true });
-    expect(state.uiState()).toEqual({ panel: 'settings', railCollapsed: true });
+    expect(state.uiState()).toEqual({ panel: 'settings', railCollapsed: true, viewMode: 'tree' });
     const last = store.writes.at(-1);
     expect(last?.key).toBe(UI_STORAGE_KEY);
-    expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true });
+    expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true, viewMode: 'tree' });
   });
 
   it('exportMode 是设置项（ADR-0012 修订）：写穿 settings 键 + 通知', async () => {

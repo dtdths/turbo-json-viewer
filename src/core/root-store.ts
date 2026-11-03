@@ -6,6 +6,7 @@
  */
 import { CoreError } from '../protocol/errors';
 import type { DocumentMeta, RootId } from '../protocol/types';
+import type { RawTextIndex } from './raw-text';
 import type { RowModel } from './row-model';
 
 export type RootKind = 'doc' | 'expression' | 'repaired';
@@ -14,6 +15,15 @@ export const DOC_ROOT_ID: RootId = 'doc';
 
 /** 表达式结果根保留最近 3 个（ir-spec §4.2） */
 export const MAX_EXPRESSION_ROOTS = 3;
+
+/** 导入时保留的源文本（ADR-0003 修订 2026-11-03 §2）：原文视图的唯一真相。 */
+export interface RootSource {
+  text: string;
+  /** true = 源文本非法（截断修复后的文档）→ 原文视图只能 plain */
+  damaged?: boolean;
+  /** 惰性构建的行索引（首次 raw* 命令时创建）；文档替换时随根一起释放 */
+  index?: RawTextIndex;
+}
 
 export interface Root {
   rootId: RootId;
@@ -30,6 +40,8 @@ export interface Root {
   /** expression / repaired 指回 doc */
   parentRootId?: RootId;
   meta?: DocumentMeta;
+  /** 导入时保留的源文本（ADR-0003 修订 §2）：**临时修改不改变它**；无值图的根没有 */
+  source?: RootSource;
   createdAt: number;
   lastUsedAt: number;
 }

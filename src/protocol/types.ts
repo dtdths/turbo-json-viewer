@@ -103,8 +103,7 @@ export interface RepairOp {
   note: string;
 }
 
-/** 修复 provenance（ADR-0004 §6.3）：挂在 DocumentMeta 上，不随视图切换丢失 */
-export interface RepairProvenance {
+/** 修复 provenance（ADR-0004 §6.3）：挂在 DocumentMeta 上，不随视图切换丢失 */export interface RepairProvenance {
   status: RepairStatus;
   /** 触发修复的 EOF 位置（= 原文本长度） */
   truncatedAt?: number;
@@ -145,4 +144,57 @@ export interface NodeStats {
   totalRows: number;
   docRevision: Rev;
   rowVersion: Rev;
+}
+
+/* ------------------------- 原始文本视图（ADR-0003 修订） ------------------------- */
+
+/**
+ * 原文行布局模式：
+ *   - `source`：源码行虚拟化（源文本已有可用行，保留用户原始格式）；
+ *   - `pretty`：源文本是 minified / 超长行 → 检查点 pretty 行走器合成规范布局；
+ *   - `plain`：源文本非法（截断修复后的文档）→ 按 `\n` 分行 + 每行硬切，纯文本。
+ */
+export type RawMode = 'source' | 'pretty' | 'plain';
+
+/** 原文行索引元信息（`rawOpen` 回包；不含行文本） */
+export interface RawMeta {
+  mode: RawMode;
+  /** 总行数（滚动条唯一需要的数量） */
+  totalLines: number;
+  /** 源文本字符数（UTF-16 code unit） */
+  chars: number;
+  /** 源文本最长行（字符；形状探测结果） */
+  maxLineLength: number;
+  /** 索引构建耗时（Worker 内 ms；惰性构建，诊断/验收用） */
+  buildMs?: number;
+  /** true = 源文本非法（修复后的文档），只能按纯文本展示 */
+  damaged?: boolean;
+}
+
+/** 原文窗口：只回行文本，不物化全文 */
+export interface RawWindow {
+  rootId: RootId;
+  seq: number;
+  start: number;
+  count: number;
+  /** 每行显示文本（≤ RAW_LINE_DISPLAY_MAX 字符；超长行截断显示） */
+  lines: string[];
+  /** 与 lines 对齐：该行被截掉的字符数（0 / 缺省 = 完整） */
+  truncated?: number[];
+  totalLines: number;
+  mode: RawMode;
+}
+
+/** 源文本偏移 → 1-based 源行号（修复摘要 `at` 跳行用） */
+export interface RawLocateReply {
+  /** 1-based 行号 */
+  line: number;
+  totalLines: number;
+}
+
+/** 整份源文本（原文视图「复制原文」用；超 maxBytes 由 core 抛 TOO_LARGE） */
+export interface RawSourceReply {
+  text: string;
+  /** UTF-8 字节数 */
+  bytes: number;
 }

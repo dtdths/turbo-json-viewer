@@ -926,3 +926,174 @@ describe('DocService — 导入选项（ADR-0011 §5）', () => {
     expect(def.text).toBe(JSON.stringify(COPY_DOC.a, null, 2));
   });
 });
+
+/* ========================= 原始文本视图（#11 / ADR-0003 修订） ========================= */
+
+const RAW_DOC = { a: 1, b: [true, null], c: { d: 'x' } };
+const RAW_PRETTY = JSON.stringify(RAW_DOC, null, 2);
+const RAW_LINES = RAW_PRETTY.split('\n');
+
+describe('DocService — rawOpen / rawWindow', () => {
+  it('rawOpen 返回 meta（source 模式 + 行数/字符数/最长行）；首调构建后幂等', async () => {
+    const svc = new DocService();
+    await load(svc, RAW_PRETTY);
+    const meta = await svc.dispatch({ t: 'rawOpen', rootId: DOC_ROOT });
+    expect(meta).toMatchObject({
+      mode: 'source',
+      totalLines: RAW_LINES.length,
+      chars: RAW_PRETTY.length,
+      maxLineLength: Math.max(...RAW_LINES.map((line) => line.length)),
+    });
+    expect(meta.damaged).toBeUndefined();
+    expect(typeof meta.buildMs).toBe('number');
+
+    // 幂等：重复 rawOpen 不重建（meta 完全一致，含 buildMs）
+    expect(await svc.dispatch({ t: 'rawOpen', rootId: DOC_ROOT })).toEqual(meta);
+  });
+
+  it('rawWindow 逐字回源行、回显 seq；未先 rawOpen 也能用（惰性构建）', async () => {
+    const svc = new DocService();
+    await load(svc, RAW_PRETTY);
+    const win = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 9, start: 2, count: 4 });
+    expect(win).toMatchObject({
+      rootId: DOC_ROOT,
+      seq: 9,
+      start: 2,
+      count: 4,
+      totalLines: RAW_LINES.length,
+      mode: 'source',
+    });
+    expect(win.lines).toEqual(RAW_LINES.slice(2, 6));
+    expect(win.truncated).toBeUndefined();
+  });
+
+  it('rawWindow 夹取 start/count：尾部截短、越界回空、负数夹到 0', async () => {
+    const svc = new DocService();
+    await load(svc, RAW_PRETTY);
+    const tail = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 1, start: RAW_LINES.length - 2, count: 99 });
+    expect(tail.start).toBe(RAW_LINES.length - 2);
+    expect(tail.count).toBe(2);
+    expect(tail.lines).toEqual(RAW_LINES.slice(-2));
+
+    const beyond = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 2, start: RAW_LINES.length + 5, count: 10 });
+    expect(beyond.start).toBe(RAW_LINES.length);
+    expect(beyond.count).toBe(0);
+    expect(beyond.lines).toEqual([]);
+
+    const negative = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 3, start: -3, count: -1 });
+    expect(negative).toMatchObject({ start: 0, count: 0, lines: [] });
+  });
+
+  it('minified 长文本 → pretty 模式；整窗 join 后 JSON.parse 与源值深度相等', async () => {
+    const value: Record<string, unknown> = {};
+    for (let i = 0; i < 500; i++) value[`k${i}`] = i;
+    const text = JSON.stringify(value);
+    expect(text.length).toBeGreaterThan(4096);
+
+    const svc = new DocService();
+    await load(svc, text);
+    const meta = await svc.dispatch({ t: 'rawOpen', rootId: DOC_ROOT });
+    expect(meta.mode).toBe('pretty');
+
+    const expected = JSON.stringify(JSON.parse(text), null, 2).split('\n');
+    expect(meta.totalLines).toBe(expected.length);
+    const win = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 1, start: 0, count: meta.totalLines });
+    expect(win.lines).toEqual(expected);
+    expect(JSON.parse(win.lines.join('\n'))).toEqual(JSON.parse(text));
+  });
+});
+
+describe('DocService — rawLocate / rawSource', () => {
+  it('rawLocate：偏移 → 1-based 源行号；偏移夹取到 [0, chars]', async () => {
+    const svc = new DocService();
+    await load(svc, RAW_PRETTY);
+    const firstNewline = RAW_PRETTY.indexOf('\n');
+    expect(firstNewline).toBeGreaterThan(0);
+    const cases: Array<[offset: number, line: number]> = [
+      [0, 1],
+      [firstNewline, 1], // '\n' 属于它终止的那行
+      [firstNewline + 1, 2],
+      [RAW_PRETTY.length, RAW_LINES.length],
+      [-5, 1],
+      [1e9, RAW_LINES.length],
+    ];
+    for (const [offset, line] of cases) {
+      const reply = await svc.dispatch({ t: 'rawLocate', rootId: DOC_ROOT, offset });
+      expect(reply).toEqual({ line, totalLines: RAW_LINES.length });
+    }
+  });
+
+  it('rawSource：整份原文 + UTF-8 字节数；maxBytes 边界与 TOO_LARGE（带 bytes）', async () => {
+    const svc = new DocService();
+    await load(svc, RAW_PRETTY);
+    const bytes = new TextEncoder().encode(RAW_PRETTY).byteLength;
+
+    expect(await svc.dispatch({ t: 'rawSource', rootId: DOC_ROOT })).toEqual({ text: RAW_PRETTY, bytes });
+    expect((await svc.dispatch({ t: 'rawSource', rootId: DOC_ROOT, maxBytes: bytes })).bytes).toBe(bytes);
+
+    const err = await errorOf(svc.dispatch({ t: 'rawSource', rootId: DOC_ROOT, maxBytes: bytes - 1 }));
+    expect(err.code).toBe('TOO_LARGE');
+    expect(err.bytes).toBe(bytes);
+  });
+
+  it('截断修复后的文档：damaged → plain，原文仍是导入时文本（含未闭合尾部）', async () => {
+    const svc = new DocService();
+    const text = '{"a":1,"b":"hello wor';
+    const reply = await load(svc, text);
+    expect(reply.meta.repair?.status).toBe('repaired');
+
+    const meta = await svc.dispatch({ t: 'rawOpen', rootId: DOC_ROOT });
+    expect(meta).toMatchObject({ mode: 'plain', damaged: true, totalLines: 1, chars: text.length });
+
+    const win = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 1, start: 0, count: 10 });
+    expect(win.mode).toBe('plain');
+    expect(win.lines).toEqual([text]);
+
+    const source = await svc.dispatch({ t: 'rawSource', rootId: DOC_ROOT });
+    expect(source.text).toBe(text); // 不是修复后的文本
+    expect(source.bytes).toBe(new TextEncoder().encode(text).byteLength);
+  });
+});
+
+describe('DocService — 原始文本是只读的、不随临时编辑变化', () => {
+  it('四命令不推进 docRevision / rowVersion / totalRows', async () => {
+    const svc = new DocService();
+    await load(svc, RAW_PRETTY);
+    const before = await svc.dispatch({ t: 'stats', rootId: DOC_ROOT });
+
+    await svc.dispatch({ t: 'rawOpen', rootId: DOC_ROOT });
+    await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 1, start: 0, count: 3 });
+    await svc.dispatch({ t: 'rawLocate', rootId: DOC_ROOT, offset: 2 });
+    await svc.dispatch({ t: 'rawSource', rootId: DOC_ROOT });
+
+    expect(await svc.dispatch({ t: 'stats', rootId: DOC_ROOT })).toEqual(before);
+  });
+
+  it('replaceNode 后：rawSource / rawWindow 仍返回导入时的原文', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, RAW_PRETTY);
+    await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.a',
+      docRevision: loaded.docRevision,
+      jsonText: '42',
+    });
+
+    const source = await svc.dispatch({ t: 'rawSource', rootId: DOC_ROOT });
+    expect(source.text).toBe(RAW_PRETTY);
+    const meta = await svc.dispatch({ t: 'rawOpen', rootId: DOC_ROOT });
+    const win = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 1, start: 0, count: meta.totalLines });
+    expect(win.lines).toEqual(RAW_LINES);
+  });
+
+  it('未知根 → NO_ROOT（四条 raw 命令都走 RootStore.require）', async () => {
+    const svc = new DocService();
+    expect((await errorOf(svc.dispatch({ t: 'rawOpen', rootId: 'nope' }))).code).toBe('NO_ROOT');
+    expect(
+      (await errorOf(svc.dispatch({ t: 'rawWindow', rootId: 'nope', seq: 1, start: 0, count: 1 }))).code,
+    ).toBe('NO_ROOT');
+    expect((await errorOf(svc.dispatch({ t: 'rawLocate', rootId: 'nope', offset: 0 }))).code).toBe('NO_ROOT');
+    expect((await errorOf(svc.dispatch({ t: 'rawSource', rootId: 'nope' }))).code).toBe('NO_ROOT');
+  });
+});

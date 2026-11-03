@@ -7,6 +7,9 @@
  *   - window 校验 rowVersion，不符抛 STALE_ROOT；seq 由主线程用于丢弃迟到回包（core 只回显）
  *   - load 以 loadId 抢占：旧 load 以 CANCELLED 结束，结果不采纳
  *
+ * 原文视图（ADR-0003 修订 2026-11-03 §4）：rawOpen/rawWindow/rawLocate/rawSource 全部**只读**，
+ * 不推进 docRevision / rowVersion；doc 根生命周期即原文版本（原文不随展开/临时编辑变化）。
+ *
  * 骨架 slice：getNodeJson / replaceNode / undo / redo / reset / getTrail / profile 只保证签名，
  * 一律抛 BAD_COMMAND('not implemented in skeleton slice')。
  */
@@ -25,18 +28,33 @@ import type {
   StatsReply,
 } from '../protocol/messages';
 import { ROOT_PATH } from '../shared/path';
-import type { Path, RootId, RowWindow } from '../protocol/types';
+import type {
+  Path,
+  RawLocateReply,
+  RawMeta,
+  RawSourceReply,
+  RawWindow,
+  RootId,
+  RowWindow,
+} from '../protocol/types';
 import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES } from '../protocol/versions';
 import { copyNodeText } from './copy';
 import { EditHistory, type EditEntry } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { jsonKind, RowModel } from './row-model';
-import { DOC_ROOT_ID, RootStore, type Root } from './root-store';
+import { DOC_ROOT_ID, RootStore, type Root, type RootSource } from './root-store';
+import { buildRawIndex, type RawTextIndex } from './raw-text';
 import { searchDocument } from './search';
 
 type Cmd<K extends Command['t']> = Extract<Command, { t: K }>;
 
 const NOT_IMPLEMENTED = 'not implemented in skeleton slice';
+
+/** 把 start/count/offset 夹到 [min, max] 的整数（非有限值 → min）。 */
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(Math.max(min, Math.floor(value)), max);
+}
 
 export class DocService {
   private readonly roots = new RootStore();
@@ -112,6 +130,14 @@ export class DocService {
         return this.reset(cmd);
       case 'exportDoc':
         return this.exportDoc(cmd);
+      case 'rawOpen':
+        return this.rawOpen(cmd);
+      case 'rawWindow':
+        return this.rawWindow(cmd);
+      case 'rawLocate':
+        return this.rawLocate(cmd);
+      case 'rawSource':
+        return this.rawSource(cmd);
       case 'getTrail':
       case 'profile':
         throw new CoreError({ code: 'BAD_COMMAND', message: NOT_IMPLEMENTED });
@@ -134,7 +160,7 @@ export class DocService {
 
     try {
       this.emit({ t: 'load-progress', loadId, phase: 'decode' });
-      const { value, meta } = loadDocument({
+      const { value, meta, text } = loadDocument({
         source: cmd.source,
         data: cmd.data,
         name: cmd.name,
@@ -167,6 +193,8 @@ export class DocService {
         docRevision: 1,
         rowVersion: 1,
         meta,
+        // 源文本保留在 doc 根上（ADR-0003 修订 §2）：原文视图 / rawLocate 的真相源；惰性建索引
+        source: { text, damaged: meta.repair !== undefined },
         createdAt: now,
         lastUsedAt: now,
       };
@@ -461,6 +489,84 @@ export class DocService {
     const root = this.roots.require(cmd.rootId);
     const text = JSON.stringify(root.rowModel.value, null, cmd.indent ?? 2);
     return { text, bytes: byteLengthOf(text) };
+  }
+
+  /* --------------------------- 原始文本视图 --------------------------- */
+
+  /**
+   * 惰性行索引：首次 raw* 命令才构建（不占首帧、不阻塞导入）。
+   * 索引挂在 doc 根的 `source.index` 上，文档替换即随之释放。
+   */
+  private rawIndexOf(root: Root): RawTextIndex {
+    const source = this.requireSource(root);
+    if (!source.index) {
+      source.index = buildRawIndex(source.text, { damaged: source.damaged === true });
+    }
+    return source.index;
+  }
+
+  /** doc 根上保留的源文本；expression 根等没有源文本的根 → BAD_COMMAND。 */
+  private requireSource(root: Root): RootSource {
+    const source = root.source;
+    if (!source) {
+      throw new CoreError({
+        code: 'BAD_COMMAND',
+        message: `root ${root.rootId} has no retained source text`,
+      });
+    }
+    return source;
+  }
+
+  /** 原文行索引元信息；幂等，只读。 */
+  private rawOpen(cmd: Cmd<'rawOpen'>): RawMeta {
+    return this.rawIndexOf(this.roots.require(cmd.rootId)).meta();
+  }
+
+  /**
+   * 原文窗口：只回行文本（不物化全文）。start/count 夹到有效范围，回包 count = 实际行数；
+   * seq 只回显，由主线程丢弃迟到回包。只读，不推版本。
+   */
+  private rawWindow(cmd: Cmd<'rawWindow'>): RawWindow {
+    const root = this.roots.require(cmd.rootId);
+    const index = this.rawIndexOf(root);
+    const totalLines = index.totalLines;
+    const start = clampInt(cmd.start, 0, totalLines);
+    const count = clampInt(cmd.count, 0, totalLines - start);
+    const { lines, truncated } = index.windowText(start, count);
+    const reply: RawWindow = {
+      rootId: root.rootId,
+      seq: cmd.seq,
+      start,
+      count: lines.length,
+      lines,
+      totalLines,
+      mode: index.mode,
+    };
+    if (truncated) reply.truncated = truncated;
+    return reply;
+  }
+
+  /** 源文本偏移 → 1-based 显示行号（修复摘要 `at` 跳行）；偏移夹到 [0, chars]。 */
+  private rawLocate(cmd: Cmd<'rawLocate'>): RawLocateReply {
+    const index = this.rawIndexOf(this.roots.require(cmd.rootId));
+    return { line: index.locate(cmd.offset), totalLines: index.totalLines };
+  }
+
+  /**
+   * 整份原文（「复制原文」）：`bytes` = UTF-8 字节数；maxBytes 给定时超限抛 TOO_LARGE（带 bytes，
+   * 与 ADR-0012 复制 JSON 的 20MB 剪贴板守卫同口径）。
+   */
+  private rawSource(cmd: Cmd<'rawSource'>): RawSourceReply {
+    const source = this.requireSource(this.roots.require(cmd.rootId));
+    const bytes = byteLengthOf(source.text);
+    if (cmd.maxBytes !== undefined && bytes > cmd.maxBytes) {
+      throw new CoreError({
+        code: 'TOO_LARGE',
+        message: `raw source is ${bytes} bytes (> ${cmd.maxBytes})`,
+        bytes,
+      });
+    }
+    return { text: source.text, bytes };
   }
 
   private historyOf(rootId: RootId): EditHistory {

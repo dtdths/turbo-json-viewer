@@ -7,16 +7,19 @@ import './styles/shell.css';
 import '../view/tree/tree.css';
 import '../view/panels/search-panel.css';
 import '../view/panels/settings-panel.css';
+import '../view/raw/raw-view.css';
 
 import { createWorkerCore } from './transport/worker-transport';
 import { RowWindowSource } from '../viewmodel/row-window-source';
+import { RawWindowSource } from '../viewmodel/raw-window-source';
 import { SearchState, type SearchFilter } from '../viewmodel/search-state';
 import { TreeView } from '../view/tree/tree-view';
+import { RawView } from '../view/raw/raw-view';
 import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
 import { CoreError } from '../protocol/errors';
 import { ROOT_PATH } from '../shared/path';
-import type { CopyFormat, DocumentMeta, JsonKind } from '../protocol/types';
+import type { CopyFormat, DocumentMeta, JsonKind, RawMeta } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
@@ -84,6 +87,14 @@ const repairText = el('repairText');
 const repairToggle = el<HTMLButtonElement>('repairToggle');
 const repairOps = el('repairOps');
 const repairClose = el<HTMLButtonElement>('repairClose');
+const viewTreeBtn = el<HTMLButtonElement>('viewTreeBtn');
+const viewRawBtn = el<HTMLButtonElement>('viewRawBtn');
+const rawWrap = el('rawWrap');
+const rawHost = el('raw');
+const rawModeLabel = el('rawModeLabel');
+const rawNotice = el('rawNotice');
+const rawMetaLabel = el('rawMetaLabel');
+const rawCopyBtn = el<HTMLButtonElement>('rawCopyBtn');
 
 /* ---------------- 设置（ADR-0011）：先读盘再装配，避免主题/布局闪烁 ---------------- */
 
@@ -126,6 +137,20 @@ const tree = new TreeView(treeHost, {
   },
 });
 tree.mount();
+
+/* ---------------- 原始文本视图（#11 / ADR-0003 修订 2026-11-03） ---------------- */
+
+/** 原文窗口状态机（单飞/合并/seq 丢弃/overscan；原文无 rowVersion——doc 生命周期即版本）。 */
+const rawSource = new RawWindowSource(core, { rowHeight: settings.get('rowHeight') });
+const rawView = new RawView(rawHost, {
+  rowHeight: settings.get('rowHeight'),
+  onScroll: (top: number) => rawSource.scrollTo(top),
+});
+rawView.mount();
+rawSource.subscribe((snapshot) => {
+  rawView.render(snapshot);
+  updateStatus();
+});
 
 /** 搜索状态机（viewmodel，无 DOM）：命中集/当前命中/过期判定/虚拟窗口。 */
 const searchState = new SearchState();
@@ -172,6 +197,13 @@ let searchTimer = 0;
 /** 首次 next/prev/Enter 先跳到当前命中，之后才移动（编辑器惯例）。 */
 let searchJumped = false;
 
+/** 视图模式（#11 / ADR-0003 修订）：`tree` = 树视图；`raw` = 原始文本视图（只读原文）。 */
+let viewMode: 'tree' | 'raw' = 'tree';
+/** 原文行索引元信息（null = 当前文档尚未进入原文视图 / 索引未构建） */
+let rawMetaInfo: RawMeta | null = null;
+/** 原文 open 竞态守卫（切视图 / 换文档时递增，迟到回包丢弃） */
+let rawOpenSeq = 0;
+
 /** 编辑会话（slice 5 / #16 / ADR-0006）：当前编辑目标 + 修改计数/撤销可用性。 */
 const editState = new EditState();
 editState.subscribe(renderEditBadge);
@@ -180,6 +212,10 @@ let ctxPath: string | null = null;
 
 function metrics(): { rowHeight: number; viewportRows: number } {
   return { rowHeight: settings.get('rowHeight'), viewportRows: Math.max(1, tree.viewportRows()) };
+}
+
+function rawMetrics(): { rowHeight: number; viewportRows: number } {
+  return { rowHeight: settings.get('rowHeight'), viewportRows: Math.max(1, rawView.viewportRows()) };
 }
 
 rowSource.subscribe((snapshot) => {
@@ -204,6 +240,10 @@ function applySettings(): void {
   tree.setRowHeight(current.rowHeight);
   rowSource.setMetrics(metrics());
   if (rootId) rowSource.requestWindow();
+  // 原文视图与树共用行高（ADR-0003 修订：行高是唯一进入逻辑层的视觉参数）
+  rawView.setRowHeight(current.rowHeight);
+  rawSource.setMetrics(rawMetrics());
+  if (rootId && viewMode === 'raw') rawSource.requestWindow();
   document.documentElement.style.setProperty('--row-indent', `${current.indent}px`);
   tree.setTypeColumn(current.typeColumn);
   settingsPanel.render(current);
@@ -359,12 +399,20 @@ function onLoaded(reply: LoadReply): void {
   syncExportUi();
   expandAllBtn.disabled = false;
   collapseAllBtn.disabled = false;
+  viewTreeBtn.disabled = false;
+  viewRawBtn.disabled = false;
   // 新文档：清空编辑会话（slice 5）
   editingPath = null;
   subtreeEditor.close();
   editState.clear();
   renderEditBadge();
   renderRepair();
+
+  // 新文档：旧原文索引随旧根丢弃（惰性重建）；恢复上次视图模式（ADR-0003 修订）
+  rawOpenSeq += 1;
+  rawMetaInfo = null;
+  rawSource.clear();
+  renderRawChrome();
 
   rowSource.setRoot({ rootId: rid, rowVersion, totalRows });
   rowSource.setMetrics(metrics());
@@ -375,6 +423,7 @@ function onLoaded(reply: LoadReply): void {
   setPanel('doc');
   updateStatus();
   treeHost.focus();
+  void setViewMode(settings.uiState().viewMode === 'raw' ? 'raw' : 'tree', { persist: false });
 }
 
 /**
@@ -463,6 +512,15 @@ expandAllBtn.addEventListener('click', () => {
 collapseAllBtn.addEventListener('click', () => {
   void applyExpandAll(false);
 });
+viewTreeBtn.addEventListener('click', () => {
+  void setViewMode('tree');
+});
+viewRawBtn.addEventListener('click', () => {
+  void setViewMode('raw');
+});
+rawCopyBtn.addEventListener('click', () => {
+  void copyRawSource();
+});
 
 exportBtn.addEventListener('click', () => {
   void runExportMode(currentExportMode());
@@ -482,6 +540,14 @@ repairToggle.addEventListener('click', () => {
 repairClose.addEventListener('click', () => {
   // 只关提示条：provenance 仍留在 meta 上（状态栏角标 + 导出后缀继续生效）
   repairBar.hidden = true;
+});
+// 修复摘要的 `at` → 跳到原文对应行（#8 / ADR-0003 修订 §5）
+repairOps.addEventListener('click', (event: MouseEvent) => {
+  const at = (event.target as HTMLElement | null)?.closest<HTMLElement>('.repairbar__at');
+  if (!at) return;
+  const offset = Number(at.dataset.at);
+  if (!Number.isFinite(offset)) return;
+  void revealRepairOffset(offset);
 });
 ctxMenu.addEventListener('click', (event: MouseEvent) => {
   const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-act]');
@@ -554,6 +620,8 @@ let expandAllBusy = false;
 
 async function applyExpandAll(open: boolean): Promise<void> {
   if (!rootId || expandAllBusy) return;
+  // 展开/收起是树动作：原文视图下先切回树（按钮保持可用，不靠禁用态说话）
+  if (viewMode === 'raw') await setViewMode('tree');
   expandAllBusy = true;
   try {
     const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
@@ -584,6 +652,7 @@ function renderEditBadge(): void {
   editBadge.textContent = `已修改 ${count} 处`;
   editBadge.classList.toggle('is-dirty', count > 0);
   syncExportUi();
+  renderRawChrome();
 }
 
 /** 替换文档会丢弃临时修改：有修改时先确认（edit-spec §5）。 */
@@ -1152,6 +1221,8 @@ function applyFilter(filter: SearchFilter): void {
 /** 跳转：展开祖先链 → 树滚动（当前行居中）→ 选中 → 同步高亮与结果列表。 */
 async function gotoHit(index: number): Promise<number> {
   if (!rootId) return -1;
+  // 搜索跳转是树动作：原文视图下先切回树（ADR-0003 修订：两视图 v1 不联动）
+  if (viewMode === 'raw') await setViewMode('tree');
   const hit = searchState.hits[index];
   if (!hit) return -1;
   try {
@@ -1289,12 +1360,133 @@ function renderRepair(): void {
   for (const op of ops) {
     const row = document.createElement('div');
     row.className = 'repairbar__op';
-    const at = document.createElement('code');
+    const at = document.createElement('button');
+    at.type = 'button';
+    at.className = 'repairbar__at';
+    at.dataset.at = String(op.at);
     at.textContent = `@${op.at}`;
+    at.title = '跳到原文对应行';
     const note = document.createElement('span');
     note.textContent = op.note;
     row.append(at, note);
     repairOps.appendChild(row);
+  }
+}
+
+/* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
+
+/** 原文元信息 + 视图内提示（不新增常驻条；没有要说的就是空串）。 */
+function renderRawChrome(): void {
+  const info = rawMetaInfo;
+  if (!info) {
+    rawModeLabel.textContent = '原文';
+    rawNotice.textContent = '';
+    rawNotice.removeAttribute('title');
+    rawMetaLabel.textContent = '';
+    rawCopyBtn.disabled = true;
+    return;
+  }
+  rawModeLabel.textContent =
+    info.mode === 'source' ? '原文 · 源码行' : info.mode === 'pretty' ? '原文 · 规范布局' : '原文 · 纯文本';
+  const notes: string[] = [];
+  if (info.damaged) notes.push('原始文本被截断（已修复），此处显示原始字节');
+  else if (info.mode === 'pretty') notes.push('源文本为单行（minified），按规范格式显示；行内容取自源文本');
+  if (editState.dirty) notes.push('原始文件文本，不含临时修改');
+  rawNotice.textContent = notes.join(' · ');
+  if (notes.length > 0) rawNotice.title = notes.join('\n');
+  else rawNotice.removeAttribute('title');
+  const buildMs = info.buildMs !== undefined ? ` · 索引 ${Math.round(info.buildMs)}ms` : '';
+  rawMetaLabel.textContent = `${info.totalLines.toLocaleString()} 行${buildMs}`;
+  rawCopyBtn.disabled = false;
+}
+
+/**
+ * 切视图（ADR-0003 修订 §5）：更新工具栏分段态 / body 视图标记 / 持久化；首次进入原文视图时
+ * 惰性构建索引（Worker 内，50MB ≈300ms）。persist=false 用于「打开文档后恢复上次模式」。
+ */
+async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {}): Promise<void> {
+  if (!rootId) return;
+  const changed = mode !== viewMode;
+  viewMode = mode;
+  document.body.dataset.view = mode;
+  viewTreeBtn.classList.toggle('is-active', mode === 'tree');
+  viewTreeBtn.setAttribute('aria-pressed', mode === 'tree' ? 'true' : 'false');
+  viewRawBtn.classList.toggle('is-active', mode === 'raw');
+  viewRawBtn.setAttribute('aria-pressed', mode === 'raw' ? 'true' : 'false');
+  if (opts.persist !== false) settings.setUi({ viewMode: mode });
+
+  if (mode === 'tree') {
+    updateStatus();
+    if (changed) treeHost.querySelector<HTMLElement>('.tjv-tree')?.focus();
+    return;
+  }
+
+  // 原文：已构建则直接复用；否则先给「构建中」反馈（桌面读屏与冒烟都能看到）
+  const rid = rootId;
+  const seq = ++rawOpenSeq;
+  if (!rawMetaInfo) {
+    statusRows.textContent = '正在构建原文索引…';
+    statusSize.textContent = meta ? `${formatBytes(meta.bytes)} · v${docRevision}` : '—';
+  }
+  try {
+    const info = await rawSource.open(rid);
+    // 迟到回包：已换文档 / 已切回树 / 有更新的 open → 丢弃
+    if (seq !== rawOpenSeq || rid !== rootId || viewMode !== 'raw') return;
+    rawMetaInfo = info;
+    renderRawChrome();
+    rawView.setRowHeight(settings.get('rowHeight'));
+    // open() 已把内部滚动锚点复位到 0；.raw-wrap 曾 display:none，浏览器会恢复旧 scrollTop →
+    // 不显式同步会出现「窗口在顶部、容器停在旧位置」且不触发 scroll 事件的错位。
+    rawView.scrollToPx(0);
+    rawSource.setMetrics(rawMetrics());
+    rawSource.requestWindow();
+    rawHost.querySelector<HTMLElement>('.tjv-raw')?.focus();
+    updateStatus();
+  } catch (error) {
+    if (seq === rawOpenSeq) showError(error);
+  }
+}
+
+/** 复制整份原文（ADR-0003 修订 §4：>maxBytes 由 core 抛 TOO_LARGE，与导出复制同口径）。 */
+async function copyRawSource(): Promise<void> {
+  if (!rootId) return;
+  try {
+    const reply = await core.rawSource({ rootId, maxBytes: CLIPBOARD_MAX_BYTES });
+    const copied = await writeClipboard(reply.text);
+    if (copied) showToast('已复制：原始文本', 2000, 'success');
+    else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
+  } catch (error) {
+    const coreError = CoreError.from(error);
+    if (coreError.code === 'TOO_LARGE') {
+      showError(
+        new CoreError({
+          code: 'TOO_LARGE',
+          message: `原文过大（${formatBytes(coreError.bytes ?? 0)}），超过 ${formatBytes(CLIPBOARD_MAX_BYTES)}，无法复制到剪贴板`,
+        }),
+      );
+      return;
+    }
+    showError(error);
+  }
+}
+
+/**
+ * 修复摘要 `at` → 原文对应行（#8「跳行随 #11」的落地，ADR-0003 修订 §5）：
+ * 切原文视图 → rawLocate 偏移反查行号 → 滚到该行 + 短暂高亮。
+ */
+async function revealRepairOffset(offset: number): Promise<number> {
+  if (!rootId) return -1;
+  const rid = rootId;
+  await setViewMode('raw');
+  if (rid !== rootId) return -1;
+  try {
+    const located = await core.rawLocate({ rootId: rid, offset });
+    if (rid !== rootId) return -1;
+    rawView.flashLine(located.line);
+    return located.line;
+  } catch (error) {
+    showError(error);
+    return -1;
   }
 }
 
@@ -1306,8 +1498,14 @@ function updateStatus(): void {
     statusState.textContent = '只读 · 原文件不变';
     return;
   }
-  const snapshot = rowSource.snapshot();
-  statusRows.textContent = `${totalRows.toLocaleString()} 行 · 已渲染 ${snapshot.rows.length}`;
+  if (viewMode === 'raw') {
+    const rawSnapshot = rawSource.snapshot();
+    const lines = rawMetaInfo?.totalLines ?? rawSnapshot.totalLines;
+    statusRows.textContent = `${lines.toLocaleString()} 行 · 原文 · 已渲染 ${rawSnapshot.lines.length}`;
+  } else {
+    const snapshot = rowSource.snapshot();
+    statusRows.textContent = `${totalRows.toLocaleString()} 行 · 已渲染 ${snapshot.rows.length}`;
+  }
   statusSize.textContent = `${formatBytes(meta.bytes)} · v${docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
@@ -1389,8 +1587,11 @@ function exportHookState(): {
 const resizeObserver = new ResizeObserver(() => {
   rowSource.setMetrics(metrics());
   rowSource.requestWindow();
+  rawSource.setMetrics(rawMetrics());
+  if (viewMode === 'raw') rawSource.requestWindow();
 });
 resizeObserver.observe(treeHost);
+resizeObserver.observe(rawHost);
 
 window.addEventListener('beforeunload', (event: BeforeUnloadEvent) => {
   // 有未导出的临时修改：浏览器原生确认（edit-spec §5）
@@ -1446,7 +1647,48 @@ if (!isExtension) {
     editCount: editState.count,
     canUndo: editState.canUndo,
     canRedo: editState.canRedo,
+    viewMode,
   });
+
+  /** 原文视图 dev hook 共用的状态快照（契约见 ADR-0003 修订 §7）。 */
+  const rawHookState = (): Record<string, unknown> => {
+    const snapshot = rawSource.snapshot();
+    // 行池隐藏槽位没有 data-line（且文本已清空），只统计可见行
+    const rows = [...document.querySelectorAll<HTMLElement>('.raw-row[data-line]')];
+    return {
+      mode: viewMode,
+      view: document.body.dataset.view ?? null,
+      buttons: {
+        tree: {
+          active: viewTreeBtn.classList.contains('is-active'),
+          pressed: viewTreeBtn.getAttribute('aria-pressed'),
+          disabled: viewTreeBtn.disabled,
+        },
+        raw: {
+          active: viewRawBtn.classList.contains('is-active'),
+          pressed: viewRawBtn.getAttribute('aria-pressed'),
+          disabled: viewRawBtn.disabled,
+        },
+      },
+      raw: rawMetaInfo,
+      totalLines: snapshot.totalLines,
+      start: snapshot.start,
+      rendered: snapshot.lines.length,
+      stale: snapshot.stale,
+      scrollTop: rawView.scrollTopPx(),
+      viewportRows: rawView.viewportRows(),
+      notice: rawNotice.textContent ?? '',
+      metaLabel: rawMetaLabel.textContent ?? '',
+      modeLabel: rawModeLabel.textContent ?? '',
+      copyDisabled: rawCopyBtn.disabled,
+      flash: document.querySelector<HTMLElement>('.raw-row.is-flash')?.dataset.line ?? null,
+      statusRows: statusRows.textContent ?? '',
+      lines: rows.map((row) => ({
+        line: Number(row.dataset.line),
+        text: row.querySelector<HTMLElement>('.raw-row__code')?.textContent ?? '',
+      })),
+    };
+  };
 
   (globalThis as unknown as { __tjv?: unknown }).__tjv = {
     loadText: (text: string, name = 'sample.json') => importBuffer('file', text, name),
@@ -1652,6 +1894,8 @@ if (!isExtension) {
       text: repairText.textContent ?? '',
       expanded: !repairOps.hidden,
       ops: Array.from(repairOps.querySelectorAll('.repairbar__op')).map((n) => n.textContent ?? ''),
+      // 结构化 ops（#11 原文跳行验收：at = 原文本偏移）
+      opsDetail: meta?.repair?.ops ?? [],
       summary: meta?.repair?.summaryText ?? null,
       counts: meta?.repair?.counts ?? null,
       truncatedAt: meta?.repair?.truncatedAt ?? null,
@@ -1665,6 +1909,67 @@ if (!isExtension) {
     repairClose: () => {
       repairClose.click();
       return repairBar.hidden;
+    },
+
+    // ---- 原始文本视图 dev hook（契约见 docs/adr/0003 修订 §7）----
+    rawState: () => rawHookState(),
+    /** 切视图（走真实 setViewMode；原文首开会等索引构建完成）。 */
+    setViewMode: async (mode: 'tree' | 'raw') => {
+      const started = performance.now();
+      await setViewMode(mode);
+      return { ms: ms(started), ...rawHookState() };
+    },
+    /** 滚到像素位置（真实 scroll → onScroll → rawSource.scrollTo）。 */
+    rawScrollTo: (px: number) => {
+      rawView.scrollToPx(px);
+      return rawHookState();
+    },
+    /** 直接走 core 取原文窗口（逐字断言/性能用；不影响视图）。 */
+    rawWindowText: async (start: number, count: number) => {
+      if (!rootId) return null;
+      const started = performance.now();
+      const reply = await core.rawWindow({ rootId, seq: 0, start, count });
+      return { ms: ms(started), ...reply };
+    },
+    /** 源文本偏移 → 行号（逐字断言用）。 */
+    rawLocate: async (offset: number) => {
+      if (!rootId) return null;
+      return core.rawLocate({ rootId, offset });
+    },
+    /** 修复摘要跳行（走真实 revealRepairOffset：切视图 + locate + 高亮）。 */
+    rawRevealAt: async (offset: number) => {
+      const started = performance.now();
+      const line = await revealRepairOffset(offset);
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+      return { ms: ms(started), line, ...rawHookState() };
+    },
+    /** 点第 N 个修复摘要 `at` 按钮（真实 DOM click）。 */
+    rawRepairAt: (index: number) => {
+      const buttons = [...document.querySelectorAll<HTMLElement>('.repairbar__at')];
+      const button = buttons[index] ?? null;
+      button?.click();
+      return { clicked: Boolean(button), count: buttons.length };
+    },
+    /** 走 core 取整份原文（不写剪贴板；逐字断言与守卫用）。 */
+    rawCopyText: async (maxBytes?: number) => {
+      if (!rootId) return null;
+      try {
+        const reply = await core.rawSource({ rootId, maxBytes });
+        return { bytes: reply.bytes, chars: reply.text.length, text: reply.text };
+      } catch (error) {
+        const coreError = CoreError.from(error);
+        return { error: { code: coreError.code, message: coreError.message, bytes: coreError.bytes } };
+      }
+    },
+    /** 点「复制原文」按钮并等 toast（剪贴板逐字读回走 click 后的 clipboardText）。 */
+    rawCopy: async () => {
+      const before = toast.textContent ?? '';
+      rawCopyBtn.click();
+      for (let i = 0; i < 25; i++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
+        if ((toast.textContent ?? '') !== before) break;
+      }
+      return { toast: toast.hidden ? '' : (toast.textContent ?? ''), ...rawHookState() };
     },
   };
 }

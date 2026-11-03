@@ -46,6 +46,8 @@ export interface UiState {
   panel: 'none' | 'doc' | 'search' | 'settings';
   /** 右侧工作区折叠 */
   railCollapsed: boolean;
+  /** 视图模式（ADR-0003 修订 2026-11-03）：树视图 / 原始文本视图 */
+  viewMode: 'tree' | 'raw';
 }
 
 export const SETTINGS_STORAGE_KEY = 'tjv.settings.v1';
@@ -67,7 +69,7 @@ export const DEFAULT_SETTINGS: Settings = {
   adaptiveExpand: true,
 };
 
-export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false };
+export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, viewMode: 'tree' };
 
 /** `app/storage.ts` 的 ViewStateStore 结构化子集（便于单测注入 fake） */
 export interface SettingsStore {
@@ -112,6 +114,7 @@ export function normalizeUiState(raw: unknown): UiState {
   return {
     panel: panel === 'none' || panel === 'doc' || panel === 'search' || panel === 'settings' ? panel : DEFAULT_UI_STATE.panel,
     railCollapsed: pickBoolean(bag.railCollapsed, DEFAULT_UI_STATE.railCollapsed),
+    viewMode: bag.viewMode === 'raw' ? 'raw' : 'tree',
   };
 }
 

@@ -10,6 +10,10 @@ import type {
   JsonKind,
   MapTrail,
   Path,
+  RawLocateReply,
+  RawMeta,
+  RawSourceReply,
+  RawWindow,
   RepairProvenance,
   Rev,
   RootId,
@@ -55,7 +59,12 @@ export type Command =
   | { t: 'exportDoc'; rootId: RootId; indent?: number }
   | { t: 'getTrail'; rootId: RootId; path: Path | null }
   | { t: 'profile'; rootId: RootId }
-  | { t: 'stats'; rootId: RootId };
+  | { t: 'stats'; rootId: RootId }
+  /* 原始文本视图（ADR-0003 修订 2026-11-03）：只读、不推任何版本 */
+  | { t: 'rawOpen'; rootId: RootId }
+  | { t: 'rawWindow'; rootId: RootId; seq: number; start: number; count: number }
+  | { t: 'rawLocate'; rootId: RootId; offset: number }
+  | { t: 'rawSource'; rootId: RootId; maxBytes?: number };
 
 export interface LoadReply {
   rootId: RootId;
@@ -147,6 +156,10 @@ export interface ReplyByKind {
   getTrail: TrailReply;
   profile: DocumentProfile;
   stats: StatsReply;
+  rawOpen: RawMeta;
+  rawWindow: RawWindow;
+  rawLocate: RawLocateReply;
+  rawSource: RawSourceReply;
 }
 
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];

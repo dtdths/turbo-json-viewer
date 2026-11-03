@@ -25,6 +25,10 @@ import type {
   CopyFormat,
   DocumentProfile,
   Path,
+  RawLocateReply,
+  RawMeta,
+  RawSourceReply,
+  RawWindow,
   Rev,
   RootId,
   RowWindow,
@@ -87,6 +91,16 @@ export interface CoreApi {
   /** 导出当前值图 JSON（Worker stringify，-edited 下载；不受编辑器 5MB 限制） */
   exportDoc(rootId: RootId, indent?: number): Promise<ExportReply>;
 
+  /* -------------------- 原始文本视图（ADR-0003 修订） -------------------- */
+  /** 原文行索引元信息；首调惰性构建索引（幂等），只读、不推版本。 */
+  rawOpen(req: { rootId: RootId }): Promise<RawMeta>;
+  /** 原文窗口：只回行文本（≤ RAW_LINE_DISPLAY_MAX 字符/行）。seq 用于主线程丢弃迟到回包。 */
+  rawWindow(req: { rootId: RootId; seq: number; start: number; count: number }): Promise<RawWindow>;
+  /** 源文本偏移 → 1-based 源行号（修复摘要 `at` 跳行）。 */
+  rawLocate(req: { rootId: RootId; offset: number }): Promise<RawLocateReply>;
+  /** 整份源文本（复制原文）；超过 maxBytes 抛 TOO_LARGE。 */
+  rawSource(req: { rootId: RootId; maxBytes?: number }): Promise<RawSourceReply>;
+
   getTrail(req: { rootId: RootId; path: Path | null }): Promise<TrailReply>;
   profile(rootId: RootId): Promise<DocumentProfile>;
   stats(rootId: RootId): Promise<StatsReply>;
@@ -122,6 +136,10 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     redo: (rootId) => send({ t: 'redo', rootId }),
     reset: (rootId) => send({ t: 'reset', rootId }),
     exportDoc: (rootId, indent) => send({ t: 'exportDoc', rootId, indent }),
+    rawOpen: (req) => send({ t: 'rawOpen', ...req }),
+    rawWindow: (req) => send({ t: 'rawWindow', ...req }),
+    rawLocate: (req) => send({ t: 'rawLocate', ...req }),
+    rawSource: (req) => send({ t: 'rawSource', ...req }),
     getTrail: (req) => send({ t: 'getTrail', ...req }),
     profile: (rootId) => send({ t: 'profile', rootId }),
     stats: (rootId) => send({ t: 'stats', rootId }),
