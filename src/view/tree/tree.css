@@ -165,7 +165,7 @@
   pointer-events: none;
 }
 
-/* ---------------- 行操作占位（app 层接管点击） ---------------- */
+/* ---------------- 行尾操作浮条（app 层接管点击，ADR-0010 修订） ---------------- */
 
 .tjv-tree .row__actions {
   position: absolute;
@@ -188,15 +188,20 @@
 .tjv-tree .row.is-selected .row__actions,
 .tjv-tree .row:focus-within .row__actions { opacity: 1; pointer-events: auto; }
 
+/* 行尾浮条按钮 = 真实 <button>（ADR-0010 修订）：清掉 UA 边框/内边距/背景/字体 */
 .tjv-tree .row__action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
   border-radius: var(--radius-xs, 4px);
   color: var(--muted, #8b93a7);
-  font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }

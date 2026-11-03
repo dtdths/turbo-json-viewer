@@ -92,10 +92,14 @@ function createChevron(): SVGSVGElement {
   return svg;
 }
 
-function createAction(action: 'copy' | 'edit'): HTMLSpanElement {
-  const el = document.createElement('span');
+function createAction(action: 'copy' | 'edit'): HTMLButtonElement {
+  const el = document.createElement('button');
+  el.type = 'button';
+  // 鼠标快路径：不进 Tab 序列（键盘用户走 F2 编辑 / 右键菜单），见 ADR-0010 修订
+  el.tabIndex = -1;
   el.className = 'row__action';
   el.dataset.action = action;
+  el.setAttribute('aria-label', action === 'copy' ? '复制子树 JSON' : '编辑此节点 JSON');
   el.textContent = action === 'copy' ? '⧉' : '✎';
   return el;
 }
@@ -282,7 +286,6 @@ export class DomRowPool implements RowRenderer {
 
     const actions = document.createElement('span');
     actions.className = 'row__actions';
-    actions.setAttribute('aria-hidden', 'true');
     actions.appendChild(createAction('copy'));
     actions.appendChild(createAction('edit'));
 
