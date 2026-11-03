@@ -2,7 +2,7 @@
  * view/panels/settings-panel — 设置面板的 DOM 层（ADR-0011 §1 / §4）。
  *
  * 边界：
- *   - 自建 8 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
+ *   - 自建 9 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
  *   - 控件状态只从 `Settings` 快照同步；用户改动经 `opts.onChange` 上抛，由 app 调
  *     `SettingsState.set()`，再经订阅回到 `render()`。本模块不读写存储、不碰主题/CSS 变量。
  *
@@ -17,13 +17,14 @@ import {
   type Settings,
   type SettingsKey,
 } from '../../viewmodel/settings-state';
+import { EXPORT_MODE_LABELS } from '../../viewmodel/export-state';
 
 export interface SettingsPanelOptions {
   /** 用户改了一项（只在用户交互时触发；render 不触发） */
   onChange(key: SettingsKey, value: Settings[SettingsKey]): void;
 }
 
-/** 8 项设置的任一值（= 各字段类型的联合） */
+/** 9 项设置的任一值（= 各字段类型的联合） */
 type SettingValue = Settings[SettingsKey];
 
 interface SegItem {
@@ -52,7 +53,7 @@ interface CheckRowSpec {
   hint: string;
 }
 
-/* ---------------- 8 行的固定顺序与文案（ADR-0011 §1） ---------------- */
+/* ---------------- 9 行的固定顺序与文案（ADR-0011 §1 + ADR-0012 修订） ---------------- */
 
 const THEME_ITEMS: readonly SegItem[] = [
   { value: 'dark', label: '深色' },
@@ -84,6 +85,12 @@ const COPY_INDENT_RANK: Readonly<Record<number, number>> = { 2: 0, 4: 1, 0: 2 };
 const COPY_INDENT_ITEMS: readonly SegItem[] = [...COPY_INDENT_OPTIONS]
   .sort((a, b) => COPY_INDENT_RANK[a] - COPY_INDENT_RANK[b])
   .map((value) => ({ value, label: value === 0 ? '紧凑' : `${value} 空格` }));
+
+/** 导出方式（ADR-0012 修订）：与分体按钮菜单共享同一 SettingsState */
+const EXPORT_MODE_ITEMS: readonly SegItem[] = [
+  { value: 'file', label: EXPORT_MODE_LABELS.file },
+  { value: 'clipboard', label: EXPORT_MODE_LABELS.clipboard },
+];
 
 /* ---------------- helpers ---------------- */
 
@@ -136,6 +143,7 @@ export class SettingsPanel {
         items: COPY_FORMAT_ITEMS,
       }),
       this.buildSegRow({ key: 'copyIndent', label: '复制缩进', items: COPY_INDENT_ITEMS }),
+      this.buildSegRow({ key: 'exportMode', label: '导出方式', items: EXPORT_MODE_ITEMS }),
       this.buildCheckRow({
         key: 'repairTruncated',
         label: '导入时自动修复截断 JSON',

@@ -16,6 +16,7 @@ export type SettingsKey =
   | 'typeColumn'
   | 'defaultCopyFormat'
   | 'copyIndent'
+  | 'exportMode'
   | 'repairTruncated'
   | 'adaptiveExpand';
 
@@ -31,6 +32,8 @@ export interface Settings {
   defaultCopyFormat: CopyFormat;
   /** 子树 JSON 缩进：0 = 紧凑 */
   copyIndent: number;
+  /** 导出方式（ADR-0012 修订）：分体按钮主操作 + 设置面板「导出方式」 */
+  exportMode: ExportMode;
   /** 导入时自动修复截断 JSON */
   repairTruncated: boolean;
   /** 小文档加载即全展开 */
@@ -43,8 +46,6 @@ export interface UiState {
   panel: 'none' | 'doc' | 'search' | 'settings';
   /** 右侧工作区折叠 */
   railCollapsed: boolean;
-  /** 导出方式（ADR-0012 §7）：主按钮执行上次用过的方式 */
-  exportMode: ExportMode;
 }
 
 export const SETTINGS_STORAGE_KEY = 'tjv.settings.v1';
@@ -61,11 +62,12 @@ export const DEFAULT_SETTINGS: Settings = {
   typeColumn: false,
   defaultCopyFormat: 'subtree',
   copyIndent: 2,
+  exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
 };
 
-export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, exportMode: 'file' };
+export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false };
 
 /** `app/storage.ts` 的 ViewStateStore 结构化子集（便于单测注入 fake） */
 export interface SettingsStore {
@@ -97,6 +99,7 @@ export function normalizeSettings(raw: unknown): Settings {
       ? (bag.defaultCopyFormat as CopyFormat)
       : DEFAULT_SETTINGS.defaultCopyFormat,
     copyIndent: pickNumber(bag.copyIndent, COPY_INDENT_OPTIONS, DEFAULT_SETTINGS.copyIndent),
+    exportMode: normalizeExportMode(bag.exportMode),
     repairTruncated: pickBoolean(bag.repairTruncated, DEFAULT_SETTINGS.repairTruncated),
     adaptiveExpand: pickBoolean(bag.adaptiveExpand, DEFAULT_SETTINGS.adaptiveExpand),
   };
@@ -109,7 +112,6 @@ export function normalizeUiState(raw: unknown): UiState {
   return {
     panel: panel === 'none' || panel === 'doc' || panel === 'search' || panel === 'settings' ? panel : DEFAULT_UI_STATE.panel,
     railCollapsed: pickBoolean(bag.railCollapsed, DEFAULT_UI_STATE.railCollapsed),
-    exportMode: normalizeExportMode(bag.exportMode),
   };
 }
 

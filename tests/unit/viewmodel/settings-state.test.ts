@@ -40,6 +40,7 @@ describe('settings-state — 默认值与校验', () => {
       typeColumn: false,
       defaultCopyFormat: 'subtree',
       copyIndent: 2,
+      exportMode: 'file',
       repairTruncated: true,
       adaptiveExpand: true,
     });
@@ -64,6 +65,7 @@ describe('settings-state — 默认值与校验', () => {
         typeColumn: 'yes',
         defaultCopyFormat: 'compact',
         copyIndent: 3,
+        exportMode: 'download',
         repairTruncated: 1,
         adaptiveExpand: 'true',
       }),
@@ -81,15 +83,16 @@ describe('settings-state — 默认值与校验', () => {
   });
 
   it('normalizeUiState：panel 枚举校验 + railCollapsed 布尔', () => {
-    expect(
-      normalizeUiState({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' }),
-    ).toEqual({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' });
-    expect(normalizeUiState({ panel: 'bogus', railCollapsed: 'x', exportMode: 'nope' })).toEqual({
+    expect(normalizeUiState({ panel: 'settings', railCollapsed: true })).toEqual({
+      panel: 'settings',
+      railCollapsed: true,
+    });
+    // UiState 不再持有 exportMode（ADR-0012 修订）：历史字段被忽略
+    expect(normalizeUiState({ panel: 'bogus', railCollapsed: 'x', exportMode: 'clipboard' })).toEqual({
       panel: 'doc',
       railCollapsed: false,
-      exportMode: 'file',
     });
-    expect(normalizeUiState(undefined)).toEqual({ panel: 'doc', railCollapsed: false, exportMode: 'file' });
+    expect(normalizeUiState(undefined)).toEqual({ panel: 'doc', railCollapsed: false });
   });
 });
 
@@ -103,7 +106,7 @@ describe('settings-state — load / set / 持久化', () => {
     await state.load(store);
     expect(state.get('theme')).toBe('light');
     expect(state.get('rowHeight')).toBe(22);
-    expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true, exportMode: 'file' });
+    expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true });
     expect(state.loadedFromStore).toBe(true);
   });
 
@@ -152,11 +155,28 @@ describe('settings-state — load / set / 持久化', () => {
     await state.load(store);
     state.setUi({ panel: 'settings' });
     state.setUi({ railCollapsed: true });
-    state.setUi({ exportMode: 'clipboard' });
-    expect(state.uiState()).toEqual({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' });
+    expect(state.uiState()).toEqual({ panel: 'settings', railCollapsed: true });
     const last = store.writes.at(-1);
     expect(last?.key).toBe(UI_STORAGE_KEY);
-    expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' });
+    expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true });
+  });
+
+  it('exportMode 是设置项（ADR-0012 修订）：写穿 settings 键 + 通知', async () => {
+    const store = fakeStore();
+    const state = new SettingsState();
+    await state.load(store);
+    const listener = vi.fn();
+    state.subscribe(listener);
+    expect(state.get('exportMode')).toBe('file');
+    expect(state.set('exportMode', 'clipboard')).toBe(true);
+    expect(state.get('exportMode')).toBe('clipboard');
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.writes.at(-1)).toEqual({
+      key: SETTINGS_STORAGE_KEY,
+      value: expect.objectContaining({ exportMode: 'clipboard' }),
+    });
+    expect(state.set('exportMode', 'bogus')).toBe(true); // 非法 → 回落 file，算变化
+    expect(state.get('exportMode')).toBe('file');
   });
 
   it('snapshot 返回拷贝（外部改不到内部状态）', () => {

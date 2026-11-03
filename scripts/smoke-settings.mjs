@@ -31,6 +31,7 @@ const DEFAULT_KEYS = [
   'typeColumn',
   'defaultCopyFormat',
   'copyIndent',
+  'exportMode',
   'repairTruncated',
   'adaptiveExpand',
 ];
@@ -42,6 +43,7 @@ const DEFAULTS = {
   typeColumn: false,
   defaultCopyFormat: 'subtree',
   copyIndent: 2,
+  exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
 };
@@ -206,6 +208,17 @@ try {
       const subtree = await rowCopy('$.a');
       out.copyIndent = { value: h.settingsState().copyIndent, ...subtree };
 
+      // 导出方式（设置面板第 9 项，ADR-0012 修订）：设为复制 → 分体按钮主操作同步
+      clickSeg('exportMode', 'clipboard');
+      await sleep(120);
+      out.exportMode = {
+        value: h.settingsState().exportMode,
+        splitLabel: h.exportState().mainLabel,
+        panelChecked: document
+          .querySelector('#settingsPanel [data-setting="exportMode"] [data-value="clipboard"]')
+          ?.getAttribute('aria-pressed'),
+      };
+
       // 关闭自动修复 → 截断文本直接报错，且当前文档不变
       clickCheck('repairTruncated');
       await sleep(80);
@@ -334,6 +347,10 @@ const checks = {
   'set:copy-indent-4':
     report.copyIndent?.value === 4 &&
     (report.copyIndent?.clipboard == null || report.copyIndent?.clipboard === SUBTREE_A_4),
+  'set:export-mode':
+    report.exportMode?.value === 'clipboard' &&
+    report.exportMode?.splitLabel === '复制 JSON 到剪贴板' &&
+    report.exportMode?.panelChecked === 'true',
   'set:repair-off':
     report.repairOff?.value === false &&
     /PARSE/.test(report.repairOff?.toast ?? '') &&
@@ -358,6 +375,7 @@ const checks = {
         typeColumn: true,
         defaultCopyFormat: 'subtree',
         copyIndent: 4,
+        exportMode: 'clipboard',
         repairTruncated: false,
         adaptiveExpand: false,
       }),

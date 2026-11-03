@@ -3,6 +3,7 @@ import {
   CLIPBOARD_MAX_BYTES,
   clipboardRefusal,
   DEFAULT_EXPORT_MODE,
+  EXPORT_MODE_LABELS,
   EXPORT_MODES,
   isExportMode,
   normalizeExportMode,
@@ -14,6 +15,10 @@ describe('export-state — 模式枚举与校验（ADR-0012 §7）', () => {
   it('两种方式、默认文件导出', () => {
     expect([...EXPORT_MODES]).toEqual(['file', 'clipboard']);
     expect(DEFAULT_EXPORT_MODE).toBe('file');
+  });
+
+  it('设置面板文案（ADR-0012 修订）：导出文件 / 复制到剪贴板', () => {
+    expect(EXPORT_MODE_LABELS).toEqual({ file: '导出文件', clipboard: '复制到剪贴板' });
   });
 
   it('isExportMode 只接受两值', () => {

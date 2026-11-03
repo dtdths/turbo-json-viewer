@@ -214,11 +214,11 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 5 子树编辑 + undo + 导出（#16 / ADR-0006） | ✅ | `core/edit-history.ts`（深度 100、redo 截断、LIFO reset）+ `DocService` 的 `getNodeJson/replaceNode/undo/redo/reset/exportDoc`（5MB `TOO_LARGE`、`PARSE` 带行列、no-op 不推进版本、`STALE_DOC` 守卫、每根一份历史）；`viewmodel/edit-state.ts` + 树意图（dblclick / 右键菜单 / F2 / `setChangedPath`）；`view/panels/{code-editor,subtree-editor}.ts`（CM6 懒加载、lint 门控 Apply、720×520 弹层）；`main.ts` 接线（徽标 / ⌘Z ⇧⌘Z / 重置 / `-edited` 导出 / 未保存确认）；**单测 177** |
 | 5.5 复制 4 格式（#9 / ADR-0010） | ✅ | `core/copy.ts`（四格式文本统一生成：子树 JSON 2 空格 / 规范路径 / 标量原值 / 键名）+ `DocService.copyNode`（**只读**，不推进 `docRevision`/`rowVersion`；子树 JSON 5MB `TOO_LARGE`）；行右键菜单 5 项（容器禁用「原始值」、根禁用「键名」，`title` 说明）+ ↑↓/Home/End 键盘 + 行尾操作浮条（复制子树 JSON 快路径 / 编辑弹层，鼠标专用 `tabindex="-1"`）；零权限剪贴板（`navigator.clipboard.writeText` → `execCommand` 回退 → toast 提示手动），**不声明 `clipboardWrite`**；**单测 199**（新增 22） |
 | 6.0 截断修复（#8 / ADR-0004 修订） | ✅ | `core/repair.ts` 单趟状态机（§6.2 六条规则；**只语法闭合、不猜内容**；末尾自校验 `JSON.parse`；拒绝态 `not-eof`/`still-invalid`）→ `import.ts` **仅在 PARSE 失败时**调用并挂 `meta.repair`，`doc-service` 补发既有 `repair` 事件；`RepairProvenance` 按 §6.3（`status`/`counts`/`ops`/`summaryText`）；顶部修复条 **32px**（摘要逐条展开 + 关闭，`role=status`/`aria-live=polite`）+ 状态栏「已修复截断」角标 + 导出 `-truncated-repaired` 后缀；**单测 254**（+55：repair 51 / doc-service 4）；冒烟 `smoke-repair` **14/14** |
-| 6.1 设置面板 + 视图状态持久化（ADR-0011 / S5 接线） | ✅ | `viewmodel/settings-state.ts`（8 项设置 + 布局态；校验回落/写穿/订阅，`tjv.settings.v1`/`tjv.ui.v1`）+ `view/panels/settings-panel.ts`（8 行，segmented/checkbox，`data-setting`/`data-value`）+ `app/storage.ts` 接线（启动 `await load`）；行高 `RowMetricsSource`（`TreeView.setRowHeight` + `--row-h` + `setMetrics`）、缩进 `--row-indent`、类型列 `setTypeColumn`、默认复制格式/复制缩进（`copyNode.indent`）、修复与自适应开关（`load.opts`）；主题/右栏/左面板模式持久化；**修复**：空态遮罩（fixed z30）盖住左面板导致「初始视图点齿轮无效」→ 左面板 `z-index:31`、设置图标由「圆+射线（像太阳）」改竖排滑杆；**单测 273**（+19）；冒烟 `smoke-settings` **20/20**（含空态点齿轮回归 2 项） |
-| 6.2 导出分体按钮：下载文件 / 复制到剪贴板（ADR-0012） | ✅ | `viewmodel/export-state.ts`（方式枚举/校验 + 20MB 剪贴板守卫）+ `main.ts` 分体按钮（主=上次方式、箭头菜单两项、勾选、↑↓/Esc、外部点击关闭、`UiState.exportMode` 持久化）；复制文本 = `core.exportDoc(rootId, 2)` 同一份（含临时修改/修复后值图），复用零权限剪贴板；超限 toast 引导文件导出；**单测 279**（+6）；冒烟 `smoke-export` **14/14** |
+| 6.1 设置面板 + 视图状态持久化（ADR-0011 / S5 接线） | ✅ | `viewmodel/settings-state.ts`（**9 项设置** + 布局态；校验回落/写穿/订阅，`tjv.settings.v1`/`tjv.ui.v1`）+ `view/panels/settings-panel.ts`（**9 行**，segmented/checkbox，`data-setting`/`data-value`）+ `app/storage.ts` 接线（启动 `await load`）；行高 `RowMetricsSource`（`TreeView.setRowHeight` + `--row-h` + `setMetrics`）、缩进 `--row-indent`、类型列 `setTypeColumn`、默认复制格式/复制缩进（`copyNode.indent`）、修复与自适应开关（`load.opts`）；主题/右栏/左面板模式持久化；**修复**：空态遮罩（fixed z30）盖住左面板导致「初始视图点齿轮无效」→ 左面板 `z-index:31`、设置图标由「圆+射线（像太阳）」改竖排滑杆；**单测 273**（+19）；冒烟 `smoke-settings` **21/21**（含空态点齿轮回归 2 项 + 导出方式第 9 项） |
+| 6.2 导出分体按钮：下载文件 / 复制到剪贴板（ADR-0012） | ✅ | `viewmodel/export-state.ts`（方式枚举/校验 + 20MB 剪贴板守卫 + 面板文案）+ `main.ts` 分体按钮（主=上次方式、箭头菜单两项、勾选、↑↓/Esc、外部点击关闭）；`exportMode` 是**设置项**（`Settings.exportMode`，`tjv.settings.v1`），设置面板第 9 行与分体按钮菜单**双向同步**（同一 `SettingsState`，ADR-0012 修订）；复制文本 = `core.exportDoc(rootId, 2)` 同一份（含临时修改/修复后值图），复用零权限剪贴板；超限 toast 引导文件导出；**单测 281**（+8）；冒烟 `smoke-export` **16/16**（含双向同步 2 项） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **22.0KB gz**（预算 45）、`worker.js` **9.4KB gz**、`page.css` **6.2KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **22.1KB gz**（预算 45）、`worker.js` **9.4KB gz**、`page.css` **6.2KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -275,15 +275,17 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **默认值**：8 项 = dark / 24 / 16 / false / subtree / 2 / true / true；主题生效、`--row-h` 24、`--row-indent` 16、spacer = 8×24。
 - **面板**：活动栏齿轮 → 左面板「设置」；标题/`aria-label`/8 行顺序/焦点落面板；`aria-current` 同步。
 - **即时生效**（真实点击控件）：主题 dataset + 状态栏「亮色」；行高 22 → `--row-h` 22px、首行 22px、spacer 8×22；缩进 20 → `--row-indent` 20px；类型列显示；默认复制格式=路径 → 行尾浮条复制得 `$.arr[1].k`；复制缩进=4 → 子树 JSON 4 空格；关闭修复 → 截断直接 `PARSE` 且当前文档不变；关闭自适应 → 小文档保持折叠（2 行、spacer 44px）。
-- **持久化**：刷新页面后 8 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复（`localStorage` 口径；扩展内为 `chrome.storage.local`）。
+- **导出方式（第 9 项，ADR-0012 修订）**：面板点「复制到剪贴板」→ 分体按钮主操作 label 同步为「复制 JSON 到剪贴板」。
+- **持久化**：刷新页面后 9 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复（`localStorage` 口径；扩展内为 `chrome.storage.local`）。
 - **回归**：`smoke` / `smoke:ext` / `smoke-search` 82/82 / `smoke-extension-search` 56/56 / `smoke-expand` 11/11 / `smoke-edit` 14/14 / `smoke-copy` 27/27 / `smoke-repair` 14/14 全绿；截图 `.spike/smoke/settings-{panel,applied,reloaded}.png`。
 
-**slice 6.2 导出分体按钮验收**（2026-11-03，CfT headless 1440×900；`scripts/smoke-export.mjs` **14/14**）：
+**slice 6.2 导出分体按钮验收**（2026-11-03，CfT headless 1440×900；`scripts/smoke-export.mjs` **16/16**）：
 
 - **形态**：`[导出 | ▾]`；加载后可用；主按钮文字恒「导出」、`aria-label` 随方式（导出 JSON 文件 / 复制 JSON 到剪贴板）。
 - **菜单**：两项、当前方式带 ✓、`menuitemradio` + `aria-checked`；打开时焦点落当前项；↑↓ 移动；Esc 关闭且焦点回箭头。
 - **复制**：剪贴板**逐字**等于导出文本（`{"a":{"b.c":"x"},"arr":[10,{"k":null}]}` 的 2 空格 pretty）；toast「已复制：JSON」success tone；菜单关闭；方式记住（主按钮 label 切换）。
-- **记忆**：主按钮复用上次方式；切回「文件」→ 记录下载动作（`sample.json`，无修改/修复后缀）；**刷新页面**后方式持久化（`UiState.exportMode`，`tjv.ui.v1`）。
+- **记忆**：主按钮复用上次方式；切回「文件」→ 记录下载动作（`sample.json`，无修改/修复后缀）；**刷新页面**后方式持久化（`Settings.exportMode`，`tjv.settings.v1`）。
+- **双向同步**：菜单选「复制」→ 设置面板第 9 行回显；设置面板改「复制到剪贴板」→ 主按钮 label 与菜单 ✓ 同步（同一个 `SettingsState`，无第二份状态）。
 - **守卫**：20MB 阈值单测覆盖（19.9 / 20 / 20.1MB）；超限只提示不降级下载。
 - **回归**：`smoke` / `smoke:ext` / `smoke-search` 82/82 / `smoke-extension-search` 56/56 / `smoke-expand` 11/11 / `smoke-edit` 14/14 / `smoke-copy` 27/27 / `smoke-repair` 14/14 / `smoke-settings` 20/20 全绿；截图 `.spike/smoke/export-{menu,toast}.png`。
 

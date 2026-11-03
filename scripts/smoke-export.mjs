@@ -133,6 +133,10 @@ try {
         export: h.exportState(),
         toast: h.toastText(),
         toastTone: document.getElementById('toast')?.dataset.tone ?? null,
+        settingsMode: h.settingsState().exportMode,
+        panelChecked: document
+          .querySelector('#settingsPanel [data-setting="exportMode"] [data-value="clipboard"]')
+          ?.getAttribute('aria-pressed'),
       };
       try { out.copy.clipboard = await h.clipboardText(); } catch { out.copy.clipboard = null; }
       return out;
@@ -162,6 +166,25 @@ try {
     })()`,
   );
 
+  // ---- phase 4.5：设置面板改「导出方式」→ 分体按钮主操作/勾选同步（反向同步）----
+  await runPhase(
+    'panel-sync',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const btn = document.querySelector('#settingsPanel [data-setting="exportMode"] [data-value="clipboard"]');
+      btn.click();
+      await sleep(150);
+      out.panelSync = {
+        settingsMode: h.settingsState().exportMode,
+        export: h.exportState(),
+        panelChecked: btn.getAttribute('aria-pressed'),
+      };
+      return out;
+    })()`,
+  );
+
   // ---- phase 5：选回剪贴板方式（只改方式与执行一次），刷新验证持久化 ----
   await runPhase(
     'persist-prepare',
@@ -183,7 +206,7 @@ try {
     `(async () => {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await sleep(200);
-      return { reloaded: window.__tjv.exportState() };
+      return { reloaded: { ...window.__tjv.exportState(), settingsMode: window.__tjv.settingsState().exportMode } };
     })()`,
   );
 
@@ -244,6 +267,17 @@ const checks = {
     report.copy?.export?.lastAction?.mode === 'clipboard' &&
     report.copy?.export?.lastAction?.copied === true,
 
+  // 双向同步：菜单 → 设置面板回显
+  'sync:menu-to-panel':
+    report.copy?.settingsMode === 'clipboard' && report.copy?.panelChecked === 'true',
+
+  // 双向同步：设置面板 → 分体按钮 label / 菜单勾选
+  'sync:panel-to-button':
+    report.panelSync?.settingsMode === 'clipboard' &&
+    report.panelSync?.export?.mainLabel === '复制 JSON 到剪贴板' &&
+    report.panelSync?.panelChecked === 'true' &&
+    (report.panelSync?.export?.menuItems ?? []).find((entry) => entry.mode === 'clipboard')?.checked === true,
+
   // 主按钮复用上次方式
   'main:reuses-last-mode':
     report.mainClipboard?.export?.lastAction?.mode === 'clipboard' &&
@@ -261,6 +295,7 @@ const checks = {
   // 刷新后持久化
   'persist:mode':
     report.reloaded?.mode === 'clipboard' &&
+    report.reloaded?.settingsMode === 'clipboard' &&
     report.reloaded?.mainLabel === '复制 JSON 到剪贴板' &&
     item(report.reloaded, 'clipboard')?.checked === true &&
     report.persistPrepared?.export?.mode === 'clipboard',

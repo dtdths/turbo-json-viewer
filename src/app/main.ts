@@ -207,11 +207,12 @@ function applySettings(): void {
   document.documentElement.style.setProperty('--row-indent', `${current.indent}px`);
   tree.setTypeColumn(current.typeColumn);
   settingsPanel.render(current);
+  // 导出方式的唯一真相源是 Settings（ADR-0012 修订）：任一侧改动都经订阅回到这里
+  syncExportUi();
 }
 
 settings.subscribe(() => applySettings());
 applySettings();
-syncExportUi();
 
 /* ---------------- import layer（文档入口层） ---------------- */
 
@@ -741,7 +742,7 @@ function setExportButtonsDisabled(disabled: boolean): void {
 }
 
 function currentExportMode(): ExportMode {
-  return settings.uiState().exportMode;
+  return settings.get('exportMode');
 }
 
 /** 同步主按钮文案与菜单勾选（方式变化 / 临时修改计数变化时调用）。 */
@@ -785,10 +786,9 @@ function closeExportMenu(focusBack = false): void {
   if (focusBack) exportMenuBtn.focus();
 }
 
-/** 记住本次方式（写穿 UiState，持久化）并同步 UI。 */
+/** 记住本次方式（写穿 Settings，持久化；订阅会触发 applySettings → 面板回显 + 按钮/勾选同步）。 */
 function rememberExportMode(mode: ExportMode): void {
-  settings.setUi({ exportMode: mode });
-  syncExportUi();
+  settings.set('exportMode', mode);
 }
 
 async function runExportMode(mode: ExportMode): Promise<void> {
