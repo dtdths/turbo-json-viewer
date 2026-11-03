@@ -43,7 +43,12 @@
       <span class="toolbar__spacer"></span>
 
       <button class="btn" type="button" id="importBtn">导入</button>
-      <button class="btn" type="button" id="exportBtn" disabled title="导出在下一 slice 接入">导出</button>
+      <div class="splitbtn" role="group" aria-label="导出">
+        <button class="btn splitbtn__main" type="button" id="exportBtn" disabled title="导出 JSON 文件" aria-label="导出 JSON 文件">导出</button>
+        <button class="btn splitbtn__caret" type="button" id="exportMenuBtn" disabled aria-haspopup="menu" aria-expanded="false" title="选择导出方式" aria-label="选择导出方式">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 6.2 3.4 3.4 3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
       <button class="btn" type="button" id="editBadge" hidden title="已临时修改，点击重置全部">已修改 0 处</button>
       <button class="btn" type="button" id="expandAllBtn" disabled title="全部展开" aria-label="全部展开">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8h3.2M11 8h3.2M8 6.2V2.4M5.8 4.4 8 2.2 10.2 4.4M8 9.8v3.8M5.8 11.6 8 13.8 10.2 11.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -182,6 +187,12 @@
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-key">复制键名</button>
   <div class="ctxmenu__sep" role="separator"></div>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="edit">编辑此节点 JSON</button>
+</div>
+
+<!-- 导出方式菜单（ADR-0012：主按钮执行上次方式，箭头选另一种） -->
+<div class="ctxmenu exportmenu" id="exportMenu" role="menu" aria-label="导出方式" hidden>
+  <button class="ctxmenu__item exportmenu__item" type="button" role="menuitemradio" aria-checked="true" data-export-mode="file"><span class="exportmenu__check" aria-hidden="true"></span>导出 JSON 文件</button>
+  <button class="ctxmenu__item exportmenu__item" type="button" role="menuitemradio" aria-checked="false" data-export-mode="clipboard"><span class="exportmenu__check" aria-hidden="true"></span>复制 JSON 到剪贴板</button>
 </div>
 
 <div class="toast" id="toast" role="status" hidden></div>

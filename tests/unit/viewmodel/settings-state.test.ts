@@ -81,12 +81,15 @@ describe('settings-state — 默认值与校验', () => {
   });
 
   it('normalizeUiState：panel 枚举校验 + railCollapsed 布尔', () => {
-    expect(normalizeUiState({ panel: 'settings', railCollapsed: true })).toEqual({
-      panel: 'settings',
-      railCollapsed: true,
+    expect(
+      normalizeUiState({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' }),
+    ).toEqual({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' });
+    expect(normalizeUiState({ panel: 'bogus', railCollapsed: 'x', exportMode: 'nope' })).toEqual({
+      panel: 'doc',
+      railCollapsed: false,
+      exportMode: 'file',
     });
-    expect(normalizeUiState({ panel: 'bogus', railCollapsed: 'x' })).toEqual({ panel: 'doc', railCollapsed: false });
-    expect(normalizeUiState(undefined)).toEqual({ panel: 'doc', railCollapsed: false });
+    expect(normalizeUiState(undefined)).toEqual({ panel: 'doc', railCollapsed: false, exportMode: 'file' });
   });
 });
 
@@ -100,7 +103,7 @@ describe('settings-state — load / set / 持久化', () => {
     await state.load(store);
     expect(state.get('theme')).toBe('light');
     expect(state.get('rowHeight')).toBe(22);
-    expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true });
+    expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true, exportMode: 'file' });
     expect(state.loadedFromStore).toBe(true);
   });
 
@@ -149,10 +152,11 @@ describe('settings-state — load / set / 持久化', () => {
     await state.load(store);
     state.setUi({ panel: 'settings' });
     state.setUi({ railCollapsed: true });
-    expect(state.uiState()).toEqual({ panel: 'settings', railCollapsed: true });
+    state.setUi({ exportMode: 'clipboard' });
+    expect(state.uiState()).toEqual({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' });
     const last = store.writes.at(-1);
     expect(last?.key).toBe(UI_STORAGE_KEY);
-    expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true });
+    expect(last?.value).toEqual({ panel: 'settings', railCollapsed: true, exportMode: 'clipboard' });
   });
 
   it('snapshot 返回拷贝（外部改不到内部状态）', () => {
