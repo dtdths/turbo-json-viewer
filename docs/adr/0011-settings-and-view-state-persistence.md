@@ -22,7 +22,7 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 
 ## 决策
 
-### 1. 设置项（v1 固定 8 项，全部即时生效 + 持久化）
+### 1. 设置项（v1 固定 9 项，全部即时生效 + 持久化；第 9 项见 ADR-0012 修订）
 
 | key | 值域 | 默认 | 作用点 |
 |---|---|---|---|
@@ -34,6 +34,8 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 | `copyIndent` | `2` \| `4` \| `0`（0=紧凑） | `2` | `copyNode` 的 `indent` 参数（子树 JSON 文本） |
 | `repairTruncated` | boolean | `true` | `load` 的 `opts.repair`（关闭后截断文档直接 `PARSE`） |
 | `adaptiveExpand` | boolean | `true` | `load` 的 `opts.adaptiveExpand`（关闭后小文档也走默认折叠） |
+| `exportMode` | `file` \| `clipboard` | `file` | 分体按钮主操作 + 设置面板「导出方式」（ADR-0012 修订：原在 `UiState`，已迁入 `Settings`） |
+
 
 不放进 v1 设置：地图显隐（#17 未实现）、搜索 Aa/正则（#10 未定）、行高以外的主题细分（direction 无此需求）。
 
@@ -41,7 +43,7 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 
 - **设置**：`SettingsState`（`src/viewmodel/settings-state.ts`，无 DOM）：持有 8 项 + 默认值 + 校验（非法值回落默认），
   `load(store)` / `set(key, value)`（写穿 store，异步失败只记录不阻塞 UI）/ `subscribe` / `snapshot()`。
-- **UI 状态**：`UiState`（主题之外的布局态）——`panel`（`doc`/`search`/`settings`）与 `railCollapsed`；同样经 `ViewStateStore` 持久化。
+- **UI 状态**：`UiState`（纯布局态）——`panel`（`doc`/`search`/`settings`）与 `railCollapsed`；同样经 `ViewStateStore` 持久化。（`exportMode` 曾短暂放在这里，2026-11-03 已迁入 `Settings`，见 ADR-0012 修订。）
   展开集合/选中/滚动**不持久化**（ADR-0009 工作区语义：不跨会话恢复），保持「刷新 = 重新导入」的既有契约。
 - **存储键**：`tjv.settings.v1` / `tjv.ui.v1`（版本化，便于以后迁移）；`ViewStateStore` 用既有 `chrome.storage.local` 适配器（HTTP 模式自动落 `localStorage`，冒烟可测持久化）。
 - **不新增权限**：manifest 已只有 `storage`，不引入新权限。
