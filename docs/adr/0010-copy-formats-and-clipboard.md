@@ -91,3 +91,27 @@
 - 「缩进/压缩跟随当前设置」待设置面板（`ViewStateStore` 未接线）——当前固定 2 空格。
 - 子树 JSON >5MB 只能走导出；若未来要支持「复制整份 10MB 文档」，需把上限与 `EDIT_MAX_BYTES` 拆开并实测 postMessage/剪贴板成本。
 - 菜单无复制快捷键；若用户要求，按「行选中 + ⌘C = 复制子树 JSON」另议（与「原生复制文本」冲突，需拍板）。
+
+## 修订（2026-11-03）：行尾操作浮条接线
+
+> 依据：用户当轮拍板（复制 = 子树 JSON 快路径、编辑 = 开弹层）；原型 A 本来就是两个 `<button tabindex="-1" aria-label>`（`prototype/visual/a/app.js` 的 `ACTIONS`）。
+
+### 背景
+
+slice 3 骨架在每行末尾渲染了 ⧉/✎ 两个 `<span class="row__action">`（容器 `aria-hidden="true"`、无事件），`TreeView` 的 click 处理遇到 `.row__actions` 直接 `return`（注释「行操作由 app 层接管」），但 app 层从未接线。结果：hover/选中时浮条出现、`cursor: pointer` 却点了没反应——**dead UI**，且对 AT 不可见。
+
+### 决策
+
+1. **入口从 1 个变 2 个**（修订上文 §1「v1 唯一入口 = 右键菜单」）：**右键菜单**（全 4 格式 + 编辑，键盘可达）+ **行尾浮条**（鼠标快路径，2 个按钮）。
+2. **浮条「复制」= 直接复制子树 JSON**（2 空格，复用 `copyNode` 的 `format: 'subtree'`）+ toast「已复制：子树 JSON」，**不弹菜单**。理由：原型 `aria-label` 就是「复制子树 JSON」；快路径应一步完成；格式选择仍在右键菜单。「默认复制格式」设置项落地后浮条跟随该设置（当前固定 subtree）。
+3. **浮条「编辑」= 与双击/F2 完全同一 `openEditor` 流程**（`getNodeJson` → CM6 弹层），不新增编辑路径。
+4. **鼠标专用，不污染行虚拟化的 Tab 序列**：真实 `<button type="button" tabindex="-1" aria-label="复制子树 JSON|编辑此节点 JSON">`；键盘用户走 F2（编辑）与右键菜单。去掉容器的 `aria-hidden`，改为按钮自带 `aria-label`（此前 `aria-hidden` 让浮条对 AT 完全不可见）。
+5. **选中联动**：点浮条按钮先选中该行（与右键菜单一致），再执行动作；不改变行点击/双击语义。
+6. **不新增 protocol/core 改动**：浮条复用既有 `copyNode` 与 `openEditor`；`setShowActions` 仍恒开（未接设置面板，记入已知差距）。
+
+### 影响与验收
+
+- `view/tree/row-renderer.ts`：`createAction` 由 `<span>` 改 `<button>`（保留 `data-action`、加 `aria-label`）；容器去掉 `aria-hidden`。
+- `view/tree/tree-view.ts`：`TreeViewOptions` 新增 `onRowAction?(path, action: 'copy' | 'edit')`；click 委托命中 `.row__action` 时先 `onSelect` 再回调，不再直接丢弃。
+- `app/main.ts`：接线 → copy 走 `copyNodeFromMenu(path, 'subtree')`（同一剪贴板/错误处理），edit 走 `openEditor(path)`。
+- 冒烟：`scripts/smoke-copy.mjs` 追加「行尾浮条」段（2 个 `<button>` + `aria-label` + `tabindex="-1"`、hover 显示、点复制 → 剪贴板 = 该行子树 JSON + toast、点编辑 → 弹层打开、容器行与标量行均验）。
