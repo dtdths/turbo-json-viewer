@@ -117,3 +117,29 @@ describe('core/copy — 命令级装配 copyNodeText', () => {
     expect(isCopyFormat('')).toBe(false);
   });
 });
+
+describe('core/copy — 子树 JSON 缩进（ADR-0011 §1，设置可调）', () => {
+  const value = { a: { b: 1 }, list: [1, 2] };
+
+  it('indent 参数：4 空格', () => {
+    expect(copyNodeText({ format: 'subtree', path: '$', value, indent: 4 }).text).toBe(
+      JSON.stringify(value, null, 4),
+    );
+  });
+
+  it('indent 0 = 紧凑', () => {
+    expect(copyNodeText({ format: 'subtree', path: '$', value, indent: 0 }).text).toBe(JSON.stringify(value));
+  });
+
+  it('非法 indent（负 / 非整数）回落默认 2；过大夹到 8', () => {
+    expect(copyNodeText({ format: 'subtree', path: '$', value, indent: -1 }).text).toBe(
+      JSON.stringify(value, null, 2),
+    );
+    expect(copyNodeText({ format: 'subtree', path: '$', value, indent: 2.5 }).text).toBe(
+      JSON.stringify(value, null, 2),
+    );
+    expect(copyNodeText({ format: 'subtree', path: '$', value, indent: 99 }).text).toBe(
+      JSON.stringify(value, null, 8),
+    );
+  });
+});

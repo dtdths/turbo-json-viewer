@@ -61,6 +61,8 @@ export interface CopyTextArgs {
   value: unknown;
   /** 子树 JSON 的字节上限；默认 COPY_MAX_BYTES（测试用较小值） */
   maxBytes?: number;
+  /** 子树 JSON 缩进（ADR-0011 §1）；默认 COPY_INDENT=2，0 = 紧凑 */
+  indent?: number;
 }
 
 export interface CopyTextResult {
@@ -75,8 +77,9 @@ export function copyNodeText(args: CopyTextArgs): CopyTextResult {
   let text: string;
   switch (format) {
     case 'subtree': {
-      // 先 stringify 再判上限（与 getNodeJson 同口径；超大子树会先付出 stringify 成本，已知差距）
-      text = JSON.stringify(value, null, COPY_INDENT) ?? 'null';
+      // 缩进按设置传入（缺省 COPY_INDENT=2；0=紧凑）；先 stringify 再判上限（已知差距同 getNodeJson）
+      const indent = Number.isInteger(args.indent) && (args.indent as number) >= 0 ? Math.min(8, args.indent as number) : COPY_INDENT;
+      text = JSON.stringify(value, null, indent) ?? 'null';
       const bytes = byteLengthOf(text);
       const max = args.maxBytes ?? COPY_MAX_BYTES;
       if (bytes > max) {

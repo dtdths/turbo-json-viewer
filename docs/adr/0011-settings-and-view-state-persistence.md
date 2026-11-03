@@ -94,3 +94,13 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 - 「地图显隐」「搜索 Aa/正则」「大纲/设置面板的更多子项」随各自 slice 追加；设置项 schema 版本化以便迁移。
 - 面板宽度/侧栏布局仍是 CSS 常量（不随设置变）；行高可选档只列 4 档，不做任意像素输入。
 - 主题首帧：依赖 `await settings.load` 的顺序，扩展页 `chrome.storage.local` 异步读取期间先按默认主题渲染（一次 flush 内完成，若无异常不会可见闪烁）。
+
+## 实现备注（2026-11-03，落地后追记）
+
+1. **`ThemeState` / `PanelState` 未单独建类**：主题与布局态都在 `SettingsState`（含 `UiState`）里，避免三套状态机各持一份存储。
+2. **启动顺序**：`main.ts` 用 ESM top-level `await settings.load(viewStateStore)` 在装配 `TreeView`/`RowWindowSource` 之前读盘；
+   恢复左面板模式放在活动栏监听之后（避免 `PANEL_TITLES` 的 TDZ）。
+3. **`--row-h` 挂在树滚动容器**（`tree-view.mount` 写入）而不是 `:root`：`TreeView.setRowHeight` 同时更新容器变量、spacer 高度并按当前快照重排；`app` 再 `rowSource.setMetrics` 重算视口行数。
+4. **左面板模式持久化的实际语义**：用户切换会持久化并在启动时恢复；**导入成功（`onLoaded`）仍按既有契约切回文档视图**（导入是文档动作），因此「刷新后恢复的面板」= 最后一次用户显式切换的模式（若期间导入过则回到 doc）。
+5. `copyNode.indent` 在 core 侧再做一次守卫（非整数/负数回落 `COPY_INDENT`，上限夹到 8），不信任跨线程入参。
+6. 单测合计 273（新增 19：`settings-state.test.ts` 12；doc-service +4、copy +3 属于本 ADR 的协议参数）。

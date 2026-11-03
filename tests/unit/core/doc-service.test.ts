@@ -870,3 +870,59 @@ describe('DocService — 截断修复（#8 / ADR-0004 修订）', () => {
     expect(JSON.parse(root.text)).toEqual({ a: 42, b: 'hello wor' });
   });
 });
+
+describe('DocService — 导入选项（ADR-0011 §5）', () => {
+  it('repair:false → 截断源直接抛 PARSE，不产生修复事件与根', async () => {
+    const svc = new DocService();
+    const events: CoreEvent[] = [];
+    svc.on((event) => events.push(event));
+    const err = await errorOf(
+      svc.dispatch({
+        t: 'load',
+        loadId: 1,
+        source: 'paste',
+        data: '{"a":1,"b":"hello wor',
+        opts: { repair: false },
+      }),
+    );
+    expect(err.code).toBe('PARSE');
+    expect(err.line).toBeDefined();
+    expect(events.some((event) => event.t === 'repair')).toBe(false);
+    const statsErr = await errorOf(svc.dispatch({ t: 'stats', rootId: DOC_ROOT }));
+    expect(statsErr.code).toBe('NO_ROOT');
+  });
+
+  it('adaptiveExpand:false → 小文档也保持默认折叠（root + 顶层字段 = 2 行）', async () => {
+    const svc = new DocService();
+    const reply = await svc.dispatch({
+      t: 'load',
+      loadId: 1,
+      source: 'paste',
+      data: JSON.stringify({ a: [1, 2, 3] }),
+      opts: { adaptiveExpand: false },
+    });
+    expect(reply.totalRows).toBe(2);
+  });
+
+  it('adaptiveExpand 缺省 → 小文档自适应全展开（5 节点 = 5 行）', async () => {
+    const svc = new DocService();
+    const reply = await svc.dispatch({
+      t: 'load',
+      loadId: 1,
+      source: 'paste',
+      data: JSON.stringify({ a: [1, 2, 3] }),
+    });
+    expect(reply.totalRows).toBe(5);
+  });
+
+  it('copyNode 的 indent 参数生效（4 / 0 / 缺省 2）', async () => {
+    const svc = new DocService();
+    await loadCopyDoc(svc);
+    const four = await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.a', format: 'subtree', indent: 4 });
+    expect(four.text).toBe(JSON.stringify(COPY_DOC.a, null, 4));
+    const compact = await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.a', format: 'subtree', indent: 0 });
+    expect(compact.text).toBe(JSON.stringify(COPY_DOC.a));
+    const def = await svc.dispatch({ t: 'copyNode', rootId: DOC_ROOT, path: '$.a', format: 'subtree' });
+    expect(def.text).toBe(JSON.stringify(COPY_DOC.a, null, 2));
+  });
+});

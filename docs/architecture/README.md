@@ -214,9 +214,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 5 子树编辑 + undo + 导出（#16 / ADR-0006） | ✅ | `core/edit-history.ts`（深度 100、redo 截断、LIFO reset）+ `DocService` 的 `getNodeJson/replaceNode/undo/redo/reset/exportDoc`（5MB `TOO_LARGE`、`PARSE` 带行列、no-op 不推进版本、`STALE_DOC` 守卫、每根一份历史）；`viewmodel/edit-state.ts` + 树意图（dblclick / 右键菜单 / F2 / `setChangedPath`）；`view/panels/{code-editor,subtree-editor}.ts`（CM6 懒加载、lint 门控 Apply、720×520 弹层）；`main.ts` 接线（徽标 / ⌘Z ⇧⌘Z / 重置 / `-edited` 导出 / 未保存确认）；**单测 177** |
 | 5.5 复制 4 格式（#9 / ADR-0010） | ✅ | `core/copy.ts`（四格式文本统一生成：子树 JSON 2 空格 / 规范路径 / 标量原值 / 键名）+ `DocService.copyNode`（**只读**，不推进 `docRevision`/`rowVersion`；子树 JSON 5MB `TOO_LARGE`）；行右键菜单 5 项（容器禁用「原始值」、根禁用「键名」，`title` 说明）+ ↑↓/Home/End 键盘 + 行尾操作浮条（复制子树 JSON 快路径 / 编辑弹层，鼠标专用 `tabindex="-1"`）；零权限剪贴板（`navigator.clipboard.writeText` → `execCommand` 回退 → toast 提示手动），**不声明 `clipboardWrite`**；**单测 199**（新增 22） |
 | 6.0 截断修复（#8 / ADR-0004 修订） | ✅ | `core/repair.ts` 单趟状态机（§6.2 六条规则；**只语法闭合、不猜内容**；末尾自校验 `JSON.parse`；拒绝态 `not-eof`/`still-invalid`）→ `import.ts` **仅在 PARSE 失败时**调用并挂 `meta.repair`，`doc-service` 补发既有 `repair` 事件；`RepairProvenance` 按 §6.3（`status`/`counts`/`ops`/`summaryText`）；顶部修复条 **32px**（摘要逐条展开 + 关闭，`role=status`/`aria-live=polite`）+ 状态栏「已修复截断」角标 + 导出 `-truncated-repaired` 后缀；**单测 254**（+55：repair 51 / doc-service 4）；冒烟 `smoke-repair` **14/14** |
+| 6.1 设置面板 + 视图状态持久化（ADR-0011 / S5 接线） | ✅ | `viewmodel/settings-state.ts`（8 项设置 + 布局态；校验回落/写穿/订阅，`tjv.settings.v1`/`tjv.ui.v1`）+ `view/panels/settings-panel.ts`（8 行，segmented/checkbox，`data-setting`/`data-value`）+ `app/storage.ts` 接线（启动 `await load`）；行高 `RowMetricsSource`（`TreeView.setRowHeight` + `--row-h` + `setMetrics`）、缩进 `--row-indent`、类型列 `setTypeColumn`、默认复制格式/复制缩进（`copyNode.indent`）、修复与自适应开关（`load.opts`）；主题/右栏/左面板模式持久化；**单测 273**（+19：settings 12 / doc-service 4 / copy 3）；冒烟 `smoke-settings` **18/18** |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **18.1KB gz**（预算 45）、`worker.js` **6.6KB gz**、`page.css` **5.6KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **21.2KB gz**（预算 45）、`worker.js` **9.4KB gz**、`page.css` **6.1KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -268,12 +269,20 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **性能**：修复只在 `JSON.parse` 失败时触发（合法文档零成本）；纯函数扫描 + 切片应用 O(n)，3.6MB 截断文本约 40ms。
 - **回归**：`smoke` / `smoke:ext` / `smoke-search` 82/82 / `smoke-extension-search` 56/56 / `smoke-expand` 11/11 / `smoke-edit` 14/14 / `smoke-copy` 27/27 全绿；截图 `.spike/smoke/repair-{bar,summary,closed}.png`。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
+**slice 6.1 设置面板验收**（2026-11-03，CfT headless 1440×900；`scripts/smoke-settings.mjs` **18/18**）：
+
+- **默认值**：8 项 = dark / 24 / 16 / false / subtree / 2 / true / true；主题生效、`--row-h` 24、`--row-indent` 16、spacer = 8×24。
+- **面板**：活动栏齿轮 → 左面板「设置」；标题/`aria-label`/8 行顺序/焦点落面板；`aria-current` 同步。
+- **即时生效**（真实点击控件）：主题 dataset + 状态栏「亮色」；行高 22 → `--row-h` 22px、首行 22px、spacer 8×22；缩进 20 → `--row-indent` 20px；类型列显示；默认复制格式=路径 → 行尾浮条复制得 `$.arr[1].k`；复制缩进=4 → 子树 JSON 4 空格；关闭修复 → 截断直接 `PARSE` 且当前文档不变；关闭自适应 → 小文档保持折叠（2 行、spacer 44px）。
+- **持久化**：刷新页面后 8 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复（`localStorage` 口径；扩展内为 `chrome.storage.local`）。
+- **回归**：`smoke` / `smoke:ext` / `smoke-search` 82/82 / `smoke-extension-search` 56/56 / `smoke-expand` 11/11 / `smoke-edit` 14/14 / `smoke-copy` 27/27 / `smoke-repair` 14/14 全绿；截图 `.spike/smoke/settings-{panel,applied,reloaded}.png`。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
-- 行高真值仍是 `protocol/versions.ts` 的 `ROW_HEIGHT`，S4 承诺的 `RowMetricsSource`（从 CSS token 读）未实现；改 CSS 不会改行高。
-- `ThemeState` / `PanelState` / `ViewStateStore`（S5）未接线：主题与面板状态直接写 DOM dataset，不持久化。
+- ~~行高真值仍是常量 / `RowMetricsSource` 未实现~~ → **已实现**（ADR-0011 §6：`TreeView.setRowHeight` + `--row-h` + `RowWindowSource.setMetrics`，设置面板可选 20/22/24/26）。
+- ~~`ThemeState` / `PanelState` / `ViewStateStore` 未接线~~ → **已接线**（ADR-0011：`SettingsState` 承担主题 + 8 项设置 + 布局态，经 `ViewStateStore` 持久化）；未单独建 `ThemeState`/`PanelState` 类。
 - `RowRenderer.setHit` 与 seams §4 接口漂移（TreeView 实际走 `RowContext.hit`）；`DomRowPool` 双构造重载无第二个调用点。
 - `CoreTransport` 契约测试（InProcess vs Worker 同一套用例）与 `WORKER_CRASH` 错误路径测试仍缺（`TIMEOUT`/`CLOSED` 已在 `WorkerTransport` 实现）。
 - 搜索高亮 helper 在 `row-renderer` 与 `search-panel` 各一份；大小写折叠对 `İ/ẞ` 等字符会错位（罕见）；smoke 脚本的 reference walk 与 `core/search.ts` 是两份实现。
@@ -281,10 +290,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
 - 编辑：弹层未做 **focus trap**（Tab 可离开面板）；CM6 对「文档末尾」的 lint 诊断是空范围（只有 gutter marker，无行内下划线）；`getNodeJson` 先 stringify 再判 5MB（超大子树会先在 Worker 内付出 stringify 成本才拒绝，建议预计算子树大小）；50MB 文档导出（stringify + 50MB postMessage）未实测。
 - 「替换文档」已有未保存确认；「关闭文档」功能本身尚未存在（随 #11 最近文档 / 多标签再做）。
-- 「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）；「N=500 可关」的设置开关待设置面板（`ViewStateStore` 未接线）。
+- 「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）；~~「N=500 可关」待设置面板~~ → 已实现（设置「小文档自动全部展开」）。
 - `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。
-- 复制（slice 5.5）：子树 JSON >5MB 只能走导出（`TOO_LARGE` toast 引导）；「缩进/压缩跟随当前设置」未做（设置面板与 `ViewStateStore` 未接线，固定 2 空格，见 ADR-0010 §5）；**真实扩展页未实测剪贴板**（HTTP 模式验到 `navigator.clipboard` 逐字读回，扩展内无 `__tjv`，需真机向导补）；菜单未加复制快捷键（⌘C 保留给原生文本选择，见 ADR-0010 §8）。
-- 截断修复（slice 6.0 / #8）：**「关闭修复、只看错误」的偏好开关延后到设置面板**（`ViewStateStore` 未接线，v1 总是尝试修复，ADR-0004 修订 §3）；修复摘要里的 `at` 目前只展示偏移，**跳到原始文本对应行**随 #11 原始文本视图（行号反查能力已有）；修复耗时按「仅解析失败时才扫描」控制成本，50MB 级截断文本未实测。
+- 复制（slice 5.5）：子树 JSON >5MB 只能走导出（`TOO_LARGE` toast 引导）；~~「缩进/压缩跟随当前设置」未做~~ → 已实现（设置「复制缩进」2/4/紧凑 + 「默认复制格式」，ADR-0011 §1）；**真实扩展页未实测剪贴板**（HTTP 模式验到 `navigator.clipboard` 逐字读回，扩展内无 `__tjv`，需真机向导补）；菜单未加复制快捷键（⌘C 保留给原生文本选择，见 ADR-0010 §8）。
+- 截断修复（slice 6.0 / #8）：~~「关闭修复」开关待设置面板~~ → 已实现（设置「导入时自动修复截断 JSON」，关闭后截断直接 `PARSE`，ADR-0011 §1）；修复摘要里的 `at` 目前只展示偏移，**跳到原始文本对应行**随 #11 原始文本视图（行号反查能力已有）；修复耗时按「仅解析失败时才扫描」控制成本，50MB 级截断文本未实测。
 - **严格 JSON only**（边界，非 bug）：完整 JSON 只是多了尾逗号（`{"a":{"b":1,}}`）或用了单引号/裸键/注释时仍报 `PARSE`——截断修复只处理 EOF 形态、不擅自删原文符号；是否支持 JSON5 子集/尾逗号容错见 **#20**（待拍板）。
 
 ## 12. 未实现设计（多文档工作区标签，#18）
@@ -305,4 +314,4 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 **其它想法（仅记录、未拍板）**：**节点子键按规则排序**（痛点：一个节点下很多 key，想按规则排以快速定位；方向：只改「显示顺序」、不改数据顺序，见 #19）。
 约束与待拍板问题已记在 #19（键序是产品承诺 → 排序只能是视图状态；`RowModel.keysOf` 需要容器级顺序覆盖 + 缓存失效；
-设置入口受 `ViewStateStore`/`SettingsPanel` 未接线影响）。后续用 grilling 从该票的「待拍板问题」续，拍板后再落 ADR / 实现。
+设置入口**已就绪**（ADR-0011 的 `SettingsPanel` 可直接加排序项）。后续用 grilling 从该票的「待拍板问题」续，拍板后再落 ADR / 实现。

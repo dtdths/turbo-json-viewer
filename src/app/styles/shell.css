@@ -211,7 +211,10 @@ kbd {
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
 }
-body[data-panel="search"] .side--left { display: flex; }
+body[data-panel="search"] .side--left, body[data-panel="settings"] .side--left { display: flex; }
+/* 左面板同一时刻只显示一种模式的内容 */
+body[data-panel="settings"] .panel--search { display: none; }
+body:not([data-panel="settings"]) .panel--settings { display: none; }
 .side__head {
   display: flex; align-items: center; gap: 8px;
   height: 40px; flex: 0 0 40px; padding: 0 8px 0 14px;

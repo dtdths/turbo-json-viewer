@@ -134,7 +134,12 @@ export class DocService {
 
     try {
       this.emit({ t: 'load-progress', loadId, phase: 'decode' });
-      const { value, meta } = loadDocument({ source: cmd.source, data: cmd.data, name: cmd.name });
+      const { value, meta } = loadDocument({
+        source: cmd.source,
+        data: cmd.data,
+        name: cmd.name,
+        repair: cmd.opts?.repair,
+      });
       this.emit({ t: 'load-progress', loadId, phase: 'parse' });
       // 截断修复（#8 / ADR-0004 修订）：provenance 已挂在 meta 上，事件供 UI 即时提示（与 LoadReply 冗余但不冲突）
       if (meta.repair?.status === 'repaired') this.emit({ t: 'repair', repair: meta.repair });
@@ -148,8 +153,8 @@ export class DocService {
       this.emit({ t: 'load-progress', loadId, phase: 'model' });
       const rowModel = new RowModel(value);
       // 自适应展开（ADR-0002 修订 / #9）：小文档加载即全展开；超阈值保持默认折叠。
-      // 不抛错——自适应失败不能拖垮 load。
-      rowModel.expandIfAtMost(ADAPTIVE_EXPAND_ROWS);
+      // 设置可关（ADR-0011 §1 adaptiveExpand）；关闭时一律默认折叠。不抛错——自适应失败不能拖垮 load。
+      if (cmd.opts?.adaptiveExpand !== false) rowModel.expandIfAtMost(ADAPTIVE_EXPAND_ROWS);
       const totalRows = rowModel.totalRows;
 
       const now = Date.now();
@@ -323,7 +328,12 @@ export class DocService {
   private copyNode(cmd: Cmd<'copyNode'>): CopyReply {
     const root = this.roots.require(cmd.rootId);
     const value = root.rowModel.valueAt(cmd.path);
-    const { text, bytes } = copyNodeText({ format: cmd.format, path: cmd.path, value });
+    const { text, bytes } = copyNodeText({
+      format: cmd.format,
+      path: cmd.path,
+      value,
+      indent: cmd.indent,
+    });
     return { text, bytes, format: cmd.format };
   }
 
