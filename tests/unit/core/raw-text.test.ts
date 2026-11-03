@@ -394,3 +394,32 @@ describe('buildRawIndex — 工厂与惰性构建', () => {
     expect(allLines(defaulted).lines).toEqual(allLines(injected).lines);
   });
 });
+
+/* --------------------- pretty 模式：空容器规范化 --------------------- */
+
+describe('RawTextIndex — pretty 空容器（等价 JSON.stringify，不保留源内部空白）', () => {
+  it('对象/数组里的空容器写成 {} / []，内部空白丢弃', () => {
+    const text = '{"empty"  :  {   }, "arr":[  ]  , "nested":{"a":{ }}}';
+    // 注入 maxLineLength=0 强制 pretty 模式（小文本默认会走 source 模式）
+    const index = buildRawIndex(text, { maxLineLength: 0 });
+    expect(index.mode).toBe('pretty');
+    const lines = allLines(index).lines;
+    expect(lines).toEqual([
+      '{',
+      '  "empty": {},',
+      '  "arr": [],',
+      '  "nested": {',
+      '    "a": {}',
+      '  }',
+      '}',
+    ]);
+    // 行布局仍可重建：join → JSON.parse 与源值深度相等
+    expect(JSON.parse(lines.join('\n'))).toEqual(JSON.parse(text));
+  });
+
+  it('值本身是空容器（数组元素 / 根）也规范化', () => {
+    const text = '[{ }, [  ]]';
+    const index = buildRawIndex(text, { maxLineLength: 0 });
+    expect(allLines(index).lines).toEqual(['[', '  {},', '  []', ']']);
+  });
+});

@@ -179,6 +179,29 @@ function walkPretty(
   return lineIndex;
 }
 
+/**
+ * pretty 行里的「值文本」：空容器必须规范成 `{}` / `[]`（等价 JSON.stringify）。
+ * 源里的内部空白不保留——pretty 是规范布局，源码行模式才原样保留用户格式。
+ */
+function valueText(text: string, start: number, end: number): string {
+  const open = text.charCodeAt(start);
+  if ((open === CH.LBRACE || open === CH.LBRACK) && end - start >= 2) {
+    const close = open === CH.LBRACE ? CH.RBRACE : CH.RBRACK;
+    if (text.charCodeAt(end - 1) === close) {
+      let onlyWs = true;
+      for (let i = start + 1; i < end - 1; i++) {
+        const c = text.charCodeAt(i);
+        if (c !== CH.SPACE && c !== CH.LF && c !== CH.CR && c !== CH.TAB) {
+          onlyWs = false;
+          break;
+        }
+      }
+      if (onlyWs) return String.fromCharCode(open, close);
+    }
+  }
+  return text.slice(start, end);
+}
+
 /** 用源切片重建一行 pretty 文本（≤ 2 个 token：补缩进 / 冒号 / 逗号，不做值序列化）。 */
 function renderPrettyLine(lex: JsonLexer, text: string, rec: LineRec): string {
   const indent = rec.depth > 0 ? ' '.repeat(rec.depth * 2) : '';
@@ -187,9 +210,9 @@ function renderPrettyLine(lex: JsonLexer, text: string, rec: LineRec): string {
     const keyEnd = lex.lexToken(text, rec.start);
     let p = lex.skipWs(text, keyEnd);
     if (text.charCodeAt(p) === CH.COLON) p = lex.skipWs(text, p + 1);
-    body = text.slice(rec.start, keyEnd) + ': ' + text.slice(p, rec.end);
+    body = text.slice(rec.start, keyEnd) + ': ' + valueText(text, p, rec.end);
   } else {
-    body = text.slice(rec.start, rec.end);
+    body = valueText(text, rec.start, rec.end);
   }
   // 源里紧跟在本行后的逗号（OPEN 行后面不会跟逗号）
   const p = lex.skipWs(text, rec.end);

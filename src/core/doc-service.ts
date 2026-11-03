@@ -533,7 +533,6 @@ export class DocService {
       rootId: root.rootId,
       seq: cmd.seq,
       start,
-      count: lines.length,
       lines,
       totalLines,
       mode: index.mode,

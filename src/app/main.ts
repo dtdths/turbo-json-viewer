@@ -1397,8 +1397,8 @@ function renderRawChrome(): void {
   rawNotice.textContent = notes.join(' · ');
   if (notes.length > 0) rawNotice.title = notes.join('\n');
   else rawNotice.removeAttribute('title');
-  const buildMs = info.buildMs !== undefined ? ` · 索引 ${Math.round(info.buildMs)}ms` : '';
-  rawMetaLabel.textContent = `${info.totalLines.toLocaleString()} 行${buildMs}`;
+  // 索引构建耗时只在 dev hook / 冒烟里暴露，不进常驻 UI（ADR-0003 修订 §5）
+  rawMetaLabel.textContent = `${info.totalLines.toLocaleString()} 行`;
   rawCopyBtn.disabled = false;
 }
 

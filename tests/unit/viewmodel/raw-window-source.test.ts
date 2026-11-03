@@ -102,7 +102,6 @@ class FakeRawCore {
       rootId: request.rootId,
       seq: request.seq,
       start: request.start,
-      count: request.count,
       lines: makeLines(request.start, request.count),
       totalLines: this.totalLines,
       mode: 'source',

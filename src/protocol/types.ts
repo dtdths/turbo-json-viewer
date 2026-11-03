@@ -177,7 +177,6 @@ export interface RawWindow {
   rootId: RootId;
   seq: number;
   start: number;
-  count: number;
   /** 每行显示文本（≤ RAW_LINE_DISPLAY_MAX 字符；超长行截断显示） */
   lines: string[];
   /** 与 lines 对齐：该行被截掉的字符数（0 / 缺省 = 完整） */

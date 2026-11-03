@@ -959,7 +959,6 @@ describe('DocService — rawOpen / rawWindow', () => {
       rootId: DOC_ROOT,
       seq: 9,
       start: 2,
-      count: 4,
       totalLines: RAW_LINES.length,
       mode: 'source',
     });
@@ -972,16 +971,16 @@ describe('DocService — rawOpen / rawWindow', () => {
     await load(svc, RAW_PRETTY);
     const tail = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 1, start: RAW_LINES.length - 2, count: 99 });
     expect(tail.start).toBe(RAW_LINES.length - 2);
-    expect(tail.count).toBe(2);
+    expect(tail.lines.length).toBe(2);
     expect(tail.lines).toEqual(RAW_LINES.slice(-2));
 
     const beyond = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 2, start: RAW_LINES.length + 5, count: 10 });
     expect(beyond.start).toBe(RAW_LINES.length);
-    expect(beyond.count).toBe(0);
+    expect(beyond.lines.length).toBe(0);
     expect(beyond.lines).toEqual([]);
 
     const negative = await svc.dispatch({ t: 'rawWindow', rootId: DOC_ROOT, seq: 3, start: -3, count: -1 });
-    expect(negative).toMatchObject({ start: 0, count: 0, lines: [] });
+    expect(negative).toMatchObject({ start: 0, lines: [] });
   });
 
   it('minified 长文本 → pretty 模式；整窗 join 后 JSON.parse 与源值深度相等', async () => {

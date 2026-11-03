@@ -66,6 +66,21 @@ try {
   await page.waitFor('document.readyState === "complete"', { timeoutMs: 20000 });
   await new Promise((r) => setTimeout(r, 600));
 
+  // 长任务观察器（ADR-0003 修订 §7：原文索引/窗口/切换不得产生主线程长任务）
+  await page.eval(`(() => {
+    window.__rawLongTasks = [];
+    try {
+      const po = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) window.__rawLongTasks.push(Math.round(entry.duration));
+      });
+      po.observe({ entryTypes: ['longtask'] });
+      window.__rawHasLongTaskObserver = true;
+    } catch {
+      window.__rawHasLongTaskObserver = false;
+    }
+    return true;
+  })()`);
+
   const runPhase = async (name, expression) => {
     try {
       Object.assign(report, (await page.eval(expression)) ?? {});
@@ -239,6 +254,12 @@ try {
   );
   await page.screenshot(path.join(SHOTS, 'raw-edited.png'));
 
+  // ---- phase 6.5：读长任务（刷新前；页面重载会清掉 window 状态）----
+  await runPhase(
+    'perf-before',
+    `(() => ({ longTasksBeforeReload: { longTasks: window.__rawLongTasks, hasLongTaskObserver: window.__rawHasLongTaskObserver } }))()`,
+  );
+
   // ---- phase 7：刷新后 viewMode 持久化（最后停在 raw）----
   await runPhase(
     'persist-before',
@@ -255,6 +276,19 @@ try {
   await page.goto(url, { timeoutMs: 20000 });
   await page.waitFor('document.readyState === "complete"', { timeoutMs: 20000 });
   await new Promise((r) => setTimeout(r, 500));
+  await page.eval(`(() => {
+    window.__rawLongTasks = [];
+    try {
+      const po = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) window.__rawLongTasks.push(Math.round(entry.duration));
+      });
+      po.observe({ entryTypes: ['longtask'] });
+      window.__rawHasLongTaskObserver = true;
+    } catch {
+      window.__rawHasLongTaskObserver = false;
+    }
+    return true;
+  })()`);
   await runPhase(
     'persist-after',
     `(async () => {
@@ -263,7 +297,11 @@ try {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await h.loadText(${JSON.stringify(MID_MIN)}, 'persist.json');
       await sleep(900);
-      out.reloaded = { state: h.rawState(), ui: h.settingsState().ui };
+      out.reloaded = {
+        state: h.rawState(),
+        ui: h.settingsState().ui,
+        longTasksAfterReload: { longTasks: window.__rawLongTasks, hasLongTaskObserver: window.__rawHasLongTaskObserver },
+      };
       return out;
     })()`,
   );
@@ -363,6 +401,11 @@ const checks = {
     report.reloaded?.ui?.viewMode === 'raw' &&
     report.reloaded?.state?.raw?.mode === 'pretty',
 
+  'perf:no-long-task':
+    report.longTasksBeforeReload?.hasLongTaskObserver === true &&
+    (report.longTasksBeforeReload?.longTasks?.length ?? 1) === 0 &&
+    report.reloaded?.longTasksAfterReload?.hasLongTaskObserver === true &&
+    (report.reloaded?.longTasksAfterReload?.longTasks?.length ?? 1) === 0,
   'console:no-exception-no-error':
     (report.consoleErrors?.length ?? 0) === 0 && (report.consoleErrorLogs?.length ?? 0) === 0,
 };
