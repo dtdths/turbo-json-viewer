@@ -13,7 +13,7 @@
 
 | # | seam | interface | v1 adapter | 测试 adapter | 接口背后藏什么（depth） |
 |---|---|---|---|---|---|
-| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 22 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
+| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 24 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
 | S2 | viewmodel → view | `RowWindowSource.snapshot()` / `RawWindowSource.snapshot()` | `TransportRowSource` + `RawWindowSource` | `ScriptedRowSource` | 单飞、合并、seq 丢弃、版本校验、overscan、预取、锚点换算 |
 | S3 | TreeView → 单行 / RawView → 单行 | `RowRenderer` | `DomRowPool` + `RawView` 行池 | `RecordingRowRenderer` | 行池复用、textContent、选中/命中态、固定行高纪律 |
 | S4 | 全局 → 样式 | `ThemeController` + `RowMetrics` | `tokens.css`（`data-theme`） | `FixedThemeController` | token 名与语义、双主题、Canvas palette 读取 |
@@ -37,6 +37,7 @@ export interface CoreApi {
   rawWindow(r: RawWindowRequest): Promise<RawWindow>;                   // 只回行文本（≤4096 字符/行）
   rawLocate(r: { rootId: RootId; offset: number }): Promise<RawLocateReply>;  // 源偏移 → 1-based 行
   rawSource(r: { rootId: RootId; maxBytes?: number }): Promise<RawSourceReply>; // 整份原文（20MB 守卫）
+  outline(r: OutlineRequest): Promise<OutlineReply>;                    // 大纲页：按容器分页取子项（只读，ADR-0013）
   redo(rootId: RootId): Promise<EditReply>;        reset(rootId: RootId): Promise<EditReply>;          // 回到导入值
   profile(rootId: RootId): Promise<ProfileReply>;  stats(rootId: RootId): Promise<StatsReply>;         // 版本/行数只读快照
 }
@@ -54,6 +55,7 @@ export type Command =
   | { t:'undo'|'redo'|'reset'; rootId:RootId } | { t:'profile'; rootId:RootId }
   | { t:'rawOpen'; rootId:RootId } | { t:'rawWindow'; rootId:RootId; seq:number; start:number; count:number }
   | { t:'rawLocate'; rootId:RootId; offset:number } | { t:'rawSource'; rootId:RootId; maxBytes?:number }
+  | { t:'outline'; rootId:RootId; path:Path; start:number; count:number }
   | { t:'stats'; rootId:RootId };
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];
 // src/app/transport/worker-transport.ts —— 3 个方法；替换传输不改调用方
@@ -74,6 +76,7 @@ export interface CoreTransport {
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
 | `stats` | `StatsReply(rootId, docRevision, rowVersion, totalRows)` | 只读版本/行数快照，不推进任何版本 |
 | `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | `RawMeta(mode,totalLines,chars,maxLineLength,buildMs?,damaged?)` / `RawWindow(seq,start,lines,totalLines,mode,truncated?)` / `RawLocateReply(line,totalLines)` / `RawSourceReply(text,bytes)` | 只读、不推版本；首调惰性建索引；行文本 ≤4096 字符；`rawSource` 超 `maxBytes` 抛 `TOO_LARGE`（ADR-0003 修订） |
+| `outline` | `OutlineReply(rootId, path, kind, total, start, children[OutlineChild])` | 只读、不推版本；按容器**按需分页**（`OUTLINE_PAGE=200` / 上限 500），不建树、不缓存、不依赖树展开态；scalar 路径回 `total:0`（ADR-0013） |
 | `eval` | `EvalReply(rootId, docRevision, totalRows, ms)` | 最多保留 3 个结果根 |
 | `copy` / `profile` | `CopyReply(text, bytes)` / `ProfileReply(profile)` | 大子树 `truncated`；profile 可缺省 |
 

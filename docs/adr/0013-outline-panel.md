@@ -92,7 +92,10 @@ export interface OutlineReply {
 - **点击行（非 caret）** = 跳转：`expandTo` 展开树祖先链 → 树滚动居中 → 选中；原文视图下先切回树（与搜索跳转一致）。
   复用一条 `jumpToPath` 链路（从 `gotoHit` 抽出，搜索与大纲共用，避免两份跳转纪律）。
 - **点击 caret / 键盘 ←→** = 仅展开/折叠大纲自己的行（不影响树）。
-- **键盘 ↑/↓** = 移动大纲当前行（`.is-current`，不跳树）；**Enter** = 跳转当前行；**Home/End** = 首/末行；面板 `role=tree`、行 `role=treeitem` + `aria-level` + 容器 `aria-expanded`。
+- **键盘 ↑/↓** = 移动大纲当前行（`.is-current`；同步树**选中**但不 `expandTo`/不滚动树）；**Enter** = 跳转当前行；**Home/End** = 首/末行；
+  已加载末行再按 ↓ = 加载下一页（等价点击「加载更多」哨兵行，键盘可达分页）；
+  面板 `role=tree`、行 `role=treeitem` + `aria-level` + 容器 `aria-expanded` + 当前行 `aria-selected`，
+  scroller 用 `aria-activedescendant` 指向当前行（虚拟列表 a11y，与方向 §8 一致）。
 - **当前节点高亮**：树选中变化 → 大纲 `setSelected(path)`；行已加载且可见时高亮并滚入视口；不可见时不高亮。
 - **分页**：容器行展开后，若 `items.length < total` 显示哨兵行「加载更多（还有 N 项）」；点击加载下一页，加载完消失。
 - 大纲展开状态**独立于树**，两者不联动。
@@ -104,7 +107,8 @@ export interface OutlineReply {
 - 接口：`open(rootId)` / `refresh()` / `setOpen(path, open)` / `toggle(path)` / `loadMore(path)` / `setSelected(path)` / `close()` / `view()`。
 - 内部：`containers: Map<Path, { kind; total; items: OutlineChild[]; loading: boolean }>`、`expanded: Set<Path>`、
   扁平化行缓存（脏标记）、`epoch`（换文档/刷新时递增，迟到回包丢弃）、每容器单飞（`loading`）。
-- 根永远展开、不可折叠；折叠容器时丢弃该子树的页缓存与展开项。
+- 根永远展开、不可折叠；折叠容器时丢弃**后代**的页缓存与展开项，**保留被折叠容器自身的页缓存**
+  （重展开不重取，避免无谓往返；自身展开项即被清）。
 - 换文档 → `open`（重置并加载根页）；编辑（`docRevision` 变化：replaceNode / undo / redo / reset）→ `refresh()`（回到根展开、丢弃子页）。
 - 面板关闭不销毁状态（重开保留展开现场）；**不持久化**（刷新页面后为空）。
 - 数据源注入 `OutlineSource`（`outline(req)` 子集），单测用 fake source，不碰真实 core 单例。
@@ -128,7 +132,7 @@ export interface OutlineReply {
 | `#outlineScroll` | 虚拟滚动容器（`role="tree"`、`tabindex="0"`、`aria-label="文档大纲"`） |
 | `.outline__spacer` | 撑高容器（`height = size × rowHeight`） |
 | `.outline-row[data-path]` | 行（`role="treeitem"`，`data-depth` / `data-kind` / `data-count` / `aria-level` / `aria-expanded`） |
-| `.outline-row.is-current` | 当前节点高亮 |
+| `.outline-row.is-current` | 当前节点高亮（同时写 `aria-selected`；scroller 的 `aria-activedescendant` 指向当前行） |
 | `.outline-row.is-open` | 容器展开态 |
 | `.outline-row__caret` / `__key` / `__type` / `__count` | 行内元素；caret 点击优先于跳转 |
 | `.outline-row--more[data-more="1"]` | 「加载更多」哨兵行（`data-path` = 所属容器） |
@@ -149,6 +153,14 @@ export interface OutlineReply {
 - **回归**：`npm run check` + 全部 12 套冒烟（含既有 11 套）全绿。
 - **体积**：`page.js` minify 后 gz 增量 ≤ +2.5KB（预算 45）。
 
+## 验收结果（2026-11-03 实测）
+
+- **单测 410/410**（17 文件；+56：outline core 12 / doc-service 12 / outline-state 32；settings 断言 +3）。`tsc --noEmit` 0 error。
+- **冒烟 12/12 全绿**：新增 `smoke-outline` **50/50**，既有 11 套全部通过（`smoke-search` 82/82、`smoke-extension-search` 56/56、`smoke-expand` 11/11、`smoke-edit` 14/14、`smoke-copy` 27/27、`smoke-repair` 14/14、`smoke-settings` 21/21、`smoke-export` 16/16、`smoke-raw` 25/25、`smoke`/`smoke:ext` OK）。
+- **性能**：10MB 导入→大纲根页 `ready` **63ms**（含导入）；展开 `$.data` / `$.data.items` 各 **1ms**；450 项数组分页 203→403→452 行；滚到底渲染 **38 行**（末窗 = `min(屏行 31 + 2×overscan 6, size − start = 452 − 414)`，被尾部截断为 38）；全程 **0 长任务 / 0 异常 / 0 console error**。
+- **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，**超 +2.5 目标 1.1KB**，仍远低于预算 45）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2（+0.4）。
+  超目标来自虚拟列表 + 键盘 + 分页 + a11y 完整实现（含 `aria-activedescendant`/`aria-selected`、`shared/window` 抽公共窗口计算）；**登记豁免**（预算 45 未动、无新增依赖）；后续 #21 视觉走查时复查、可压。
+
 ## 已知差距（记录，不在本 slice 实现）
 
 - 树里选中一个「大纲中不可见」的节点（祖先未展开或未翻页）时，大纲不高亮、不自动展开定位（v1.1 候选）。
@@ -157,3 +169,4 @@ export interface OutlineReply {
 - 空容器行无 caret（与树一致）。
 - 键序失真（整数样式键被 `JSON.parse` 重排）归 #23 保真提示，大纲如实反映值图顺序。
 - 大纲展开状态不持久化（刷新 / 重开页面回到根展开）。
+- 非根容器的**页请求失败**没有内联错误提示：失败返回 `ok:false`、`setOpen`/`loadMore` 不吞错，折叠后再展开会重试（不会死锁）；内联「加载失败，重试」哨兵留待 v1.1。

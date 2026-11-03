@@ -48,9 +48,9 @@
 
 | module | 职责 | 接口（一句话） |
 |---|---|---|
-| `messages` | 主↔Worker 判别联合：`load/window/toggle/expandTo/replaceNode/getNodeJson/getTrail/search/cancelSearch/stats/eval/copy/rawOpen/rawWindow/rawLocate/rawSource/undo/redo/reset/profile/cancelLoad` + 回包/事件 | `type Command` / `type Reply` / `type Event` |
-| `types` | `Row`、`RowWindow`、`RawMeta`、`RawWindow`、`MapTrail`、`NodeHandle`、`Path`、`DocumentProfile`、`RepairProvenance` | 纯类型 |
-| `versions` | `docRevision` / `rowVersion` / `seq` 的语义与校验谓词；`RAW_CP_EVERY` / `RAW_MAX_LINE_LENGTH` / `RAW_LINE_DISPLAY_MAX` | `isStaleRow(a,b): boolean` |
+| `messages` | 主↔Worker 判别联合：`load/window/toggle/expandTo/replaceNode/getNodeJson/getTrail/search/cancelSearch/stats/eval/copy/rawOpen/rawWindow/rawLocate/rawSource/undo/redo/reset/profile/cancelLoad/expandAll/collapseAll/exportDoc/copyNode/outline` + 回包/事件 | `type Command` / `type Reply` / `type Event` |
+| `types` | `Row`、`RowWindow`、`RawMeta`、`RawWindow`、`OutlineChild`/`OutlineReply`、`MapTrail`、`NodeHandle`、`Path`、`DocumentProfile`、`RepairProvenance` | 纯类型 |
+| `versions` | `docRevision` / `rowVersion` / `seq` 的语义与校验谓词；`RAW_CP_EVERY` / `RAW_MAX_LINE_LENGTH` / `RAW_LINE_DISPLAY_MAX` / `OUTLINE_PAGE` / `OUTLINE_PAGE_MAX` | `isStaleRow(a,b): boolean` |
 | `errors` | 错误码：`STALE_ROW`/`STALE_ROOT`/`STALE_DOC`/`TOO_LARGE`/`TOO_MANY_ROWS`/`PARSE`/`TIMEOUT`/`WORKER_CRASH`/`CANCELLED` | 判别联合的 error variant |
 | `shared/json-lex` | 零依赖单趟 JSON lexer 原语（`lexToken`/`skipWs`/`lexLine`）；core 的 pretty 行走器与 view 的行高亮共用 | `lexLine(line): Run[]`（0.2µs/行） |
 
@@ -64,6 +64,7 @@
 | `identity` | 懒 id（容器）+ `(parent, slot)` 标量句柄；路径⇄句柄；不建全局 parentMap | `idOf/handleAt/pathOf` | 双格式（路径持久化、id 运行期） |
 | `ImportPipeline` | `arrayBuffer`→`TextDecoder`→`JSON.parse`；截断闭合+provenance；**源文本保留**（ADR-0003 修订） | `load(input): LoadResult { value, meta, text }` | 源文本留给原文视图/复制原文 |
 | `RawText` | 原文行索引三模式（source/pretty/plain）+ 检查点 + `locate`；惰性构建、不物化全文 | `buildRawIndex(text,{damaged})` / `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | 每 2048 行一个检查点（50MB 19.5KiB）；窗口 p95 0.084ms |
+| `Outline` | 大纲页枚举：按容器**分页**返回子项（键/类型/项数/路径），不建第二棵树、不缓存、不看树展开态 | `outlinePage(node, path, start, count)` / `outline` 命令 | 每页 O(子项数)；10MB 样本 200 项页 <1ms（ADR-0013） |
 | `Search` | 全文档键/值扫描 → 命中集合（不建根、不扫 DOM） | `search(root, q, opts): HitSet` | 可取消、渐进返回 |
 | `Expr` | acorn AST + 白名单 walker + 时间/步数/结果预算 → 新根 | `eval(expr, root): ExprResult` | 无 eval/WASM |
 | `EditHistory` | `replaceNode` 的 undo/redo/reset（深度 100，old/new 快照） | `apply/undo/redo/reset` | 与行模型增量更新同事务 |
@@ -79,6 +80,7 @@
 | `RawWindowSource` | **原文**窗口状态机（ADR-0003 修订）：单飞+合并+`seq` 丢弃+overscan；原文不需要 `rowVersion`（doc 生命周期即版本） | `open(rootId)`/`setMetrics/scrollTo/request/snapshot/subscribe`；快照 `RawSnapshot { mode, lines, start, totalLines, stale }` |
 | `Selection` | 当前选中 `NodeHandle` + 键盘导航意图 | `select/handle/onChange` |
 | `SearchState` | 命中集合（全部/过滤）、当前命中、`docRevision` 过期判定、结果列表虚拟窗口 | `begin/apply/markStale/next/prev/view/window` |
+| `OutlineState` | 大纲面板状态机（ADR-0013）：按容器分页缓存 + 展开集合 + 扁平化 + epoch 丢弃 + 单飞；`open/refresh/setOpen/toggle/loadMore/setSelected/close/view` | `view(): OutlineView`；面板只读快照，数据源注入 `OutlineSource` |
 | `PanelState` | C 布局：活动栏选中项、左面板开合、右工作区开合与模块可见性 | `setPanel/toggleRail` |
 | `ThemeState` | 主题 + 视图状态持久化（经 `ViewStateStore`） | `get/set/subscribe` |
 | `EditState` | 修改计数、undo/redo 可用性、stale banner | `onMutation/undo/redo/reset` |
@@ -206,7 +208,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -221,9 +223,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.1 设置面板 + 视图状态持久化（ADR-0011 / S5 接线） | ✅ | `viewmodel/settings-state.ts`（**9 项设置** + 布局态；校验回落/写穿/订阅，`tjv.settings.v1`/`tjv.ui.v1`）+ `view/panels/settings-panel.ts`（**9 行**，segmented/checkbox，`data-setting`/`data-value`）+ `app/storage.ts` 接线（启动 `await load`）；行高 `RowMetricsSource`（`TreeView.setRowHeight` + `--row-h` + `setMetrics`）、缩进 `--row-indent`、类型列 `setTypeColumn`、默认复制格式/复制缩进（`copyNode.indent`）、修复与自适应开关（`load.opts`）；主题/右栏/左面板模式持久化；**修复**：空态遮罩（fixed z30）盖住左面板导致「初始视图点齿轮无效」→ 左面板 `z-index:31`、设置图标由「圆+射线（像太阳）」改竖排滑杆；**单测 273**（+19）；冒烟 `smoke-settings` **21/21**（含空态点齿轮回归 2 项 + 导出方式第 9 项） |
 | 6.2 导出分体按钮：下载文件 / 复制到剪贴板（ADR-0012） | ✅ | `viewmodel/export-state.ts`（方式枚举/校验 + 20MB 剪贴板守卫 + 面板文案）+ `main.ts` 分体按钮（主=上次方式、箭头菜单两项、勾选、↑↓/Esc、外部点击关闭）；`exportMode` 是**设置项**（`Settings.exportMode`，`tjv.settings.v1`），设置面板第 9 行与分体按钮菜单**双向同步**（同一 `SettingsState`，ADR-0012 修订）；复制文本 = `core.exportDoc(rootId, 2)` 同一份（含临时修改/修复后值图），复用零权限剪贴板；超限 toast 引导文件导出；**单测 281**（+8）；冒烟 `smoke-export` **16/16**（含双向同步 2 项） |
 | 6.3 原始文本视图（#11 / ADR-0003 修订 2026-11-03） | ✅ | `core/raw-text.ts`（`probeText` + `RawTextIndex`：**source/pretty/plain** 三模式、检查点 `Int32Array` 每 2048 行、惰性 build、`windowText` 单行 ≤4096 截断、`locate` 偏移→1-based 行）+ `import.ts` 返回源文本、`Root.source` 保留（文档替换即释放）；`DocService` 新增 **rawOpen/rawWindow/rawLocate/rawSource**（只读、不推版本，`rawSource` >maxBytes 抛 `TOO_LARGE`）；`viewmodel/raw-window-source.ts`（单飞/合并/seq 丢弃/epoch；无 rowVersion）+ `view/raw/raw-view.ts`（固定行高虚拟化 + 行号 gutter + 横向滚动 + `lexLine` 屏内高亮 + flash）；工具栏 `[树|原文]` 分段切换（`UiState.viewMode` 持久化）、视图内提示（plain/minified/不含临时修改）、修复摘要 `at` 可点击跳行、复制原文（20MB 守卫）；`shared/json-lex.ts` 一份 lexer 供 core 行走器与 view 高亮共用；**单测 354**（新增 73：raw-text 35 / raw-window-source 18 / doc-service 10 / json-lex 10）；冒烟 `smoke-raw` **25/25** |
+| 6.4 大纲面板（ADR-0013 / #24，2026-11-03） | ✅ | `core/outline.ts`（`outlinePage` 纯函数：容器子项**按需分页**、clamp、标量回空、`appendKey/appendIndex` 路径；不建树/不缓存）+ `DocService.outline`（只读、不推版本，`rowModel.valueAt` 解析路径 → `BAD_COMMAND`）；`viewmodel/outline-state.ts`（每容器页缓存 + 展开集合 + 脏标记扁平化 + epoch 丢弃迟到回包 + 单飞 + `computeOutlineWindow`）；`view/panels/outline-panel.{ts,css}`（行池虚拟列表、行高跟随设置、overscan 6、caret/行点击/键盘 ↑↓←→/Enter/Home/End、`role=tree`/`treeitem`、分页哨兵、`#outlineEmpty`/`#outlineFoot`）；活动栏第 3 模式 + `UiState.panel` 持久化；`jumpToPath` 从 `gotoHit` 抽出（搜索/大纲共用跳转链路）；编辑（`docRevision` 变化）→ 回根展开；**单测 410**（+56：outline core 12 / doc-service 12 / outline-state 32）；冒烟 `smoke-outline` **50/50**（含 10MB 性能、键盘翻页、行高跟随、关闭重开、0 长任务） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **25.1KB gz**（预算 45，slice 6.3 原文视图 +3.0）、`worker.js` **11.7KB gz**（原文索引 +2.3）、`page.css` **6.8KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **28.7KB gz**（预算 45，slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6）、`worker.js` **11.9KB gz**（原文索引 +2.3 / 大纲 +0.2）、`page.css` **7.2KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -306,7 +309,18 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **性能**（Node v24 / 同 V8，`buildRawIndex` + `windowText` 直接基准）：10MB minified（9,965,133 字符）pretty 索引构建 **24.0ms** / 669,412 行；50MB（49,840,274 字符）**106.9ms** / 3,328,372 行；50 行窗口 p95 **0.07–0.21ms**、`locate` p95 **0.06ms**；索引**惰性构建**（首次进入原文才建，不占导入首帧），源文本保留在 Worker（50MB ≈95MB，ADR-0003 修订 §2）。
 - **零异常 / 零长任务**：0 page exception、0 console error；`longtask` 观察器（切换 / 索引构建 / 滚动 / 刷新）全程 **0 条**（ADR-0003 修订 §7）。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
+**slice 6.4 大纲面板验收**（2026-11-03，CfT headless 1440×900；`scripts/smoke-outline.mjs` **37/37**）：
+
+- **形态 / 持久化**：活动栏第 3 个模式按钮（`data-panel-btn="outline"`、`aria-label="大纲"`）→ 320px 左面板、标题「大纲」；无文档时空态「导入文档后显示结构大纲」；`UiState.panel='outline'` 刷新后恢复（空态）。
+- **结构行**：根行 `$`（object / 3 项、`aria-level=1`、恒展开、无 caret）；行 = 键 → 类型 → 项数（容器 `N 项`、标量无 count/caret）；DFS 顺序（子行紧跟父行）；非标识符键路径 `$['a.b']` / `$['it\'s']` 在 `data-path` 与展开跳转上正确。
+- **交互**：caret 点击只改大纲展开态（树行数/滚动/选中**均不变**，有逐项断言）；点击行 = 跳树（`expandTo` 展开祖先 → 居中 → 选中 `.row.is-selected` → 大纲 `.is-current` + `aria-activedescendant`）；键盘 ↑↓ 移动当前行（树选中同步、不跳不滚）、←→ 展开/折叠（`aria-expanded` true↔false 真翻转）、Enter 跳转、焦点留在面板；已加载末行再按 ↓ = 加载下一页（键盘可达分页）；不可见选中不高亮、展开祖先使其可见后自动滚入；原文视图下点行先切回树（`viewMode` 回 `tree`）；关闭面板再打开保留展开现场；点已激活的大纲按钮回文档视图。
+- **行高跟随设置**：默认 24 → 改 22 → 恢复 24，行元素高度 / spacer（`行数×行高`）/ 窗口全部同步。
+- **分页 / 虚拟化**（450 项数组）：展开首屏 **203 行**（200 + 哨兵）→ 键盘 ↓ 翻页 **403** → 真点「加载更多」哨兵 **452 行**（末行 `$.items[449]`，哨兵消失；到末页 hook 返回 `ok:false`）；spacer 精确 = `452 × 24 = 10848`；滚到底渲染 **38**（末窗 `min(屏行 31 + 2×overscan 6, size − start)` 截断），`#outlineFoot` = `已渲染 38 / 452 行`。
+- **生命周期**：换文档 → 回根展开（rows `['$','$.x']`、expanded `['$']`）；编辑（`docRevision` 2）→ `refresh` 回根展开；大纲展开态独立于树。
+- **10MB 性能**：导入→大纲根页 `ready` **63ms**（含导入总时长）；展开 `$.data` **1ms**、`$.data.items` **1ms**；行数 205（根+status+data+items+200 项+哨兵）；滚动/分页 0 长任务、0 异常、0 console error。
+- **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，预算 45）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
@@ -333,6 +347,13 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
   - `RawWindowSource` 与 `RowWindowSource` 的窗口纪律是**两份实现**（单飞/合并/seq 丢弃/overscan 各自一份，raw 无 rowVersion/预取/锚点）；改 S2 语义要同时改两处，后续可抽公共窗口策略。
   - **50MB 原文端到端未实测**（UI 链路 smoke 用 3000 项/15k 行）；但 core 基准已跑 50MB：索引构建 **107.2ms**、窗口 p95 0.071ms（Node v24 同 V8；Chrome Worker 内会略高）。
 - 导出（slice 6.2）：**复制到剪贴板 >20MB 直接拒绝**（提示用文件导出），50MB 的实际剪贴板写入耗时未实测；复制固定 2 空格（不跟随「复制缩进」设置，见 ADR-0012 偏差）。
+- 大纲面板（slice 6.4 / ADR-0013）：
+  - 树里选中一个「大纲中不可见」的节点（祖先未展开 / 未翻页）时，大纲不高亮、不自动展开定位（v1.1 候选）。
+  - **编辑后大纲回根展开**（不保留展开现场）；大纲展开状态**不持久化**（刷新 / 重开页面回到根展开）。
+  - 分页为手动「加载更多」，无预取；50MB 的 `data.items`（184,909 项）需 925 次点击才到底，50MB 大纲未端到端实测（10MB 已验）。
+  - 每个容器页请求都重新枚举该容器子项（`Object.keys` / 数组切片）；单容器页 200 项 <1ms，但**不做容器级缓存**（避免大纲持有「全文档形状」，ADR-0013 背景）。
+  - 虚拟窗口 `spacer` 与树同源受 `MAX_SCROLL_PX` 封顶（>1.4M 行底部不可达，与 ADR-0001 §4 缩放映射一起未实现）；`childInfo` 判定展开行是 O(已加载子项) 扫描（大数组翻页后点 caret 有毫秒级成本）。
+  - 非根容器的页请求失败**无内联错误提示**（`setOpen`/`loadMore` 返回 false、折叠再展开会重试；「加载失败，重试」哨兵留 v1.1）；虚拟窗口计算与搜索共用 `shared/window.computeVirtualWindow`（code review 收口，不再各写一份）。
 - **保真提示（#23）**：ADR-0003 §1–4 已定（导入后 BigInt 精确判定 >15 位整数 / 整数键混排，提示条给**精确数量**，点击跳原文对应行），但**实现从未做**——`import.ts` 只有 parse + 截断修复。它是原文视图产品复评的触发条件（#11 评论 6603943029）。候选/精确两级判定与「57 候选 → 2 失真」实测口径见 ADR-0003 §2。
 - **严格 JSON only**（边界，非 bug）：完整 JSON 只是多了尾逗号（`{"a":{"b":1,}}`）或用了单引号/裸键/注释时仍报 `PARSE`——截断修复只处理 EOF 形态、不擅自删原文符号；是否支持 JSON5 子集/尾逗号容错见 **#20**（待拍板）。
 
