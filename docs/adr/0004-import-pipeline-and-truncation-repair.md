@@ -67,3 +67,55 @@
 - 取消：`Esc` / 关闭按钮 / 点遮罩 → 关闭导入层，原文档与视图状态不变；在途导入回包按 `loadSeq` 丢弃。
 - **从剪贴板导入**按钮（上文决策 3）仍待 #11 实现，本次不新增；`navigator.clipboard.readText()` 路径不变。
 - 安全边界不变：导入仍只走 `core.load` → Worker 解析，文本不进 DOM；替换不影响磁盘原文件。
+
+## 修订（2026-11-03）：截断修复实现方案（#8 / slice 6.0）
+
+> 依据：上文 6–8 条与 `docs/design/reassess-fidelity.md` §6.2 的精确规则表；用户拍板「下一刀 = #8」。
+
+上文已定「只做语法层闭合、保留 provenance、导出带标记」；本节把**实现形状**定下来，不改产品语义。
+
+### 1. 模块 seam：`core/repair.ts` 纯函数（不抛错、不碰 Node/DOM）
+
+```ts
+repairTruncatedJson(source: string): RepairAttempt
+// RepairAttempt = { status: 'none' | 'repaired' | 'unrepairable',
+//                   text?, truncatedAt?, counts?, ops?, summaryText?, unrepairableReason? }
+```
+
+- **扫描器驱动**（不是拿 V8 错误串做字符串手术）：单趟走状态机（容器栈 / 字符串 / 数字 / 字面量 / 成员状态），
+  在 EOF 处按 §6.2 的 6 条规则决定「删多少、补多少」；产出 `ops` 的 `at` 一律指向**原文本**偏移。
+- **自校验**：修复结果必须 `JSON.parse` 通过才算 `repaired`；否则 `unrepairable`（reason = `not-eof` / `still-invalid`）。
+- **非 EOF 形态**（`{"a":1}XYZ`、`{a:1}`、`[1,2]garbage` 等）→ `unrepairable`，**不猜内容、不静默截断**。
+- `status: 'none'` 只在原文本本来可解析时返回（两个「无需修复」fixture）；导入管线只在 `JSON.parse` 失败时才调用本模块。
+
+### 2. provenance 形状：按 §6.3 落 `RepairProvenance`（替代原 `{truncated, applied[]}` 占位）
+
+```ts
+RepairProvenance = { status, truncatedAt?, parseError?, summaryText?, counts?, ops? }
+RepairCounts = { brackets, quotes, commas, deletedChars }
+RepairOp = { at, op: 'insert' | 'delete', text, scope: 'container'|'string'|'token'|'member'|'comma', note }
+```
+
+- `meta.repair` **只在 `repaired` 时挂上**；`unrepairable` 仍抛原 `PARSE` 错误（带行列），不产生值图。
+- `summaryText` 由 core 生成（中文、零计数项省略），UI 直接展示；`ops[].note` 供摘要列表逐条展示。
+- `doc-service.load` 在 `meta.repair` 存在时补发既有 `CoreEvent { t: 'repair' }`（事件类型早已定义，此前无人发）。
+
+### 3. UI：顶部修复条 32px + 摘要 + 关闭（v1）
+
+- **修复条**（direction §4 的 32px 修复条）：`toolbar` 下方、常驻到用户关闭或重新导入；
+  文案 = `summaryText`；右侧「摘要」展开/收起 ops 列表（每条一行 `note`）、`×` 关闭；`aria-live="polite"`、`role="status"`。
+- **状态栏**加「已修复截断」角标（与「只读 · 原文件不变」并列），关闭修复条后角标保留（数据仍不完整）。
+- 「关闭修复、只看错误」的**偏好开关延后到设置面板**（`ViewStateStore` 未接线）：v1 总是尝试修复；
+  这是与上文第 6 条的唯一偏差，记入 README §11 已知差距。
+
+### 4. 导出：文件名后缀（不往 JSON 里塞注释）
+
+`base` + `-truncated-repaired` +（有临时修改时 `-edited`）+ `.json`；内容 = 修复后的值图。
+
+### 5. 验收
+
+- 单测：`tests/unit/core/repair.test.ts` 覆盖 `reassess-fidelity.md` §6.1 的 **18 个 fixture**（16 截断 + 2 无需修复）
+  + 4 个 `unrepairable` 反例；断言修复文本逐字、`counts`、`ops` 偏移、`summaryText`、自校验。
+- 管线：`doc-service` 单测断言「截断 → 值图 + `meta.repair.status='repaired'` + repair 事件」「非 EOF → 原 `PARSE`」。
+- 冒烟：`scripts/smoke-repair.mjs`（CF headless）——截断粘贴 → 修复条文案/摘要展开/状态栏角标/关闭；
+  非截断错误仍报错；合法 JSON 无修复条；导出文件名带后缀；0 异常 / 0 console error。
