@@ -198,6 +198,36 @@ kbd {
 .iconbtn svg { width: 15px; height: 15px; display: block; }
 .linkbtn { color: var(--accent-text, var(--accent)); text-decoration: none; border-bottom: 1px dashed currentColor; }
 
+/* 导出分体按钮（ADR-0012）：主按钮执行上次方式 + 箭头选另一种 */
+.splitbtn { display: inline-flex; align-items: stretch; flex: 0 0 auto; }
+.splitbtn__main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.splitbtn__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+  padding: 0;
+  border-left-color: var(--border-subtle, var(--border));
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  background: var(--bg-panel-2);
+  color: var(--text-2);
+}
+.splitbtn__caret:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text); }
+.splitbtn__caret[aria-expanded="true"] { background: var(--bg-elevated); color: var(--text); }
+.splitbtn__caret svg { width: 12px; height: 12px; display: block; }
+.splitbtn__caret:disabled { cursor: not-allowed; }
+.exportmenu { min-width: 208px; }
+.exportmenu__item { display: flex; align-items: center; gap: 6px; }
+.exportmenu__check {
+  display: inline-block;
+  width: 12px;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent-text, var(--accent));
+}
+
 /* ---------------- workbench ---------------- */
 
 .workbench { flex: 1 1 auto; min-height: 0; display: flex; position: relative; overflow: hidden; background: var(--bg-app); }

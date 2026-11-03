@@ -16,6 +16,7 @@
     "smoke:copy": "node scripts/smoke-copy.mjs",
     "smoke:repair": "node scripts/smoke-repair.mjs",
     "smoke:settings": "node scripts/smoke-settings.mjs",
+    "smoke:export": "node scripts/smoke-export.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

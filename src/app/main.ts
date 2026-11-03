@@ -21,6 +21,12 @@ import type { EditReply, LoadReply } from '../protocol/messages';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
 import { SettingsState, type SettingsKey } from '../viewmodel/settings-state';
+import {
+  CLIPBOARD_MAX_BYTES,
+  clipboardRefusal,
+  normalizeExportMode,
+  type ExportMode,
+} from '../viewmodel/export-state';
 import { SettingsPanel } from '../view/panels/settings-panel';
 import { createViewStateStore } from './storage';
 
@@ -45,6 +51,8 @@ const fileChip = el<HTMLButtonElement>('fileChip');
 const fileName = el('fileName');
 const fileMeta = el('fileMeta');
 const exportBtn = el<HTMLButtonElement>('exportBtn');
+const exportMenuBtn = el<HTMLButtonElement>('exportMenuBtn');
+const exportMenu = el('exportMenu');
 const expandAllBtn = el<HTMLButtonElement>('expandAllBtn');
 const collapseAllBtn = el<HTMLButtonElement>('collapseAllBtn');
 const editBadge = el<HTMLButtonElement>('editBadge');
@@ -203,6 +211,7 @@ function applySettings(): void {
 
 settings.subscribe(() => applySettings());
 applySettings();
+syncExportUi();
 
 /* ---------------- import layer（文档入口层） ---------------- */
 
@@ -345,7 +354,8 @@ function onLoaded(reply: LoadReply): void {
   fileChip.hidden = false;
   fileName.textContent = reply.meta.name;
   fileMeta.textContent = formatBytes(reply.meta.bytes);
-  exportBtn.disabled = false;
+  setExportButtonsDisabled(false);
+  syncExportUi();
   expandAllBtn.disabled = false;
   collapseAllBtn.disabled = false;
   // 新文档：清空编辑会话（slice 5）
@@ -454,7 +464,11 @@ collapseAllBtn.addEventListener('click', () => {
 });
 
 exportBtn.addEventListener('click', () => {
-  void exportDoc();
+  void runExportMode(currentExportMode());
+});
+exportMenuBtn.addEventListener('click', () => {
+  if (exportMenu.hidden) openExportMenu();
+  else closeExportMenu();
 });
 editBadge.addEventListener('click', () => {
   void resetEdits();
@@ -568,7 +582,7 @@ function renderEditBadge(): void {
   editBadge.hidden = count === 0;
   editBadge.textContent = `已修改 ${count} 处`;
   editBadge.classList.toggle('is-dirty', count > 0);
-  exportBtn.title = count > 0 ? '导出当前值图（含临时修改，文件名带 -edited）' : '导出当前值图';
+  syncExportUi();
 }
 
 /** 替换文档会丢弃临时修改：有修改时先确认（edit-spec §5）。 */
@@ -712,26 +726,164 @@ function exportName(name: string, edited: boolean, repaired = false): string {
 }
 
 /** 导出当前值图（唯一落盘动作；`-edited` 后缀；ADR-0006 §2）。 */
+/* ---------------- 导出（ADR-0012）：下载文件 / 复制到剪贴板 分体按钮 ---------------- */
+
+/** 上次执行的导出动作（dev hook / 验收用；不保留文本） */
+let exportLastAction: { mode: ExportMode; name?: string; bytes?: number; copied?: boolean } | null = null;
+
+function exportMenuItems(): HTMLButtonElement[] {
+  return Array.from(exportMenu.querySelectorAll<HTMLButtonElement>('[data-export-mode]'));
+}
+
+function setExportButtonsDisabled(disabled: boolean): void {
+  exportBtn.disabled = disabled;
+  exportMenuBtn.disabled = disabled;
+}
+
+function currentExportMode(): ExportMode {
+  return settings.uiState().exportMode;
+}
+
+/** 同步主按钮文案与菜单勾选（方式变化 / 临时修改计数变化时调用）。 */
+function syncExportUi(): void {
+  const mode = currentExportMode();
+  const base = mode === 'file' ? '导出 JSON 文件' : '复制 JSON 到剪贴板';
+  const hint = editState.dirty ? '（含临时修改）' : '';
+  exportBtn.title = `${base}${hint}`;
+  exportBtn.setAttribute('aria-label', `${base}${hint}`);
+  for (const item of exportMenuItems()) {
+    const checked = item.dataset.exportMode === mode;
+    item.setAttribute('aria-checked', String(checked));
+    const check = item.querySelector<HTMLElement>('.exportmenu__check');
+    if (check) check.textContent = checked ? '✓' : '';
+  }
+}
+
+function positionExportMenu(): void {
+  const anchor = exportMenuBtn.getBoundingClientRect();
+  const rect = exportMenu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchor.right - rect.width, window.innerWidth - rect.width - 8));
+  const top = Math.min(anchor.bottom + 4, window.innerHeight - rect.height - 8);
+  exportMenu.style.left = `${left}px`;
+  exportMenu.style.top = `${Math.max(8, top)}px`;
+}
+
+function openExportMenu(): void {
+  if (exportMenuBtn.disabled) return;
+  exportMenu.hidden = false;
+  exportMenuBtn.setAttribute('aria-expanded', 'true');
+  positionExportMenu();
+  const items = exportMenuItems();
+  const target = items.find((item) => item.dataset.exportMode === currentExportMode()) ?? items[0];
+  target?.focus();
+}
+
+function closeExportMenu(focusBack = false): void {
+  if (exportMenu.hidden) return;
+  exportMenu.hidden = true;
+  exportMenuBtn.setAttribute('aria-expanded', 'false');
+  if (focusBack) exportMenuBtn.focus();
+}
+
+/** 记住本次方式（写穿 UiState，持久化）并同步 UI。 */
+function rememberExportMode(mode: ExportMode): void {
+  settings.setUi({ exportMode: mode });
+  syncExportUi();
+}
+
+async function runExportMode(mode: ExportMode): Promise<void> {
+  if (mode === 'clipboard') await copyDocJson();
+  else await exportDoc();
+}
+
+/** 文件导出（既有行为）：Blob + `<a download>`，文件名带 -edited / -truncated-repaired。 */
 async function exportDoc(): Promise<void> {
   if (!rootId || !meta) return;
-  exportBtn.disabled = true;
+  setExportButtonsDisabled(true);
   try {
-    const { text } = await core.exportDoc(rootId, 2);
+    const { text, bytes } = await core.exportDoc(rootId, 2);
+    const name = exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
+    link.download = name;
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    exportLastAction = { mode: 'file', name, bytes };
   } catch (error) {
     showError(error);
   } finally {
-    exportBtn.disabled = false;
+    setExportButtonsDisabled(false);
   }
 }
+
+/**
+ * 复制当前值图 JSON（ADR-0012 §2/§4）：与文件导出逐字同一份文本；
+ * >20MB 拒绝并提示用文件导出；剪贴板写入复用 ADR-0010 §7 的零权限路径。
+ */
+async function copyDocJson(): Promise<void> {
+  if (!rootId || !meta) return;
+  setExportButtonsDisabled(true);
+  try {
+    const reply = await core.exportDoc(rootId, 2);
+    const refusal = clipboardRefusal(reply.bytes);
+    if (refusal) {
+      exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied: false };
+      showToast(refusal, 4000, 'error');
+      return;
+    }
+    const copied = await writeClipboard(reply.text);
+    exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied };
+    if (copied) showToast('已复制：JSON', 2000, 'success');
+    else showToast('复制失败：请改用「导出 JSON 文件」', 4000, 'error');
+  } catch (error) {
+    showError(error);
+  } finally {
+    setExportButtonsDisabled(false);
+  }
+}
+
+exportMenu.addEventListener('click', (event: MouseEvent) => {
+  const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-export-mode]');
+  if (!item) return;
+  const mode = normalizeExportMode(item.dataset.exportMode);
+  closeExportMenu();
+  rememberExportMode(mode);
+  void runExportMode(mode);
+});
+exportMenu.addEventListener('keydown', (event: KeyboardEvent) => {
+  if (event.key === 'Escape') {
+    closeExportMenu(true);
+    return;
+  }
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
+    return;
+  }
+  event.preventDefault();
+  const items = exportMenuItems();
+  const current = document.activeElement as HTMLElement | null;
+  const index = current ? items.findIndex((item) => item === current) : -1;
+  let next: number;
+  if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length;
+  else next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length;
+  items[next]?.focus();
+});
+document.addEventListener(
+  'pointerdown',
+  (event: PointerEvent) => {
+    if (exportMenu.hidden) return;
+    const target = event.target as Node | null;
+    if (target && (exportMenu.contains(target) || exportMenuBtn.contains(target))) return;
+    closeExportMenu();
+  },
+  true,
+);
+window.addEventListener('resize', () => closeExportMenu());
 
 function showContextMenu(path: string, x: number, y: number, kind: JsonKind): void {
   ctxPath = path;
@@ -1199,6 +1351,39 @@ function showError(error: unknown): void {
   showToast(formatCoreError(error), 4000, 'error');
 }
 
+/** 导出视图态快照（dev hook 用；不返回文本本体，避免把大文本塞进协议）。 */
+function exportHookState(): {
+  mode: ExportMode;
+  menuOpen: boolean;
+  menuItems: { mode: string; label: string; checked: boolean; focused: boolean }[];
+  mainLabel: string;
+  mainText: string;
+  disabled: { main: boolean; caret: boolean };
+  lastAction: typeof exportLastAction;
+  clipboardMaxBytes: number;
+} {
+  return {
+    mode: currentExportMode(),
+    menuOpen: !exportMenu.hidden,
+    menuItems: exportMenuItems().map((item) => {
+      // 去掉勾选列（✓ 与标签同属按钮 textContent），label 只保留动作文案
+      const clone = item.cloneNode(true) as HTMLElement;
+      clone.querySelector('.exportmenu__check')?.remove();
+      return {
+        mode: item.dataset.exportMode ?? '',
+        label: (clone.textContent ?? '').trim(),
+        checked: item.getAttribute('aria-checked') === 'true',
+        focused: document.activeElement === item,
+      };
+    }),
+    mainLabel: exportBtn.getAttribute('aria-label') ?? '',
+    mainText: exportBtn.textContent ?? '',
+    disabled: { main: exportBtn.disabled, caret: exportMenuBtn.disabled },
+    lastAction: exportLastAction,
+    clipboardMaxBytes: CLIPBOARD_MAX_BYTES,
+  };
+}
+
 /* ---------------- resize ---------------- */
 
 const resizeObserver = new ResizeObserver(() => {
@@ -1407,6 +1592,22 @@ if (!isExtension) {
     toastText: () => (toast.hidden ? '' : (toast.textContent ?? '')),
 
     // ---- 截断修复 dev hook（契约见 docs/adr/0004 修订 §6 验收）----
+    // ---- 导出 dev hook（契约见 docs/adr/0012 §6/§7）----
+    exportState: () => exportHookState(),
+    exportMenuOpen: () => {
+      exportMenuBtn.click();
+      return exportHookState();
+    },
+    exportClick: () => {
+      exportBtn.click();
+      return true;
+    },
+    exportChoose: (mode: ExportMode) => {
+      const item = exportMenuItems().find((entry) => entry.dataset.exportMode === normalizeExportMode(mode));
+      item?.click();
+      return Boolean(item);
+    },
+
     // ---- 设置 dev hook（契约见 docs/adr/0011 §7）----
     settingsState: () => ({
       ...settings.snapshot(),

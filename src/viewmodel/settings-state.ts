@@ -7,6 +7,7 @@
  * 红线：只存本地（chrome.storage.local / localStorage 兜底），永不存文档内容。
  */
 import type { CopyFormat } from '../protocol/types';
+import { normalizeExportMode, type ExportMode } from './export-state';
 
 export type SettingsKey =
   | 'theme'
@@ -42,6 +43,8 @@ export interface UiState {
   panel: 'none' | 'doc' | 'search' | 'settings';
   /** 右侧工作区折叠 */
   railCollapsed: boolean;
+  /** 导出方式（ADR-0012 §7）：主按钮执行上次用过的方式 */
+  exportMode: ExportMode;
 }
 
 export const SETTINGS_STORAGE_KEY = 'tjv.settings.v1';
@@ -62,7 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   adaptiveExpand: true,
 };
 
-export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false };
+export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, exportMode: 'file' };
 
 /** `app/storage.ts` 的 ViewStateStore 结构化子集（便于单测注入 fake） */
 export interface SettingsStore {
@@ -106,6 +109,7 @@ export function normalizeUiState(raw: unknown): UiState {
   return {
     panel: panel === 'none' || panel === 'doc' || panel === 'search' || panel === 'settings' ? panel : DEFAULT_UI_STATE.panel,
     railCollapsed: pickBoolean(bag.railCollapsed, DEFAULT_UI_STATE.railCollapsed),
+    exportMode: normalizeExportMode(bag.exportMode),
   };
 }
 
