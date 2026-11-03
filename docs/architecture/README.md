@@ -202,7 +202,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 自适应 + 复制 4 格式）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -213,6 +213,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 4.5 全部展开 / 全部收起 + 小文档自适应展开（#9 / ADR-0002 修订） | ✅ | `RowModel.countAllExpandedRows/expandAll/expandIfAtMost/collapseAll` + `DocService` 的 `expandAll`/`collapseAll` 命令（changed 才 `rowVersion++`）+ `load` 自适应（≤500 节点全展开，带限计数早停 0.14ms）；顶部工具栏两个图标按钮（`#expandAllBtn`/`#collapseAllBtn`，无快捷键）；**单测 137**（新增 21） |
 | 5 子树编辑 + undo + 导出（#16 / ADR-0006） | ✅ | `core/edit-history.ts`（深度 100、redo 截断、LIFO reset）+ `DocService` 的 `getNodeJson/replaceNode/undo/redo/reset/exportDoc`（5MB `TOO_LARGE`、`PARSE` 带行列、no-op 不推进版本、`STALE_DOC` 守卫、每根一份历史）；`viewmodel/edit-state.ts` + 树意图（dblclick / 右键菜单 / F2 / `setChangedPath`）；`view/panels/{code-editor,subtree-editor}.ts`（CM6 懒加载、lint 门控 Apply、720×520 弹层）；`main.ts` 接线（徽标 / ⌘Z ⇧⌘Z / 重置 / `-edited` 导出 / 未保存确认）；**单测 177** |
 | 5.5 复制 4 格式（#9 / ADR-0010） | ✅ | `core/copy.ts`（四格式文本统一生成：子树 JSON 2 空格 / 规范路径 / 标量原值 / 键名）+ `DocService.copyNode`（**只读**，不推进 `docRevision`/`rowVersion`；子树 JSON 5MB `TOO_LARGE`）；行右键菜单 5 项（容器禁用「原始值」、根禁用「键名」，`title` 说明）+ ↑↓/Home/End 键盘 + 行尾操作浮条（复制子树 JSON 快路径 / 编辑弹层，鼠标专用 `tabindex="-1"`）；零权限剪贴板（`navigator.clipboard.writeText` → `execCommand` 回退 → toast 提示手动），**不声明 `clipboardWrite`**；**单测 199**（新增 22） |
+| 6.0 截断修复（#8 / ADR-0004 修订） | ✅ | `core/repair.ts` 单趟状态机（§6.2 六条规则；**只语法闭合、不猜内容**；末尾自校验 `JSON.parse`；拒绝态 `not-eof`/`still-invalid`）→ `import.ts` **仅在 PARSE 失败时**调用并挂 `meta.repair`，`doc-service` 补发既有 `repair` 事件；`RepairProvenance` 按 §6.3（`status`/`counts`/`ops`/`summaryText`）；顶部修复条 **32px**（摘要逐条展开 + 关闭，`role=status`/`aria-live=polite`）+ 状态栏「已修复截断」角标 + 导出 `-truncated-repaired` 后缀；**单测 254**（+55：repair 51 / doc-service 4）；冒烟 `smoke-repair` **14/14** |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
 **产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **18.1KB gz**（预算 45）、`worker.js` **6.6KB gz**、`page.css` **5.6KB gz**；CM6 **首开闭包 130.6KB gz ≤140**（11 个 lazy chunk，仅首次打开编辑器加载；`page.js` 内不含 CM6）；构建 ~35ms。
@@ -257,7 +258,17 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **体积**：`page.js` 17.0→**18.1KB gz**（预算 45），worker 6.3→6.6；CM6 闭包不变。
 - **回归**：`npm run smoke` / `smoke:ext` / `smoke-search` **82/82** / `smoke-extension-search` **56/56** / `smoke-expand` **11/11** / `smoke-edit` **14/14** 全绿；截图 `.spike/smoke/copy-{menu-container,menu-root,toast}.png`。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
+**slice 6.0 截断修复验收**（2026-11-03，CfT headless 1440×900；`scripts/smoke-repair.mjs` **14/14**；`tests/unit/core/repair.test.ts` 51）：
+
+- **修复**：`{"a":1,"b":"hello wor` → 补 1 个结束引号 + 1 个 `}`，值图 `{a:1,b:"hello wor"}`；`meta.repair = {status:'repaired', truncatedAt:21, counts:{brackets:1,quotes:1,commas:0,deletedChars:0}, ops:[…]}`；修复条文案含「仅语法闭合，未修改任何已有值」。
+- **拒绝修复**：`{"a":1}XYZ`（非 EOF 形态）→ 导入层 PARSE、零修复痕迹；合法 JSON / 尾部空白 → `status:'none'`、无修复条。
+- **提示条**：32px / `role=status` / `aria-live=polite`；「摘要」展开逐条 ops（`@21 字符串未闭合 → 补结束引号`、`@21 补 1 个闭合符`}`（对应未闭合的 {@0）`）；**关闭只隐藏条**，状态栏角标与导出后缀保留；重新导入合法文档后清空。
+- **导出**：`cut.json` → `cut-truncated-repaired.json`（不往 JSON 里塞注释）。
+- **fixture 矩阵**：`reassess-fidelity.md` §6.1 的 18 个（16 截断逐字断言 + 2 无需修复）+ 7 个拒绝态 + counts/ops 不变量；不猜内容、任何输入不抛错。
+- **性能**：修复只在 `JSON.parse` 失败时触发（合法文档零成本）；纯函数扫描 + 切片应用 O(n)，3.6MB 截断文本约 40ms。
+- **回归**：`smoke` / `smoke:ext` / `smoke-search` 82/82 / `smoke-extension-search` 56/56 / `smoke-expand` 11/11 / `smoke-edit` 14/14 / `smoke-copy` 27/27 全绿；截图 `.spike/smoke/repair-{bar,summary,closed}.png`。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
@@ -274,6 +285,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。
 - 复制（slice 5.5）：子树 JSON >5MB 只能走导出（`TOO_LARGE` toast 引导）；「缩进/压缩跟随当前设置」未做（设置面板与 `ViewStateStore` 未接线，固定 2 空格，见 ADR-0010 §5）；**真实扩展页未实测剪贴板**（HTTP 模式验到 `navigator.clipboard` 逐字读回，扩展内无 `__tjv`，需真机向导补）；菜单未加复制快捷键（⌘C 保留给原生文本选择，见 ADR-0010 §8）。
 
+- 截断修复（slice 6.0 / #8）：**「关闭修复、只看错误」的偏好开关延后到设置面板**（`ViewStateStore` 未接线，v1 总是尝试修复，ADR-0004 修订 §3）；修复摘要里的 `at` 目前只展示偏移，**跳到原始文本对应行**随 #11 原始文本视图（行号反查能力已有）；修复耗时按「仅解析失败时才扫描」控制成本，50MB 级截断文本未实测。
 ## 12. 未实现设计（多文档工作区标签，#18）
 
 > 设计已定、**尚未实现**。两项后续需求中「全部展开 / 收起 + 自适应展开」**已于 2026-11-02 实现**（见 §11 slice 4.5）；

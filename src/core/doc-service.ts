@@ -136,6 +136,8 @@ export class DocService {
       this.emit({ t: 'load-progress', loadId, phase: 'decode' });
       const { value, meta } = loadDocument({ source: cmd.source, data: cmd.data, name: cmd.name });
       this.emit({ t: 'load-progress', loadId, phase: 'parse' });
+      // 截断修复（#8 / ADR-0004 修订）：provenance 已挂在 meta 上，事件供 UI 即时提示（与 LoadReply 冗余但不冲突）
+      if (meta.repair?.status === 'repaired') this.emit({ t: 'repair', repair: meta.repair });
 
       // 让出一个微任务：同一 tick 里后到的 load 可以抢占这次 load
       await Promise.resolve();
