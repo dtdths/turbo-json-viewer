@@ -210,6 +210,10 @@ kbd {
   flex-direction: column;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
+  /* 空态/替换层遮罩是 fixed z-index:30，且从活动栏右侧铺满——
+     左面板必须在其之上，否则初始视图里切「搜索/设置」视觉上像点了没反应（bug #2） */
+  position: relative;
+  z-index: 31;
 }
 body[data-panel="search"] .side--left, body[data-panel="settings"] .side--left { display: flex; }
 /* 左面板同一时刻只显示一种模式的内容 */

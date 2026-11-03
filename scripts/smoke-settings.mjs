@@ -79,6 +79,38 @@ try {
     }
   };
 
+  // ---- phase 0：空态（尚无文档）点齿轮 → 面板必须在遮罩之上可见（bug 回归）----
+  await runPhase(
+    'empty-open',
+    `(async () => {
+      const out = {};
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector('[data-panel-btn="settings"]').click();
+      await sleep(220);
+      const side = document.getElementById('leftPanel').getBoundingClientRect();
+      const probe = document.elementFromPoint(side.x + 120, side.y + 200);
+      out.emptyState = {
+        panel: document.body.dataset.panel ?? null,
+        emptyVisible: !document.getElementById('empty')?.classList.contains('is-hidden'),
+        // 面板中心点命中的元素必须属于设置面板（而不是被空态遮罩 .empty 盖住）
+        panelTopmost: probe ? Boolean(probe.closest('#settingsPanel')) : false,
+        rows: [...document.querySelectorAll('#settingsPanel [data-setting]')].map((n) => n.dataset.setting ?? ''),
+        sideWidth: Math.round(side.width),
+      };
+      return out;
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'settings-empty.png'));
+  await runPhase(
+    'empty-close',
+    `(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector('[data-panel-close]').click();
+      await sleep(150);
+      return { emptyStateClosed: document.body.dataset.panel ?? null };
+    })()`,
+  );
+
   // ---- phase 1：默认值 + 打开设置面板 ----
   await runPhase(
     'boot',
@@ -248,6 +280,16 @@ const settingsOf = (bag) => bag ?? {};
 const SUBTREE_A_4 = JSON.stringify({ 'b.c': 'x' }, null, 4);
 
 const checks = {
+  // 空态下点齿轮：面板在遮罩之上（bug #2 回归），关闭后回到文档视图
+  'empty-state:panel-over-overlay':
+    report.emptyState?.panel === 'settings' &&
+    report.emptyState?.emptyVisible === true &&
+    report.emptyState?.panelTopmost === true &&
+    report.emptyState?.sideWidth === 320 &&
+    JSON.stringify(report.emptyState?.rows) === JSON.stringify(DEFAULT_KEYS),
+  'empty-state:close':
+    report.emptyStateClosed === 'doc',
+
   // 默认值
   'boot:defaults':
     JSON.stringify(
