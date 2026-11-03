@@ -13,9 +13,9 @@
 
 | # | seam | interface | v1 adapter | 测试 adapter | 接口背后藏什么（depth） |
 |---|---|---|---|---|---|
-| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 18 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
-| S2 | viewmodel → view | `RowWindowSource.snapshot()` | `TransportRowSource` | `ScriptedRowSource` | 单飞、合并、seq 丢弃、版本校验、overscan、预取、锚点换算 |
-| S3 | TreeView → 单行 | `RowRenderer` | `DomRowPool` | `RecordingRowRenderer` | 行池复用、textContent、选中/命中态、固定行高纪律 |
+| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 22 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
+| S2 | viewmodel → view | `RowWindowSource.snapshot()` / `RawWindowSource.snapshot()` | `TransportRowSource` + `RawWindowSource` | `ScriptedRowSource` | 单飞、合并、seq 丢弃、版本校验、overscan、预取、锚点换算 |
+| S3 | TreeView → 单行 / RawView → 单行 | `RowRenderer` | `DomRowPool` + `RawView` 行池 | `RecordingRowRenderer` | 行池复用、textContent、选中/命中态、固定行高纪律 |
 | S4 | 全局 → 样式 | `ThemeController` + `RowMetrics` | `tokens.css`（`data-theme`） | `FixedThemeController` | token 名与语义、双主题、Canvas palette 读取 |
 | S5 | 全局 → 宿主 | `ViewStateStore`、`CodeEditor` | `ChromeViewStateStore`、`Cm6Editor` | `MemoryViewStateStore`、`TextareaEditor` | 容量/配额/降级、编辑器生命周期与诊断 |
 
@@ -33,6 +33,10 @@ export interface CoreApi {
   getTrail(r: NodeRef): Promise<TrailReply>;       search(r: SearchRequest): Promise<SearchReply>;     // O(depth) / 不建 root
   cancelSearch(seq: number): void;                 eval(r: EvalRequest): Promise<EvalReply>;           // 新 expr root，LRU 3
   copy(r: CopyRequest): Promise<CopyReply>;        undo(rootId: RootId): Promise<EditReply>;
+  rawOpen(r: { rootId: RootId }): Promise<RawMeta>;                    // 原文行索引（惰性构建，ADR-0003 修订）
+  rawWindow(r: RawWindowRequest): Promise<RawWindow>;                   // 只回行文本（≤4096 字符/行）
+  rawLocate(r: { rootId: RootId; offset: number }): Promise<RawLocateReply>;  // 源偏移 → 1-based 行
+  rawSource(r: { rootId: RootId; maxBytes?: number }): Promise<RawSourceReply>; // 整份原文（20MB 守卫）
   redo(rootId: RootId): Promise<EditReply>;        reset(rootId: RootId): Promise<EditReply>;          // 回到导入值
   profile(rootId: RootId): Promise<ProfileReply>;  stats(rootId: RootId): Promise<StatsReply>;         // 版本/行数只读快照
 }
@@ -48,6 +52,8 @@ export type Command =
   | { t:'search'; rootId:RootId; seq:number; query:string; opts:SearchOpts } | { t:'cancelSearch'; seq:number }
   | { t:'eval'; rootId:RootId; seq:number; expr:string } | { t:'copy'; rootId:RootId; path:Path; format:CopyFormat }
   | { t:'undo'|'redo'|'reset'; rootId:RootId } | { t:'profile'; rootId:RootId }
+  | { t:'rawOpen'; rootId:RootId } | { t:'rawWindow'; rootId:RootId; seq:number; start:number; count:number }
+  | { t:'rawLocate'; rootId:RootId; offset:number } | { t:'rawSource'; rootId:RootId; maxBytes?:number }
   | { t:'stats'; rootId:RootId };
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];
 // src/app/transport/worker-transport.ts —— 3 个方法；替换传输不改调用方
@@ -67,6 +73,7 @@ export interface CoreTransport {
 | `getNodeJson` / `getTrail` | `NodeJsonReply(text, bytes, nodes)` / `TrailReply(MapTrail)` | ≤5MB 否则 `TOO_LARGE`；O(depth)、兄弟 ±2（ADR-0007） |
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
 | `stats` | `StatsReply(rootId, docRevision, rowVersion, totalRows)` | 只读版本/行数快照，不推进任何版本 |
+| `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | `RawMeta(mode,totalLines,chars,maxLineLength,buildMs?,damaged?)` / `RawWindow(seq,start,lines,totalLines,mode,truncated?)` / `RawLocateReply(line,totalLines)` / `RawSourceReply(text,bytes)` | 只读、不推版本；首调惰性建索引；行文本 ≤4096 字符；`rawSource` 超 `maxBytes` 抛 `TOO_LARGE`（ADR-0003 修订） |
 | `eval` | `EvalReply(rootId, docRevision, totalRows, ms)` | 最多保留 3 个结果根 |
 | `copy` / `profile` | `CopyReply(text, bytes)` / `ProfileReply(profile)` | 大子树 `truncated`；profile 可缺省 |
 
@@ -108,6 +115,8 @@ export interface RowWindowSource {
   anchor(): { row: number; offsetPx: number } | null;
 }
 ```
+
+**原文窗口（同纪律，ADR-0003 修订）**：`RawWindowSource` 复用同一套单飞/合并/`seq` 丢弃/overscan；原文不随展开/编辑变化（doc 根生命周期即版本），所以**没有 `rowVersion`**，快照是 `RawSnapshot { mode, lines, start, totalLines, stale }`。
 
 **契约**
 - **单飞 + 合并**：同一时刻最多 1 个 in-flight；新目标覆盖排队目标，不取消 in-flight（回包后按 `seq` 丢弃）。连续拖动最多 1 个在途请求。

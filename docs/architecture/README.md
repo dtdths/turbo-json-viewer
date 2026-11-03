@@ -48,10 +48,11 @@
 
 | module | 职责 | 接口（一句话） |
 |---|---|---|
-| `messages` | 主↔Worker 判别联合：`load/window/toggle/expandTo/replaceNode/getNodeJson/getTrail/search/cancelSearch/stats/eval/copy/undo/redo/reset/profile/cancelLoad` + 回包/事件 | `type Command` / `type Reply` / `type Event` |
-| `types` | `Row`、`RowWindow`、`MapTrail`、`NodeHandle`、`Path`、`DocumentProfile`、`RepairProvenance` | 纯类型 |
-| `versions` | `docRevision` / `rowVersion` / `seq` 的语义与校验谓词 | `isStaleRow(a,b): boolean` |
+| `messages` | 主↔Worker 判别联合：`load/window/toggle/expandTo/replaceNode/getNodeJson/getTrail/search/cancelSearch/stats/eval/copy/rawOpen/rawWindow/rawLocate/rawSource/undo/redo/reset/profile/cancelLoad` + 回包/事件 | `type Command` / `type Reply` / `type Event` |
+| `types` | `Row`、`RowWindow`、`RawMeta`、`RawWindow`、`MapTrail`、`NodeHandle`、`Path`、`DocumentProfile`、`RepairProvenance` | 纯类型 |
+| `versions` | `docRevision` / `rowVersion` / `seq` 的语义与校验谓词；`RAW_CP_EVERY` / `RAW_MAX_LINE_LENGTH` / `RAW_LINE_DISPLAY_MAX` | `isStaleRow(a,b): boolean` |
 | `errors` | 错误码：`STALE_ROW`/`STALE_ROOT`/`STALE_DOC`/`TOO_LARGE`/`TOO_MANY_ROWS`/`PARSE`/`TIMEOUT`/`WORKER_CRASH`/`CANCELLED` | 判别联合的 error variant |
+| `shared/json-lex` | 零依赖单趟 JSON lexer 原语（`lexToken`/`skipWs`/`lexLine`）；core 的 pretty 行走器与 view 的行高亮共用 | `lexLine(line): Run[]`（0.2µs/行） |
 
 ### 3.2 core（Worker 内，框架无关、纯 TS 可单测）
 
@@ -61,7 +62,8 @@
 | `RootStore` | 多根注册表：`doc` / `expr:N` / `repaired`，`docRevision`/`rowVersion`、表达式根 LRU 3 | 已实现 `get/require/ids/values/put/touch/delete/clear`；**`release`/`markStale` 仍是草案**（多文档需补 `close`，见 §12、ADR-0009） | 根坐标与生命周期 |
 | `RowModel` | 可见行模型：per-open 容器 Fenwick、窗口下潜、toggle、replaceNode 增量更新、path↔行号 | `window/toggle/replaceNode/rowOfPath/totalRows` | 固定行高坐标、O(depth·log n) |
 | `identity` | 懒 id（容器）+ `(parent, slot)` 标量句柄；路径⇄句柄；不建全局 parentMap | `idOf/handleAt/pathOf` | 双格式（路径持久化、id 运行期） |
-| `ImportPipeline` | `arrayBuffer`→`TextDecoder`→`JSON.parse`；截断闭合+provenance；保真扫描（BigInt 精确） | `load(input): LoadResult` | 源文本用完即释放 |
+| `ImportPipeline` | `arrayBuffer`→`TextDecoder`→`JSON.parse`；截断闭合+provenance；**源文本保留**（ADR-0003 修订） | `load(input): LoadResult { value, meta, text }` | 源文本留给原文视图/复制原文 |
+| `RawText` | 原文行索引三模式（source/pretty/plain）+ 检查点 + `locate`；惰性构建、不物化全文 | `buildRawIndex(text,{damaged})` / `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | 每 2048 行一个检查点（50MB 19.5KiB）；窗口 p95 0.084ms |
 | `Search` | 全文档键/值扫描 → 命中集合（不建根、不扫 DOM） | `search(root, q, opts): HitSet` | 可取消、渐进返回 |
 | `Expr` | acorn AST + 白名单 walker + 时间/步数/结果预算 → 新根 | `eval(expr, root): ExprResult` | 无 eval/WASM |
 | `EditHistory` | `replaceNode` 的 undo/redo/reset（深度 100，old/new 快照） | `apply/undo/redo/reset` | 与行模型增量更新同事务 |
@@ -74,6 +76,7 @@
 | module | 职责 | 接口（一句话） |
 |---|---|---|
 | `RowWindowSource` | 行窗口状态机：单飞+合并+`seq` 丢弃+`rowVersion` 校验+overscan 8+方向预取+锚点换算 | `setMetrics/scrollTo/request/snapshot/subscribe/invalidate`；快照 `WindowSnapshot { rows, totalRows, start, rowVersion, stale }` |
+| `RawWindowSource` | **原文**窗口状态机（ADR-0003 修订）：单飞+合并+`seq` 丢弃+overscan；原文不需要 `rowVersion`（doc 生命周期即版本） | `open(rootId)`/`setMetrics/scrollTo/request/snapshot/subscribe`；快照 `RawSnapshot { mode, lines, start, totalLines, stale }` |
 | `Selection` | 当前选中 `NodeHandle` + 键盘导航意图 | `select/handle/onChange` |
 | `SearchState` | 命中集合（全部/过滤）、当前命中、`docRevision` 过期判定、结果列表虚拟窗口 | `begin/apply/markStale/next/prev/view/window` |
 | `PanelState` | C 布局：活动栏选中项、左面板开合、右工作区开合与模块可见性 | `setPanel/toggleRail` |
@@ -85,6 +88,7 @@
 | module | 职责 | 接口（一句话） |
 |---|---|---|
 | `TreeView` | 树容器：行池、滚动、选中、命中、a11y activedescendant、锚定 | `render(snapshot)` + `events(TreeIntent)` |
+| `RawView` | 原文视图容器（ADR-0003 修订）：固定行高虚拟化 + 行号 gutter + 横向滚动 + 屏内行高亮 | `render(rawSnapshot)` + `flashLine(line)` + `onScroll(px)` |
 | `RowRenderer` | 单行渲染适配器（v1 = DOM 节点池 + textContent） | `create/update/setSelected/setHit/destroy` |
 | `ActivityBar` / `Toolbar` / `StatusBar` | 外壳：模式切换、文档动作、只读信息 | 事件上抛给 app/viewmodel |
 | `SearchPanel` / `OutlinePanel` / `SettingsPanel` | 左面板（C） | `setModel(model)` + 意图 |
