@@ -66,6 +66,11 @@ const toast = el('toast');
 const searchHost = el('searchPanel');
 const selPath = el('selPath');
 const selMeta = el('selMeta');
+const repairBar = el('repairBar');
+const repairText = el('repairText');
+const repairToggle = el<HTMLButtonElement>('repairToggle');
+const repairOps = el('repairOps');
+const repairClose = el<HTMLButtonElement>('repairClose');
 
 /* ---------------- core + viewmodel + view ---------------- */
 
@@ -300,6 +305,7 @@ function onLoaded(reply: LoadReply): void {
   subtreeEditor.close();
   editState.clear();
   renderEditBadge();
+  renderRepair();
 
   rowSource.setRoot({ rootId: rid, rowVersion, totalRows });
   rowSource.setMetrics(metrics());
@@ -404,6 +410,15 @@ exportBtn.addEventListener('click', () => {
 });
 editBadge.addEventListener('click', () => {
   void resetEdits();
+});
+repairToggle.addEventListener('click', () => {
+  const open = repairOps.hidden;
+  repairOps.hidden = !open;
+  repairToggle.setAttribute('aria-expanded', String(open));
+});
+repairClose.addEventListener('click', () => {
+  // 只关提示条：provenance 仍留在 meta 上（状态栏角标 + 导出后缀继续生效）
+  repairBar.hidden = true;
 });
 ctxMenu.addEventListener('click', (event: MouseEvent) => {
   const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-act]');
@@ -642,9 +657,10 @@ async function resetEdits(skipConfirm = false): Promise<boolean> {
   }
 }
 
-function exportName(name: string, edited: boolean): string {
+function exportName(name: string, edited: boolean, repaired = false): string {
   const base = name.replace(/\.json$/i, '');
-  return `${base}${edited ? '-edited' : ''}.json`;
+  // ADR-0004 §7：修复过的文档导出带后缀（不往 JSON 里塞注释，保持可解析）
+  return `${base}${repaired ? '-truncated-repaired' : ''}${edited ? '-edited' : ''}.json`;
 }
 
 /** 导出当前值图（唯一落盘动作；`-edited` 后缀；ADR-0006 §2）。 */
@@ -657,7 +673,7 @@ async function exportDoc(): Promise<void> {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = exportName(meta.name, editState.dirty);
+    link.download = exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1027,6 +1043,41 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
 
 /* ---------------- status ---------------- */
 
+/* ---------------- 截断修复提示条（#8 / ADR-0004 修订） ---------------- */
+
+/**
+ * 按 meta.repair 渲染顶部修复条：只有 repaired 才显示；摘要列表逐条展示 ops.note。
+ * 关闭只隐藏提示（provenance 保留），重新导入时按新文档重渲染。
+ */
+function renderRepair(): void {
+  const repair = meta?.repair;
+  const repaired = repair?.status === 'repaired';
+  repairBar.hidden = !repaired;
+  repairOps.hidden = true;
+  repairOps.replaceChildren();
+  repairToggle.setAttribute('aria-expanded', 'false');
+  if (!repaired) {
+    repairText.textContent = '—';
+    repairText.removeAttribute('title');
+    repairToggle.hidden = true;
+    return;
+  }
+  repairText.textContent = repair.summaryText ?? '已修复截断（仅语法闭合，未修改任何已有值）';
+  repairText.title = repairText.textContent;
+  const ops = repair.ops ?? [];
+  repairToggle.hidden = ops.length === 0;
+  for (const op of ops) {
+    const row = document.createElement('div');
+    row.className = 'repairbar__op';
+    const at = document.createElement('code');
+    at.textContent = `@${op.at}`;
+    const note = document.createElement('span');
+    note.textContent = op.note;
+    row.append(at, note);
+    repairOps.appendChild(row);
+  }
+}
+
 function updateStatus(): void {
   if (!rootId || !meta) {
     statusRows.textContent = '未打开文档';
@@ -1040,9 +1091,12 @@ function updateStatus(): void {
   statusSize.textContent = `${formatBytes(meta.bytes)} · v${docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
+  // 修复角标独立于修复条显隐：数据仍不完整，状态栏要一直能看出来
+  const repaired = meta.repair?.status === 'repaired';
+  const repairedTag = repaired ? '已修复截断 · ' : '';
   statusState.textContent = editState.dirty
-    ? `临时修改 ${editState.count} 处 · 原文件不变`
-    : '只读 · 原文件不变';
+    ? `${repairedTag}临时修改 ${editState.count} 处 · 原文件不变`
+    : `${repairedTag}只读 · 原文件不变`;
 }
 
 function formatBytes(bytes: number): string {
@@ -1222,7 +1276,11 @@ if (!isExtension) {
     exportDocText: async () => {
       if (!rootId) return null;
       const reply = await core.exportDoc(rootId, 2);
-      return { bytes: reply.bytes, text: reply.text, name: exportName(meta?.name ?? 'doc.json', editState.dirty) };
+      return {
+        bytes: reply.bytes,
+        text: reply.text,
+        name: exportName(meta?.name ?? 'doc.json', editState.dirty, meta?.repair?.status === 'repaired'),
+      };
     },
     editBadgeText: () => ({ hidden: editBadge.hidden, text: editBadge.textContent }),
 
@@ -1279,5 +1337,27 @@ if (!isExtension) {
       }
     },
     toastText: () => (toast.hidden ? '' : (toast.textContent ?? '')),
+
+    // ---- 截断修复 dev hook（契约见 docs/adr/0004 修订 §5）----
+    repairState: () => ({
+      status: meta?.repair?.status ?? 'none',
+      visible: !repairBar.hidden,
+      text: repairText.textContent ?? '',
+      expanded: !repairOps.hidden,
+      ops: Array.from(repairOps.querySelectorAll('.repairbar__op')).map((n) => n.textContent ?? ''),
+      summary: meta?.repair?.summaryText ?? null,
+      counts: meta?.repair?.counts ?? null,
+      truncatedAt: meta?.repair?.truncatedAt ?? null,
+      exportName: meta ? exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired') : null,
+      statusState: statusState.textContent ?? '',
+    }),
+    repairToggle: () => {
+      repairToggle.click();
+      return !repairOps.hidden;
+    },
+    repairClose: () => {
+      repairClose.click();
+      return repairBar.hidden;
+    },
   };
 }

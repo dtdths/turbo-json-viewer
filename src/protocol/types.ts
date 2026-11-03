@@ -78,15 +78,44 @@ export interface DocumentProfile {
   nodeCount: number;
 }
 
-export interface RepairMark {
-  offset: number;
-  kind: 'open-brace' | 'open-bracket' | 'string-quote' | 'trailing-comma' | 'truncate';
-  inserted: string;
+/** 修复状态（ADR-0004 §6 / 修订 2026-11-03）：none=原文本可解析、repaired=已语法闭合、unrepairable=非 EOF 形态 */
+export type RepairStatus = 'none' | 'repaired' | 'unrepairable';
+
+/** 修复计数（摘要用；零项省略） */
+export interface RepairCounts {
+  /** 补的 `}` / `]` 个数 */
+  brackets: number;
+  /** 补的结束引号个数 */
+  quotes: number;
+  /** 删掉的尾逗号个数 */
+  commas: number;
+  /** 删掉的字符总数（含尾逗号；即所有 delete op 的 text.length 之和） */
+  deletedChars: number;
 }
 
+/** 一条修复操作；`at` 指向**原文本**偏移（insert 的 at = 原文本长度） */
+export interface RepairOp {
+  at: number;
+  op: 'insert' | 'delete';
+  text: string;
+  scope: 'container' | 'string' | 'token' | 'member' | 'comma';
+  /** 摘要列表逐条展示的中文说明 */
+  note: string;
+}
+
+/** 修复 provenance（ADR-0004 §6.3）：挂在 DocumentMeta 上，不随视图切换丢失 */
 export interface RepairProvenance {
-  truncated: boolean;
-  applied: RepairMark[];
+  status: RepairStatus;
+  /** 触发修复的 EOF 位置（= 原文本长度） */
+  truncatedAt?: number;
+  /** 原 JSON.parse 错误信息 */
+  parseError?: string;
+  /** 一行中文摘要（UI 直接展示） */
+  summaryText?: string;
+  counts?: RepairCounts;
+  ops?: RepairOp[];
+  /** unrepairable 的原因：not-eof=错误不在末尾 / still-invalid=修复后仍不可解析 */
+  unrepairableReason?: 'not-eof' | 'still-invalid';
 }
 
 export interface DocumentMeta {

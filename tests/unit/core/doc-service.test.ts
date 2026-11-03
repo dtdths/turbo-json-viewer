@@ -814,3 +814,59 @@ describe('DocService — copyNode（复制四格式 / ADR-0010）', () => {
     ).rejects.toBeTruthy();
   });
 });
+
+describe('DocService — 截断修复（#8 / ADR-0004 修订）', () => {
+  it('截断源 → 值图可用 + meta.repair（repaired）+ repair 事件 + 摘要', async () => {
+    const svc = new DocService();
+    const events: CoreEvent[] = [];
+    svc.on((event) => events.push(event));
+
+    const reply = await load(svc, '{"a":1,"b":"hello wor');
+    expect(reply.meta.repair).toMatchObject({ status: 'repaired', truncatedAt: 21 });
+    expect(reply.meta.repair?.parseError).toBeTruthy();
+    expect(reply.meta.repair?.summaryText).toContain('仅语法闭合');
+    expect(reply.meta.repair?.ops?.length ?? 0).toBeGreaterThan(0);
+
+    const repairEvents = events.filter((event) => event.t === 'repair');
+    expect(repairEvents).toHaveLength(1);
+    expect(repairEvents[0]).toMatchObject({ t: 'repair', repair: { status: 'repaired' } });
+
+    // 值图 = 修复后的值
+    const root = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$' });
+    expect(JSON.parse(root.text)).toEqual({ a: 1, b: 'hello wor' });
+    // 小文档自适应展开照常（4 个节点：根 + a + b + 值行？只断言 > 0）
+    expect(reply.totalRows).toBeGreaterThan(0);
+  });
+
+  it('非 EOF 形态语法错误 → 仍抛 PARSE，不产生根（修复不猜内容）', async () => {
+    const svc = new DocService();
+    const err = await errorOf(
+      svc.dispatch({ t: 'load', loadId: 1, source: 'paste', data: '{"a":1}XYZ' }),
+    );
+    expect(err.code).toBe('PARSE');
+    expect(err.line).toBeDefined();
+    const statsErr = await errorOf(svc.dispatch({ t: 'stats', rootId: DOC_ROOT }));
+    expect(statsErr.code).toBe('NO_ROOT');
+  });
+
+  it('合法 JSON → 无 meta.repair（不产生修复痕迹）', async () => {
+    const svc = new DocService();
+    const reply = await load(svc);
+    expect(reply.meta.repair).toBeUndefined();
+  });
+
+  it('修复后的文档可继续编辑（replaceNode 走正常版本语义）', async () => {
+    const svc = new DocService();
+    const reply = await load(svc, '{"a":1,"b":"hello wor');
+    const edited = await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.a',
+      docRevision: reply.docRevision,
+      jsonText: '42',
+    });
+    expect(edited.docRevision).toBe(2);
+    const root = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$' });
+    expect(JSON.parse(root.text)).toEqual({ a: 42, b: 'hello wor' });
+  });
+});

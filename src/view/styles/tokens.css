@@ -87,6 +87,7 @@
 
   /* ---- metrics ---- */
   --toolbar-h: 48px;
+  --repairbar-h: 32px;
   --banner-h: 32px;
   --status-h: 26px;
   --row-h: 24px;           /* tree row */

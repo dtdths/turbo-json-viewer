@@ -1,15 +1,17 @@
 /**
- * core/import — 导入管线（v0 skeleton）。
+ * core/import — 导入管线。
  *
  * 真相源 = JSON.parse 值图；源文本解析后即释放（不保留原始文本视图，ADR-0003）。
  * 解码在 Worker 内做：ArrayBuffer → TextDecoder('utf-8')（ir-spec §5）。
  *
- * v0 不做截断修复：保守闭合 + 修复标记/摘要属于 #8 / ADR-0004，
- * 见 loadDocument 末尾的 TODO。输入不完整时这里直接抛 PARSE。
+ * 截断修复（#8 / ADR-0004 修订）：只在 JSON.parse 失败时调用 `core/repair.ts`；
+ * 只做语法层闭合（不猜内容），修复结果自校验后才采纳，并把 provenance 挂到 meta.repair。
+ * 非 EOF 形态的语法错误仍按原样抛 PARSE（带行列），不产生值图。
  */
 import { CoreError } from '../protocol/errors';
 import type { LoadSource } from '../protocol/messages';
-import type { DocumentMeta } from '../protocol/types';
+import type { DocumentMeta, RepairProvenance } from '../protocol/types';
+import { repairTruncatedJson } from './repair';
 
 export interface LoadDocumentInput {
   source: LoadSource;
@@ -65,30 +67,51 @@ export function offsetToLineColumn(text: string, offset: number): { line: number
   return { line, column: pos - lastNewline };
 }
 
+/** 统一构造 PARSE 错误（带行列；修复失败与原语法错误同形）。 */
+function parseError(text: string, message: string): CoreError {
+  const position = parseErrorPosition(text, message);
+  const shape: { code: 'PARSE'; message: string; line?: number; column?: number } = {
+    code: 'PARSE',
+    message: `JSON.parse failed: ${message}`,
+  };
+  if (position.line !== undefined) shape.line = position.line;
+  if (position.column !== undefined) shape.column = position.column;
+  return new CoreError(shape);
+}
+
 export function loadDocument(input: LoadDocumentInput): LoadDocumentResult {
   const text = decodeText(input.data);
   const bytes = input.data instanceof ArrayBuffer ? input.data.byteLength : byteLengthOf(input.data);
 
   let value: unknown;
+  let repair: RepairProvenance | undefined;
   try {
     value = JSON.parse(text) as unknown;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const position = parseErrorPosition(text, message);
-    const shape: { code: 'PARSE'; message: string; line?: number; column?: number } = {
-      code: 'PARSE',
-      message: `JSON.parse failed: ${message}`,
+    // 截断修复（ADR-0004 §6）：只做语法闭合；非 EOF 形态 → unrepairable，仍抛原 PARSE
+    const attempt = repairTruncatedJson(text);
+    if (attempt.status !== 'repaired' || attempt.text === undefined) {
+      throw parseError(text, message);
+    }
+    try {
+      value = JSON.parse(attempt.text) as unknown;
+    } catch {
+      // 自校验失败（理论上 repair 已验证过）：保守地退回 PARSE，不产生半修复文档
+      throw parseError(text, message);
+    }
+    repair = {
+      status: 'repaired',
+      truncatedAt: attempt.truncatedAt ?? text.length,
+      parseError: message,
+      summaryText: attempt.summaryText,
+      counts: attempt.counts,
+      ops: attempt.ops,
     };
-    if (position.line !== undefined) shape.line = position.line;
-    if (position.column !== undefined) shape.column = position.column;
-    throw new CoreError(shape);
   }
-
-  // TODO(#8 / ADR-0004): truncated-source repair (conservative brace/quote closing,
-  // RepairProvenance marks, export suffix) is intentionally out of the skeleton slice.
-  // v0: a truncated document is a PARSE error.
 
   const name = input.name?.trim() || SOURCE_DEFAULT_NAME[input.source] || 'untitled.json';
   const meta: DocumentMeta = { name, bytes, source: input.source };
+  if (repair) meta.repair = repair;
   return { value, meta };
 }
