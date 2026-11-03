@@ -19,6 +19,12 @@ export const DEFAULT_EXPORT_MODE: ExportMode = 'file';
  */
 export const CLIPBOARD_MAX_BYTES = 20 * 1024 * 1024;
 
+/** 设置面板「导出方式」行的文案（分体按钮菜单用更长的动作文案） */
+export const EXPORT_MODE_LABELS: Record<ExportMode, string> = {
+  file: '导出文件',
+  clipboard: '复制到剪贴板',
+};
+
 export function isExportMode(value: unknown): value is ExportMode {
   return value === 'file' || value === 'clipboard';
 }
