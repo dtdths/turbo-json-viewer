@@ -223,7 +223,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.3 原始文本视图（#11 / ADR-0003 修订 2026-11-03） | ✅ | `core/raw-text.ts`（`probeText` + `RawTextIndex`：**source/pretty/plain** 三模式、检查点 `Int32Array` 每 2048 行、惰性 build、`windowText` 单行 ≤4096 截断、`locate` 偏移→1-based 行）+ `import.ts` 返回源文本、`Root.source` 保留（文档替换即释放）；`DocService` 新增 **rawOpen/rawWindow/rawLocate/rawSource**（只读、不推版本，`rawSource` >maxBytes 抛 `TOO_LARGE`）；`viewmodel/raw-window-source.ts`（单飞/合并/seq 丢弃/epoch；无 rowVersion）+ `view/raw/raw-view.ts`（固定行高虚拟化 + 行号 gutter + 横向滚动 + `lexLine` 屏内高亮 + flash）；工具栏 `[树|原文]` 分段切换（`UiState.viewMode` 持久化）、视图内提示（plain/minified/不含临时修改）、修复摘要 `at` 可点击跳行、复制原文（20MB 守卫）；`shared/json-lex.ts` 一份 lexer 供 core 行走器与 view 高亮共用；**单测 354**（新增 73：raw-text 35 / raw-window-source 18 / doc-service 10 / json-lex 10）；冒烟 `smoke-raw` **25/25** |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **25.2KB gz**（预算 45，slice 6.3 原文视图 +2.9）、`worker.js` **11.7KB gz**（原文索引 +2.3）、`page.css` **6.8KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **25.1KB gz**（预算 45，slice 6.3 原文视图 +3.0）、`worker.js` **11.7KB gz**（原文索引 +2.3）、`page.css` **6.8KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -303,7 +303,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **复制原文**：剪贴板逐字等于源文本；`maxBytes=10` 走 `TOO_LARGE`（不静默截断）。
 - **视图独立（v1 不联动）**：有临时修改时原文提示「不含临时修改」；「全部展开」与搜索跳转都会先切回树视图。
 - **持久化**：刷新后 `UiState.viewMode='raw'` 恢复，导入文档后直接进原文视图（pretty 模式）。
-- **性能**（Node v24 / 同 V8，`buildRawIndex` + `windowText` 直接基准）：10MB minified（9,965,133 字符）pretty 索引构建 **24.1ms** / 669,412 行；50MB（49,840,274 字符）**107.2ms** / 3,328,372 行；50 行窗口 p95 **0.07–0.21ms**、`locate` p95 **0.06ms**；索引**惰性构建**（首次进入原文才建，不占导入首帧），源文本保留在 Worker（50MB ≈95MB，ADR-0003 修订 §2）。
+- **性能**（Node v24 / 同 V8，`buildRawIndex` + `windowText` 直接基准）：10MB minified（9,965,133 字符）pretty 索引构建 **24.0ms** / 669,412 行；50MB（49,840,274 字符）**106.9ms** / 3,328,372 行；50 行窗口 p95 **0.07–0.21ms**、`locate` p95 **0.06ms**；索引**惰性构建**（首次进入原文才建，不占导入首帧），源文本保留在 Worker（50MB ≈95MB，ADR-0003 修订 §2）。
 - **零异常 / 零长任务**：0 page exception、0 console error；`longtask` 观察器（切换 / 索引构建 / 滚动 / 刷新）全程 **0 条**（ADR-0003 修订 §7）。
 
 **复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
