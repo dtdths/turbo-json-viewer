@@ -74,8 +74,8 @@ export interface CoreTransport {
 |---|---|---|
 | `load` | `LoadedReply(rootId, docRevision, rowVersion, totalRows, profile, repair?)` | 首帧不等待保真扫描/概要采样（ADR-0004） |
 | `window` | `WindowReply(rootId, rowVersion, seq, start, rows, totalRows)` | 40 行 ≈3.1KB；p95 0.1ms |
-| `toggle` / `replaceNode` / `undo·redo·reset` | `EditReply(totalRows, changedRow, rowVersion, docRevision?, changed)` | 不重解析；先 parse 后落值；空栈 no-op 不推版本 |
-| `toggleSubtree` | `EditReply(...)`（同上） | 子树批量展开/收起（#22 / ADR-0002 修订）：展开 = 子树内所有非空容器 open（与 expandAll 同口径）、收起 = 深度复位；**原子**（超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` 零部分修改）；根/空容器 no-op、标量 `BAD_COMMAND`；只有可见结果变化才推 `rowVersion` |
+| `toggle` / `toggleSubtree` / `expandAll` / `collapseAll` / `replaceNode` / `undo·redo·reset` | `EditReply(rootId, docRevision, rowVersion, totalRows, changedRow?, changedPath?, history)` | 8 条命令走**根变更路径**（ADR-0002 修订 2026-11-09）：`view` 意图（前四条）只在 `changed` 时推 `rowVersion`，`value` 意图推 `docRevision` + `rowVersion`（reset 的 N 步各推一次）；`history` 恒定必填；不重解析；先 parse 后落值；空栈 no-op 不推版本 |
+| `toggleSubtree` | `EditReply(...)`（同上，`history` 恒定） | 子树批量展开/收起（#22 / ADR-0002 修订）：展开 = 子树内所有非空容器 open（与 expandAll 同口径）、收起 = 深度复位；**原子**（超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` 零部分修改）；根/空容器 no-op、标量 `BAD_COMMAND`；只有可见结果变化才推 `rowVersion` |
 | `expandTo` | `ExpandReply(rootId, rowVersion, row, totalRows)` | 只展开祖先链（不 toggle 目标自身）；`row` 为展开后行号，跳转用 |
 | `getNodeJson` / `getTrail` | `NodeJsonReply(text, bytes, nodes)` / `TrailReply(MapTrail)` | ≤5MB 否则 `TOO_LARGE`；O(depth)、兄弟 ±2（ADR-0007） |
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
