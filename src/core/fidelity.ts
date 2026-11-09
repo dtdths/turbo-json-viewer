@@ -146,6 +146,11 @@ function clip(text: string): string {
  * 规范整数串（`0` 或 `[1-9][0-9]*`）且 `< 2^32−1` → 返回其数值；否则 -1。
  * 只看**解码后**的键文本（调用方负责转义解码）。
  */
+/**
+ * 「规范整数串且 < 2^32−1」的**规范实现**（入参是已解码的键文本）。
+ * `keyIndexValue` 是它的零分配快速路径（直接扫原始文本、遇转义才解码后落到这里）——
+ * 两处形状相似是刻意的性能选择，不是重复代码（code review 备注）。
+ */
 function indexKeyValue(key: string): number {
   const n = key.length;
   if (n === 0 || n > 10) return -1;
@@ -403,11 +408,17 @@ function classifyNumber(
 
 /* ------------------------------ 扫描 ------------------------------ */
 
-/** 显式容器栈的一帧（对象用全部字段；数组只用到 kind） */
-interface Frame {
-  kind: 'object' | 'array';
-  /** `{` / `[` 的源偏移（键序命中的 offset） */
+/**
+ * 显式容器栈的一帧。判别联合而不是「一个类型装全部字段」：
+ * 数组帧只需要 `open`，不必为 `snippet`/`seenIndex` 等对象专属状态分配（code review：Frame 瘦身）。
+ */
+interface FrameBase {
+  /** `{` / `[` 的源偏移（键序命中的 offset 用） */
   open: number;
+}
+
+interface ObjectFrame extends FrameBase {
+  kind: 'object';
   /** 下一个字符串是否按「对象键」处理 */
   expectKey: boolean;
   /** 已经出现过非下标键（之后再出现下标键 = 重排） */
@@ -422,11 +433,17 @@ interface Frame {
   snippet: string;
 }
 
-function newFrame(kind: 'object' | 'array', open: number): Frame {
+interface ArrayFrame extends FrameBase {
+  kind: 'array';
+}
+
+type Frame = ObjectFrame | ArrayFrame;
+
+function newObjectFrame(open: number): ObjectFrame {
   return {
-    kind,
+    kind: 'object',
     open,
-    expectKey: kind === 'object',
+    expectKey: true,
     sawNonIndex: false,
     lastIndex: -1,
     seenIndex: null,
@@ -435,8 +452,12 @@ function newFrame(kind: 'object' | 'array', open: number): Frame {
   };
 }
 
+function newArrayFrame(open: number): ArrayFrame {
+  return { kind: 'array', open };
+}
+
 /** 记录一个对象键：更新「下标键在前且升序」这一无损判定，并攒键片段。 */
-function recordKey(frame: Frame, text: string, keyFrom: number, keyTo: number): void {
+function recordKey(frame: ObjectFrame, text: string, keyFrom: number, keyTo: number): void {
   const index = keyIndexValue(text, keyFrom, keyTo);
   if (index >= 0) {
     // 只让**首次出现**的下标键参与顺序判定：JSON.parse 会吞并重复键（后者覆盖前者），
@@ -542,7 +563,7 @@ export async function scanFidelity(
   };
 
   /** 计一条键序命中（同一对象最多 1 条，offset = 对象 `{`） */
-  const addKeyOrderHit = (frame: Frame): void => {
+  const addKeyOrderHit = (frame: ObjectFrame): void => {
     keyOrderCount += 1;
     if (maxHits === 0) return;
     pushHit({ kind: 'key-order', offset: frame.open, snippet: clip(frame.snippet) });
@@ -572,12 +593,12 @@ export async function scanFidelity(
     }
 
     if (c === CH_LBRACE) {
-      stack.push(newFrame('object', i));
+      stack.push(newObjectFrame(i));
       i += 1;
       continue;
     }
     if (c === CH_LBRACK) {
-      stack.push(newFrame('array', i));
+      stack.push(newArrayFrame(i));
       i += 1;
       continue;
     }

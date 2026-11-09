@@ -274,14 +274,11 @@ export interface FidelityCounts {
 /**
  * 保真报告（ADR-0003 修订 §3）：`hits` 只留**源文本顺序最靠前**的 `FIDELITY_MAX_HITS` 条片段，
  * `counts` 始终是**全量**统计（提示文案用精确数量，不能被截断误导）。
+ *
+ * 取消没有第三种状态：扫描中根被替换/关闭时命令回 `CANCELLED`，app 静默丢弃（ADR 修订 §6）。
  */
 export interface FidelityReport {
-  /**
-   * 无失真 = `none`，有 = `found`。
-   * `skipped` 为形状预留：当前 core 的取消语义是回包 `CANCELLED`（见 `DocService.fidelity`），
-   * 不会产出 `skipped`；app 侧按「丢弃回包 / 条不出现」处理即可。
-   */
-  status: 'none' | 'found' | 'skipped';
+  status: 'none' | 'found';
   counts: FidelityCounts;
   /** 源文本顺序最靠前的 ≤`FIDELITY_MAX_HITS` 条（截断时 `truncated=true`） */
   hits: FidelityHit[];
@@ -289,6 +286,4 @@ export interface FidelityReport {
   truncated: boolean;
   /** 扫描耗时（Worker 内 ms，诊断/验收用；不进常驻 UI） */
   scanMs: number;
-  /** status==='skipped' 时的原因（当前 core 不产出） */
-  skippedReason?: 'cancelled';
 }

@@ -35,6 +35,7 @@ import {
   type ExportMode,
 } from '../viewmodel/export-state';
 import { SettingsPanel } from '../view/panels/settings-panel';
+import { NoticeBar } from '../view/panels/notice-bar';
 import { createViewStateStore } from './storage';
 
 const chromeApi = (globalThis as { chrome?: { runtime?: { id?: string; getURL(path: string): string } } }).chrome;
@@ -93,10 +94,9 @@ const repairToggle = el<HTMLButtonElement>('repairToggle');
 const repairOps = el('repairOps');
 const repairClose = el<HTMLButtonElement>('repairClose');
 const docWarnBar = el('docWarnBar');
-const docWarnText = el('docWarnText');
-const docWarnClose = el<HTMLButtonElement>('docWarnClose');
+const docWarnNotice = new NoticeBar(docWarnBar);
 const fidelityBar = el('fidelityBar');
-const fidelityText = el('fidelityText');
+const fidelityNotice = new NoticeBar(fidelityBar);
 const fidelityJump = el<HTMLButtonElement>('fidelityJump');
 const fidelityClose = el<HTMLButtonElement>('fidelityClose');
 const viewTreeBtn = el<HTMLButtonElement>('viewTreeBtn');
@@ -601,16 +601,10 @@ repairClose.addEventListener('click', () => {
   // 只关提示条：provenance 仍留在 meta 上（状态栏角标 + 导出后缀继续生效）
   repairBar.hidden = true;
 });
-docWarnClose.addEventListener('click', () => {
-  // 只关提示条：源文本仍常驻（原文视图不受影响），只是一个提醒
-  docWarnBar.hidden = true;
-});
-// 保真提示条（#23）：主点击 = 跳原文第一个失真；关闭只关条（报告保留在会话内存）
-fidelityJump.addEventListener('click', () => {
-  void revealFirstFidelityHit();
-});
-fidelityClose.addEventListener('click', () => {
-  fidelityBar.hidden = true;
+// 保真提示条（#23）：主点击 = 跳原文第一个失真（与修复摘要 at 同链路）；关闭只关条（报告保留，组件内处理）
+fidelityNotice.onAction(() => {
+  const hit = fidelity?.hits[0];
+  if (hit) void revealRepairOffset(hit.offset);
 });
 // 修复摘要的 `at` → 跳到原文对应行（#8 / ADR-0003 修订 §5）
 repairOps.addEventListener('click', (event: MouseEvent) => {
@@ -1496,19 +1490,15 @@ function renderRepair(): void {
  */
 function renderDocWarn(): void {
   const bytes = meta?.bytes ?? 0;
-  const show = bytes > LARGE_DOC_WARN_BYTES;
-  docWarnBar.hidden = !show;
-  if (!show) {
-    docWarnText.textContent = '—';
-    docWarnText.removeAttribute('title');
+  if (bytes <= LARGE_DOC_WARN_BYTES) {
+    docWarnNotice.hide();
     return;
   }
   // 源文本是 UTF-16 常驻：纯 ASCII 时正好 2× 字节数，多字节字符略低；按 2× 给人的是上限
-  const text =
+  docWarnNotice.show(
     `文档 ${formatBytesDecimal(bytes)}：源文本已常驻内存（UTF-16，最多约 ${formatBytesDecimal(bytes * 2)}）` +
-    `供原文视图使用，值图另计。不需要原文视图时可关闭本条。`;
-  docWarnText.textContent = text;
-  docWarnText.title = text;
+      `供原文视图使用，值图另计。不需要原文视图时可关闭本条。`,
+  );
 }
 
 /* ---------------- 保真提示（#23 / ADR-0003 修订 2026-11-09） ---------------- */
@@ -1517,10 +1507,8 @@ function resetFidelity(): void {
   fidelitySeq += 1;
   fidelity = null;
   fidelityPending = false;
-  fidelityBar.hidden = true;
-  fidelityText.textContent = '—';
-  fidelityText.removeAttribute('title');
-  fidelityJump.hidden = true;
+  fidelityNotice.hide();
+  fidelityNotice.setActionVisible(false);
 }
 
 /**
@@ -1562,11 +1550,9 @@ function scheduleFidelityScan(): void {
 function renderFidelity(): void {
   const report = fidelity;
   const total = report?.counts.total ?? 0;
-  fidelityBar.hidden = total === 0;
-  fidelityJump.hidden = (report?.hits.length ?? 0) === 0;
+  fidelityNotice.setActionVisible((report?.hits.length ?? 0) > 0);
   if (!report || total === 0) {
-    fidelityText.textContent = '—';
-    fidelityText.removeAttribute('title');
+    fidelityNotice.hide();
     return;
   }
   // 精确数量必须**按类别**说：上溢/下溢不能算进「大整数精度」（code review 收口）
@@ -1576,16 +1562,7 @@ function renderFidelity(): void {
   if (report.counts.underflow > 0) parts.push(`数字下溢 ${report.counts.underflow} 处`);
   if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
   const tail = report.truncated ? `（仅列前 ${report.hits.length} 条）` : '';
-  const text = `检测到 ${total} 处失真：${parts.join(' · ')}${tail}`;
-  fidelityText.textContent = text;
-  fidelityText.title = text;
-}
-
-/** 跳原文：与修复摘要 `at` 完全同一条链路（切原文 → rawLocate → 行 flash）。 */
-async function revealFirstFidelityHit(): Promise<number> {
-  const hit = fidelity?.hits[0];
-  if (!hit) return -1;
-  return revealRepairOffset(hit.offset);
+  fidelityNotice.show(`检测到 ${total} 处失真：${parts.join(' · ')}${tail}`);
 }
 
 /* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
@@ -2186,8 +2163,8 @@ if (!isExtension) {
       hits: fidelity?.hits ?? [],
       scanMs: fidelity?.scanMs ?? null,
       truncated: fidelity?.truncated ?? null,
-      barVisible: !fidelityBar.hidden,
-      barText: fidelityText.textContent ?? '',
+      barVisible: !fidelityNotice.hidden,
+      barText: fidelityNotice.text(),
       jumpVisible: !fidelityJump.hidden,
       viewMode: document.body.dataset.view === 'raw' ? 'raw' : 'tree',
       statusRows: statusRows.textContent ?? '',
