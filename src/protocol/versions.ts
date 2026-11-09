@@ -16,6 +16,10 @@ export const EDIT_MAX_BYTES = 5 * 1024 * 1024;
 export const EDIT_UNDO_DEPTH = 100;
 /** 搜索命中上限 */
 export const SEARCH_LIMIT = 50_000;
+/** 搜索：正则模式下的模式串长度上限（ADR-0014 §2.4） */
+export const SEARCH_PATTERN_MAX = 256;
+/** 导入体积提示阈值（字节，十进制 50 MB）：超出则显示「源文本常驻内存」提示条（ADR-0003 修订 / #11） */
+export const LARGE_DOC_WARN_BYTES = 50_000_000;
 /** 自适应展开阈值：加载时「全展开行数」（= 节点数）不超过该值则直接全展开（ADR-0002 修订 / #9） */
 export const ADAPTIVE_EXPAND_ROWS = 500;
 /** 复制：子树 JSON 缩进（ADR-0010 §5；设置面板落地前固定 2，与 exportDoc 默认一致） */

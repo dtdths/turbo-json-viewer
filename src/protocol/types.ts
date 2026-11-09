@@ -59,6 +59,8 @@ export interface Hit {
 
 export interface SearchOpts {
   caseSensitive?: boolean;
+  /** 正则模式：query 按 ECMAScript RegExp 解释；`Aa` 只决定 `i` flag（ADR-0014） */
+  regex?: boolean;
   keysOnly?: boolean;
   /** 命中上限，默认 50,000（超过则 truncated） */
   limit?: number;

@@ -21,6 +21,7 @@ import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
 import { OutlinePanel } from '../view/panels/outline-panel';
 import { CoreError } from '../protocol/errors';
+import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
 import type { CopyFormat, DocumentMeta, JsonKind, RawMeta } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
@@ -91,6 +92,9 @@ const repairText = el('repairText');
 const repairToggle = el<HTMLButtonElement>('repairToggle');
 const repairOps = el('repairOps');
 const repairClose = el<HTMLButtonElement>('repairClose');
+const docWarnBar = el('docWarnBar');
+const docWarnText = el('docWarnText');
+const docWarnClose = el<HTMLButtonElement>('docWarnClose');
 const viewTreeBtn = el<HTMLButtonElement>('viewTreeBtn');
 const viewRawBtn = el<HTMLButtonElement>('viewRawBtn');
 const rawHost = el('raw');
@@ -155,6 +159,9 @@ rawSource.subscribe((snapshot) => {
   updateStatus();
 });
 
+/** 搜索面板的会话态选项（ADR-0014 §2.5：唯一真相在 app 层，不持久化，刷新回默认）。 */
+let searchOpts: { caseSensitive: boolean; regex: boolean } = { caseSensitive: false, regex: false };
+
 /** 搜索状态机（viewmodel，无 DOM）：命中集/当前命中/过期判定/虚拟窗口。 */
 const searchState = new SearchState();
 const searchPanel = new SearchPanel(searchHost, {
@@ -171,6 +178,13 @@ const searchPanel = new SearchPanel(searchHost, {
   },
   onSubmit: () => {
     void searchNext();
+  },
+  // Aa / .* 切换（ADR-0014）：快照后立即重跑当前查询（绕过 250ms debounce，空查询只重置状态）
+  // 用输入框里的**当前**文本：用户可能刚输入、debounce 还没提交，不能拿旧 query 重跑。
+  onOptionsChange: (opts) => {
+    searchOpts = { ...opts };
+    window.clearTimeout(searchTimer);
+    void runSearch(searchPanel.currentQuery());
   },
 });
 searchPanel.mount();
@@ -437,6 +451,7 @@ function onLoaded(reply: LoadReply): void {
   editState.clear();
   renderEditBadge();
   renderRepair();
+  renderDocWarn();
 
   // 新文档：旧原文索引随旧根丢弃（惰性重建）；恢复上次视图模式（ADR-0003 修订）
   rawOpenSeq += 1;
@@ -573,6 +588,10 @@ repairClose.addEventListener('click', () => {
   // 只关提示条：provenance 仍留在 meta 上（状态栏角标 + 导出后缀继续生效）
   repairBar.hidden = true;
 });
+docWarnClose.addEventListener('click', () => {
+  // 只关提示条：源文本仍常驻（原文视图不受影响），只是一个提醒
+  docWarnBar.hidden = true;
+});
 // 修复摘要的 `at` → 跳到原文对应行（#8 / ADR-0003 修订 §5）
 repairOps.addEventListener('click', (event: MouseEvent) => {
   const at = (event.target as HTMLElement | null)?.closest<HTMLElement>('.repairbar__at');
@@ -656,7 +675,15 @@ async function applyExpandAll(open: boolean): Promise<void> {
   if (isRawView()) await setViewMode('tree');
   expandAllBusy = true;
   try {
+    // #9 收口：已是目标状态（core no-op → 不推进 rowVersion）时给一句中性反馈，
+    // 不做无意义的换版本/回顶/重取窗口——此前点了完全没反应。
+    // 判定口径 = rowVersion 是否变化（core 只在 changed 时 rowVersion++，不额外加协议字段）。
+    const rowVersionBefore = rowVersion;
     const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
+    if (reply.rowVersion === rowVersionBefore) {
+      showToast(open ? '已经全部展开了' : '已经全部收起了', 1800, 'info');
+      return;
+    }
     rowVersion = reply.rowVersion;
     totalRows = reply.totalRows;
     // 回顶与换版本同一拍完成：避免「旧 start 的保留帧被新 totalRows 裁到视口外」（空白帧）
@@ -1193,19 +1220,19 @@ function queueSearch(query: string): void {
 async function runSearch(query: string): Promise<boolean> {
   const loadAtStart = loadSeq;
   const trimmed = query.trim();
-  const seq = searchState.begin(trimmed);
+  const seq = searchState.begin(trimmed, searchOpts);
   applySearchToTree();
   renderSearch();
 
   if (!trimmed) return false;
   if (!rootId) {
-    searchState.begin('');
+    searchState.begin('', searchOpts);
     renderSearch();
     return false;
   }
 
   try {
-    const reply = await core.search({ rootId, seq, query: trimmed });
+    const reply = await core.search({ rootId, seq, query: trimmed, opts: searchOpts });
     if (loadAtStart !== loadSeq) return false;
     const accepted = searchState.apply(
       {
@@ -1223,8 +1250,17 @@ async function runSearch(query: string): Promise<boolean> {
     return accepted;
   } catch (error) {
     const coreError = CoreError.from(error);
+    // 无效/不安全的正则（ADR-0014 §2.3）：内联错误行，不弹 toast、不当作「无命中」。
+    // 不先 begin('')（会清 patternError）；markPatternError 自己清结果并回 idle。
+    if (coreError.code === 'BAD_PATTERN') {
+      searchState.markPatternError(coreError.message);
+      searchJumped = false;
+      applySearchToTree();
+      renderSearch();
+      return false;
+    }
     if (coreError.code !== 'CANCELLED' && coreError.code !== 'CLOSED') {
-      searchState.begin('');
+      searchState.begin('', searchOpts);
       applySearchToTree();
       renderSearch();
       showError(error);
@@ -1320,7 +1356,8 @@ async function searchPrev(): Promise<number> {
 /** 重载/空查询：清空搜索态、在途回包因 seq 变化被丢弃。 */
 function resetSearch(): void {
   window.clearTimeout(searchTimer);
-  searchState.begin('');
+  // 换文档保留用户选的 Aa/.*（会话内偏好，ADR-0014 §2.5；刷新/重开页面才回默认）
+  searchState.begin('', searchOpts);
   searchJumped = false;
   tree.setSearch(null);
   searchPanel.resetScroll();
@@ -1425,6 +1462,33 @@ function renderRepair(): void {
     row.append(at, note);
     repairOps.appendChild(row);
   }
+}
+
+/* ---------------- 导入体积提示条（#11 / ADR-0003 修订 2026-11-09） ---------------- */
+
+/**
+ * 按 `meta.bytes` 渲染「源文本常驻内存」提示条：
+ * 只有超过 `LARGE_DOC_WARN_BYTES`（50 MB 十进制）才显示；不阻断导入、无弹窗。
+ * 关闭只隐藏条（源文本仍常驻，原文视图仍可用），换文档时按新文档重新判定。
+ *
+ * 口径：阈值是**十进制** 50 MB（50,000,000 B），所以本条的文件大小也用十进制显示，
+ * 否则会出现「47.7 MB 触发 50 MB 提示」的自相矛盾；工具栏/状态栏仍沿用二进制 MiB。
+ */
+function renderDocWarn(): void {
+  const bytes = meta?.bytes ?? 0;
+  const show = bytes > LARGE_DOC_WARN_BYTES;
+  docWarnBar.hidden = !show;
+  if (!show) {
+    docWarnText.textContent = '—';
+    docWarnText.removeAttribute('title');
+    return;
+  }
+  // 源文本是 UTF-16 常驻：纯 ASCII 时正好 2× 字节数，多字节字符略低；按 2× 给人的是上限
+  const text =
+    `文档 ${formatBytesDecimal(bytes)}：源文本已常驻内存（UTF-16，最多约 ${formatBytesDecimal(bytes * 2)}）` +
+    `供原文视图使用，值图另计。不需要原文视图时可关闭本条。`;
+  docWarnText.textContent = text;
+  docWarnText.title = text;
 }
 
 /* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
@@ -1581,6 +1645,12 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** 十进制口径（1 MB = 10^6 B）：只给「导入体积提示条」用，与 50 MB 十进制阈值同单位。 */
+function formatBytesDecimal(bytes: number): string {
+  if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
 function formatCoreError(error: unknown): string {
   const coreError = CoreError.from(error);
   const detail = coreError.code === 'PARSE' && coreError.line ? `（第 ${coreError.line} 行）` : '';
@@ -1679,6 +1749,10 @@ if (!isExtension) {
       filter: view.filter,
       truncated: view.truncated,
       stale: searchState.stale,
+      // ADR-0014：Aa / 正则 / 内联错误（smoke 验收用）
+      caseSensitive: view.caseSensitive,
+      regex: view.regex,
+      patternError: view.patternError,
       rendered: searchPanel.renderedCount(),
       treeCurrentVisible: Boolean(document.querySelector('.row.is-current')),
       scrollTop: searchPanel.listScrollTop(),

@@ -7,6 +7,11 @@
  *   - 结果列表虚拟化：固定 44px 行、spacer = size × 44、窗口由 viewmodel 的
  *     `computeResultWindow` 计算；行节点池复用，滚动只重画窗口。
  *
+ * 搜索选项（ADR-0014 §2.1）：查询框右侧两个真实 `<button>`——`Aa`（区分大小写）与
+ * `.*`（正则），`aria-pressed` 反映状态、Tab 顺序在查询框之后；点击只回调
+ * `onOptionsChange`，**不发协议请求**。正则错误（`view.patternError`）只渲染成查询行
+ * 下方的 `role="alert"` 内联错误行，并把输入框标 `aria-invalid`。
+ *
  * 硬约束：全部文本走 textContent / createElement / replaceChildren，**禁 innerHTML**。
  * DOM 契约（§3.1）的 class / id 由 app 与 smoke 脚本依赖，不要改名。
  */
@@ -29,6 +34,8 @@ export interface SearchPanelOptions {
   onNext(): void;
   /** 输入框 Enter */
   onSubmit(): void;
+  /** `Aa` / `.*` 切换；app 负责快照重跑当前查询（面板只回调，不发命令） */
+  onOptionsChange?(opts: { caseSensitive: boolean; regex: boolean }): void;
 }
 
 /* ---------------- 常量文案 ---------------- */
@@ -171,6 +178,13 @@ export class SearchPanel {
   private rendered = 0;
 
   private input!: HTMLInputElement;
+  private optsEl!: HTMLElement;
+  private caseBtn!: HTMLButtonElement;
+  private regexBtn!: HTMLButtonElement;
+  private errorEl!: HTMLElement;
+  /** 面板侧乐观态：点击即翻转，下一次 render 由 viewmodel 快照回填为准 */
+  private caseSensitiveOn = false;
+  private regexOn = false;
   private countValue!: HTMLElement;
   private prevBtn!: HTMLButtonElement;
   private nextBtn!: HTMLButtonElement;
@@ -226,6 +240,30 @@ export class SearchPanel {
     this.input.setAttribute('aria-label', '搜索键名或字符串值');
     box.appendChild(this.input);
 
+    /* 查询行右侧：Aa（区分大小写）/ .*（正则）——真实按钮，Tab 顺序在查询框之后 */
+    this.optsEl = el('div', 'csearch__opts');
+    this.optsEl.setAttribute('role', 'group');
+    this.optsEl.setAttribute('aria-label', '搜索选项');
+
+    this.caseBtn = el('button', 'csearch__toggle');
+    this.caseBtn.id = 'searchCase';
+    this.caseBtn.type = 'button';
+    this.caseBtn.textContent = 'Aa';
+    this.caseBtn.setAttribute('aria-label', '区分大小写');
+    this.caseBtn.setAttribute('aria-pressed', 'false');
+    this.caseBtn.title = '区分大小写（Aa）';
+
+    this.regexBtn = el('button', 'csearch__toggle');
+    this.regexBtn.id = 'searchRegex';
+    this.regexBtn.type = 'button';
+    this.regexBtn.textContent = '.*';
+    this.regexBtn.setAttribute('aria-label', '使用正则表达式');
+    this.regexBtn.setAttribute('aria-pressed', 'false');
+    this.regexBtn.title = '使用正则表达式（.*）';
+
+    this.optsEl.append(this.caseBtn, this.regexBtn);
+    box.appendChild(this.optsEl);
+
     const countEl = el('span', 'csearch__count');
     countEl.id = 'searchCount';
     this.countValue = el('b');
@@ -255,7 +293,14 @@ export class SearchPanel {
     this.posEl.textContent = '0 / 0';
 
     row.append(this.prevBtn, this.nextBtn, this.posEl);
-    csearch.append(box, row);
+
+    /* 正则错误行：查询行下方，仅 patternError 非空时显示（ADR-0014 §2.3） */
+    this.errorEl = el('div', 'csearch__error');
+    this.errorEl.id = 'searchPatternError';
+    this.errorEl.setAttribute('role', 'alert');
+    this.errorEl.hidden = true;
+
+    csearch.append(box, this.errorEl, row);
 
     /* ---- .results__filters：全部 / 键名 / 值 + counts ---- */
     this.filtersEl = el('div', 'results__filters');
@@ -324,6 +369,7 @@ export class SearchPanel {
     this.input.addEventListener('keydown', this.handleKeydown);
     this.prevBtn.addEventListener('click', this.handlePrev);
     this.nextBtn.addEventListener('click', this.handleNext);
+    this.optsEl.addEventListener('click', this.handleOptionsClick);
     this.scroller.addEventListener('scroll', this.handleScroll, { passive: true });
     this.filtersEl.addEventListener('click', this.handleFiltersClick);
     this.windowEl.addEventListener('click', this.handleRowClick);
@@ -340,6 +386,8 @@ export class SearchPanel {
     this.view = view;
 
     this.updateInputValue(view);
+    this.updateOptionToggles(view);
+    this.updatePatternError(view);
     this.updateHeader(view);
     this.updateFilters(view);
     this.updateEmptyState(view);
@@ -354,6 +402,15 @@ export class SearchPanel {
   focusInput(): void {
     if (!this.mounted) this.mount();
     this.input.focus();
+  }
+
+  /**
+   * 查询框当前文本（未 trim）。
+   * app 在「切换 Aa/.* 立即重跑」时要读它：用户可能刚输入、250ms debounce 尚未提交，
+   * 若用 viewmodel 里已提交的旧 query 重跑，会丢掉这次输入（ADR-0014 §2.1）。
+   */
+  currentQuery(): string {
+    return this.mounted ? this.input.value : '';
   }
 
   /** 把过滤后第 index 行滚进列表视口（夹紧），并同步重画一帧窗口。 */
@@ -405,6 +462,7 @@ export class SearchPanel {
     if (!this.mounted) return;
     this.input.removeEventListener('input', this.handleInput);
     this.input.removeEventListener('keydown', this.handleKeydown);
+    this.optsEl.removeEventListener('click', this.handleOptionsClick);
     this.prevBtn.removeEventListener('click', this.handlePrev);
     this.nextBtn.removeEventListener('click', this.handleNext);
     this.scroller.removeEventListener('scroll', this.handleScroll);
@@ -426,6 +484,33 @@ export class SearchPanel {
     // 输入框聚焦时用户正在输入，render 不覆盖；失焦后才跟随 viewmodel 的值同步。
     if (document.activeElement === this.input) return;
     if (this.input.value !== view.query) this.input.value = view.query;
+  }
+
+  /** 按快照回填两个 toggle 的 aria-pressed / is-on（viewmodel 是唯一真相）。 */
+  private updateOptionToggles(view: SearchPanelView): void {
+    this.caseSensitiveOn = view.caseSensitive;
+    this.regexOn = view.regex;
+    this.syncToggle(this.caseBtn, view.caseSensitive);
+    this.syncToggle(this.regexBtn, view.regex);
+  }
+
+  private syncToggle(button: HTMLButtonElement, on: boolean): void {
+    button.classList.toggle('is-on', on);
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  /** 正则错误行 + `aria-invalid`；无错误时整行 hidden 且清空文案。 */
+  private updatePatternError(view: SearchPanelView): void {
+    const message = view.patternError;
+    if (message === null || message === '') {
+      this.errorEl.hidden = true;
+      this.errorEl.textContent = '';
+      this.input.removeAttribute('aria-invalid');
+      return;
+    }
+    if (this.errorEl.textContent !== message) this.errorEl.textContent = message;
+    this.errorEl.hidden = false;
+    this.input.setAttribute('aria-invalid', 'true');
   }
 
   private updateHeader(view: SearchPanelView): void {
@@ -598,6 +683,24 @@ export class SearchPanel {
 
   private readonly handleNext = (): void => {
     this.opts.onNext();
+  };
+
+  private readonly handleOptionsClick = (event: MouseEvent): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const button = target.closest('.csearch__toggle');
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    // 乐观翻转 + 立即回填（app 会同步 begin()+render()，两者一致）
+    const next = {
+      caseSensitive: button === this.caseBtn ? !this.caseSensitiveOn : this.caseSensitiveOn,
+      regex: button === this.regexBtn ? !this.regexOn : this.regexOn,
+    };
+    this.caseSensitiveOn = next.caseSensitive;
+    this.regexOn = next.regex;
+    this.syncToggle(this.caseBtn, next.caseSensitive);
+    this.syncToggle(this.regexBtn, next.regex);
+    this.opts.onOptionsChange?.(next);
   };
 
   private readonly handleFiltersClick = (event: MouseEvent): void => {

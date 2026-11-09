@@ -7,7 +7,7 @@
  *   - 行渲染器由 app 以 factory 注入：TreeView 在 mount 时创建行容器并交给 factory，
  *     所以 DOM adapter 不需要知道树的外壳（S3「app 注入 adapter」）。
  *   - 行绝对定位 top = (start + i) × rowHeight，行池按槽位复用。
- *   - click 委托：caret → onToggle(path, !open)；行 → onSelect(path)。
+ *   - click 委托：caret / 项数标 → onToggle(path, !open)；行 → onSelect(path)。
  *   - 最小键盘：↑/↓ 移动选中、←/→ 折叠/展开、Enter 切换。
  */
 import { clampRowHeight } from '../../shared/num';
@@ -84,6 +84,13 @@ export class TreeView {
       if (row && row.hasChildren) this.opts.onToggle(path, !row.open);
       return;
     }
+    // 项数标 = 展开/收起的第二入口（#9 / direction §5）：与 caret 等价，只 toggle、不改选中行。
+    // 行内可点文本、不进 Tab 序列；空容器没有项数标（hasChildren=false）时保持原行为。
+    if (target.closest('.row__count')) {
+      const row = this.findRow(path);
+      if (row && row.hasChildren) this.opts.onToggle(path, !row.open);
+      return;
+    }
     // 行尾浮条（ADR-0010 修订）：先选中该行（与右键菜单一致），再交给 app 执行动作
     const actionEl = target.closest<HTMLElement>('.row__action');
     if (actionEl) {
@@ -147,13 +154,20 @@ export class TreeView {
     }
   };
 
-  /** 行双击 → 编辑意图（caret/行操作按钮除外，避免与展开/操作冲突）。 */
+  /** 行双击 → 编辑意图（caret/项数标/行操作按钮除外，避免与展开/操作冲突）。 */
   private readonly onDblClickBound = (event: MouseEvent): void => {
     const target = event.target as HTMLElement | null;
     if (!target) return;
     const rowEl = target.closest('.row') as HTMLElement | null;
     if (!rowEl) return;
-    if (target.closest('.row__caret') || target.closest('.row__actions')) return;
+    // 项数标同 caret：双击它只应是两次 toggle，不弹编辑层（#9）
+    if (
+      target.closest('.row__caret') ||
+      target.closest('.row__count') ||
+      target.closest('.row__actions')
+    ) {
+      return;
+    }
     const path = rowEl.dataset.path;
     if (!path || !this.opts.onEdit) return;
     event.preventDefault();

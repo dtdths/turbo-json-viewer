@@ -83,6 +83,16 @@
       <div class="repairbar__ops" id="repairOps" hidden></div>
     </div>
 
+    <!-- 导入体积提示条（#11 / ADR-0003 修订）：>50 MB 时提示源文本常驻内存；
+         与修复条同时存在时修复条在上、本条在下（DOM 顺序即层序）；关闭只关条 -->
+    <div class="docwarnbar" id="docWarnBar" role="status" aria-live="polite" hidden>
+      <svg class="docwarnbar__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.2 13.4H1.8Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M8 6.2v3.2M8 11.6v.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span class="docwarnbar__text" id="docWarnText">—</span>
+      <button class="iconbtn docwarnbar__close" type="button" id="docWarnClose" aria-label="关闭体积提示">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 4.6 6.8 6.8M11.4 4.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
     <main class="workbench">
       <aside class="side side--left" id="leftPanel" aria-label="左侧面板">
         <div class="side__head">

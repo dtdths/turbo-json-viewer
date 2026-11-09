@@ -15,6 +15,7 @@ export type CoreErrorCode =
   | 'CLOSED'
   | 'NO_ROOT'
   | 'BAD_COMMAND'
+  | 'BAD_PATTERN'
   | 'NO_HISTORY';
 
 export interface CoreErrorShape {

@@ -1,6 +1,7 @@
 /* ==========================================================================
    view/panels/search-panel — C · 工作台搜索面板
-   虚拟结果列表（44px 行）+ 查询框（32px/focus ring）+ 过滤 + 空态 + foot。
+   虚拟结果列表（44px 行）+ 查询框（32px/focus ring）+ Aa/.* 选项 + 正则错误行
+   + 过滤 + 空态 + foot（ADR-0014）。
    视觉 token 来自 view/styles/tokens.css；布局外框（.panel / .iconbtn）在 shell.css。
    ========================================================================== */
 
@@ -74,6 +75,58 @@
   font-weight: 600;
   color: var(--text-2);
 }
+/* 查询行右侧的 Aa / .* 切换（28×24，真实 button；is-on 用强调色实底） */
+.csearch__opts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.csearch__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background var(--dur-fast, 110ms) ease, color var(--dur-fast, 110ms) ease,
+    border-color var(--dur-fast, 110ms) ease;
+}
+.csearch__toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-2);
+}
+.csearch__toggle.is-on {
+  background: var(--bg-selected);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+.csearch__toggle.is-on:hover {
+  background: var(--bg-selected-strong);
+}
+
+/* 正则错误行（ADR-0014 §2.3）：查询行下方单行、可省略号截断 */
+.csearch__error {
+  margin-top: -2px;
+  color: var(--danger);
+  font-size: var(--text-caption, 11px);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.csearch__error[hidden] {
+  display: none;
+}
+
 .csearch__row {
   display: flex;
   align-items: center;

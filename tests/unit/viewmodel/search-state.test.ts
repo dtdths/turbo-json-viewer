@@ -434,6 +434,9 @@ describe('SearchState — view / contentHeight / window', () => {
       current: 0,
       filter: 'all',
       truncated: false,
+      caseSensitive: false,
+      regex: false,
+      patternError: null,
     });
 
     expect(state.view().hits).toBe(view.hits); // 同批同引用（面板据此判断是否回顶）
@@ -520,5 +523,151 @@ describe('SearchState — markStale', () => {
     expect(state.stale).toBe(false);
     expect(state.pending).toBe(true);
     expect(state.view().phase).toBe('searching');
+  });
+});
+
+describe('SearchState — 选项快照（ADR-0014 §2.5）', () => {
+  it('初始快照：caseSensitive=false、regex=false、patternError=null', () => {
+    const state = new SearchState();
+    expect(state.caseSensitive).toBe(false);
+    expect(state.regex).toBe(false);
+    expect(state.patternError).toBeNull();
+    expect(state.view()).toMatchObject({ caseSensitive: false, regex: false, patternError: null });
+  });
+
+  it('begin(query, opts) 快照本轮选项，view() 暴露给面板回填', () => {
+    const state = new SearchState();
+    const seq = state.begin('hotel', { caseSensitive: true, regex: true });
+    expect(state.seq).toBe(seq);
+    expect(state.caseSensitive).toBe(true);
+    expect(state.regex).toBe(true);
+    expect(state.view()).toMatchObject({ caseSensitive: true, regex: true });
+  });
+
+  it('opts 缺省为 false；新一轮 begin 覆盖快照（开关是会话态、逐轮生效）', () => {
+    const state = new SearchState();
+    state.begin('a', { caseSensitive: true, regex: true });
+    state.begin('b', { caseSensitive: true });
+    expect(state.caseSensitive).toBe(true);
+    expect(state.regex).toBe(false); // 未传 → 默认 false
+
+    state.begin('c');
+    expect(state.caseSensitive).toBe(false);
+    expect(state.regex).toBe(false);
+  });
+
+  it('快照只随 begin 变：apply / setFilter / select 都不改', () => {
+    const state = new SearchState();
+    const seq = state.begin('hotel', { caseSensitive: true, regex: true });
+    state.apply(makeReply(seq, { hits: makeHits('$.a'), total: 1 }), 1);
+    state.setFilter('key');
+    state.select(0);
+
+    expect(state.caseSensitive).toBe(true);
+    expect(state.regex).toBe(true);
+    expect(state.view().caseSensitive).toBe(true);
+    expect(state.view().regex).toBe(true);
+  });
+});
+
+describe('SearchState — markPatternError（ADR-0014 §2.3）', () => {
+  it('置错：清空 hits/counts/current/total/stale，phase 回 idle，query 保留', () => {
+    const { state } = readyState(makeHits('$.a', ['$.b', 'value']), { total: 2, truncated: true });
+    expect(state.size).toBe(2);
+
+    state.markPatternError('该正则可能触发灾难性回溯');
+
+    expect(state.patternError).toBe('该正则可能触发灾难性回溯');
+    expect(state.view().phase).toBe('idle');
+    expect(state.size).toBe(0);
+    expect(state.allHits).toHaveLength(0);
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.total).toBe(0);
+    expect(state.truncated).toBe(false);
+    expect(state.current).toBe(-1);
+    expect(state.currentHit()).toBeNull();
+    expect(state.stale).toBe(false);
+    expect(state.pending).toBe(false);
+    expect(state.query).toBe('hotel'); // 查询词保留，用户可继续编辑
+    expect(state.hitPaths().size).toBe(0);
+  });
+
+  it('markPatternError(null) 只清错误，不动查询与结果', () => {
+    const state = new SearchState();
+    state.begin('hotel');
+    state.markPatternError('正则语法错误：x');
+    expect(state.view().phase).toBe('idle');
+
+    state.markPatternError(null);
+    expect(state.patternError).toBeNull();
+    expect(state.view().patternError).toBeNull();
+    expect(state.view().phase).toBe('idle');
+    expect(state.query).toBe('hotel');
+  });
+
+  it("begin('') 清除错误（清空查询回到空闲态）", () => {
+    const state = new SearchState();
+    state.begin('(', { regex: true });
+    state.markPatternError('正则语法错误：x');
+
+    state.begin('');
+    expect(state.patternError).toBeNull();
+    expect(state.view().phase).toBe('idle');
+    expect(state.view().patternError).toBeNull();
+  });
+
+  it('新一轮 begin（编辑查询 / 切开关后重跑）清除错误', () => {
+    const state = new SearchState();
+    state.begin('(', { regex: true });
+    state.markPatternError('该正则可能触发灾难性回溯');
+
+    state.begin('(a', { regex: true });
+    expect(state.patternError).toBeNull();
+    expect(state.view().phase).toBe('searching');
+  });
+
+  it('clear() 清除错误', () => {
+    const state = new SearchState();
+    state.begin('(', { regex: true });
+    state.markPatternError('正则语法错误：x');
+
+    state.clear();
+    expect(state.patternError).toBeNull();
+    expect(state.view().phase).toBe('idle');
+  });
+
+  it('apply 成功清除错误（回包采纳后不再显示错误行）', () => {
+    const state = new SearchState();
+    const seq = state.begin('a+', { regex: true });
+    state.markPatternError('该正则可能触发灾难性回溯');
+    expect(state.view().phase).toBe('idle');
+
+    const accepted = state.apply(makeReply(seq, { hits: makeHits('$.a'), total: 1 }), 1);
+    expect(accepted).toBe(true);
+    expect(state.patternError).toBeNull();
+    expect(state.view().phase).toBe('ready');
+    expect(state.size).toBe(1);
+  });
+
+  it('apply 的 docRevision 过期分支同样清错误（结果已清空、转入 stale）', () => {
+    const state = new SearchState();
+    const seq = state.begin('a+', { regex: true });
+    state.markPatternError('该正则可能触发灾难性回溯');
+
+    expect(state.apply(makeReply(seq, { hits: makeHits('$.a'), total: 1 }), 99)).toBe(false);
+    expect(state.patternError).toBeNull();
+    expect(state.view().phase).toBe('stale');
+    expect(state.size).toBe(0);
+  });
+
+  it('seq 过期的回包不改任何状态：错误态保持不变', () => {
+    const state = new SearchState();
+    const staleSeq = state.begin('a');
+    state.begin('(', { regex: true });
+    state.markPatternError('正则语法错误：x');
+
+    expect(state.apply(makeReply(staleSeq, { hits: makeHits('$.a'), total: 1 }), 1)).toBe(false);
+    expect(state.patternError).toBe('正则语法错误：x');
+    expect(state.view().phase).toBe('idle');
   });
 });

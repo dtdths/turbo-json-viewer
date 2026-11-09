@@ -140,6 +140,11 @@
 }
 .tjv-tree .row__count--arr { color: var(--muted, #8b93a7); }
 
+/* 项数标可点击展开（#9 / direction §5）：第二入口，hover 提到主文本色。
+   注：tokens 里的「主文本色」是 --text（没有 --text-primary），与同文件 hover 写法一致。 */
+.tjv-tree .row__count.is-clickable { cursor: pointer; }
+.tjv-tree .row__count.is-clickable:hover { color: var(--text, #e7eaf0); }
+
 .tjv-tree .row__preview {
   margin-left: 9px;
   min-width: 0;

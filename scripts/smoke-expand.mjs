@@ -92,6 +92,37 @@ try {
     // 再展开 → 8
     clickBtn('expandAllBtn');
     out.smallExpandedAgain = await waitState((s) => s.totalRows === 8, 5000);
+
+    // ---- #9 收口 1：已全展开时点「全部展开」→ 中性 toast，不报错、不换版本 ----
+    const rvBefore = window.__tjv.state().rowVersion;
+    clickBtn('expandAllBtn');
+    await sleep(250);
+    const noopToast = document.getElementById('toast');
+    out.noopToastHidden = noopToast?.hidden ?? null;
+    out.noopToastText = noopToast?.textContent ?? '';
+    out.noopToastTone = noopToast?.dataset.tone ?? null;
+    out.noopRowVersionKept = window.__tjv.state().rowVersion === rvBefore;
+
+    // ---- #9 收口 2：项数标点击 = 展开/收起（且不改变选中行） ----
+    clickBtn('collapseAllBtn');
+    out.countCollapsed = await waitState((s) => s.totalRows === 4, 5000);
+    const selectedBeforeCount = window.__tjv.state().selected;
+    const countBadge = () => {
+      const el = [...document.querySelectorAll('.row[data-path]')].find((row) => row.dataset.path === '$.c');
+      const badge = el?.querySelector('.row__count');
+      return badge && !badge.hidden ? badge : null;
+    };
+    // state() 先于该帧行渲染更新：等 badge 真的出现在 DOM 里再点（避免偶发 false）
+    for (let i = 0; i < 40 && !countBadge(); i++) await sleep(25);
+    out.countBadgeFound = Boolean(countBadge());
+    out.countBadgeClickable = countBadge()?.classList.contains('is-clickable') ?? false;
+    out.countBadgeTitle = countBadge()?.getAttribute('title') ?? null;
+    countBadge()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    out.countAfterClick = await waitState((s) => s.totalRows > 4, 5000);
+    out.countClickKeptSelection = window.__tjv.state().selected === selectedBeforeCount;
+    for (let i = 0; i < 40 && !countBadge(); i++) await sleep(25);
+    countBadge()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    out.countAfterClick2 = await waitState((s) => s.totalRows === 4, 5000);
     return out;
   })()`);
   Object.assign(report, phase1);
@@ -109,6 +140,8 @@ try {
     await sleep(300);
     out.collapsed = window.__tjv.state();
     window.__collapsedRows = out.collapsed.totalRows;
+    // #11：10MB 未达阈值 → 体积提示条不出现（换文档后按新 meta.bytes 重新判定）
+    out.docWarn10mbHidden = document.getElementById('docWarnBar')?.hidden ?? null;
 
     // 选中一个非根可见行，验证 Q7「只保留选中路径」
     const row = visible().find((el) => el.dataset.path !== '$');
@@ -204,6 +237,14 @@ try {
     out.loadMs = Math.round(performance.now() - t0);
     await sleep(400);
     out.collapsed = window.__tjv.state();
+    // #11 / ADR-0003 修订：>50MB 文档 → 「源文本常驻内存」提示条（不阻断导入）
+    const warnBar = document.getElementById('docWarnBar');
+    const warnText = document.getElementById('docWarnText');
+    out.docWarnHidden = warnBar?.hidden ?? null;
+    out.docWarnText = warnText?.textContent ?? '';
+    out.docWarnRole = warnBar?.getAttribute('role') ?? null;
+    document.getElementById('docWarnClose')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    out.docWarnHiddenAfterClose = warnBar?.hidden ?? null;
     clickBtn('expandAllBtn');
     await sleep(2000); // 预算 dry-run 在 Worker 内；留足往返
     out.afterReject = window.__tjv.state();
@@ -273,10 +314,35 @@ const budgetRejectOk =
   /TOO_MANY_ROWS/.test(report.budget?.toastText ?? '');
 const perfOk = report.maxLongTask < 100 && report.consoleErrors?.length === 0;
 
+// #9 收口：已全展开时点「全部展开」→ 中性 toast，且 rowVersion 不变（无无意义重取）
+const noopToastOk =
+  report.noopToastHidden === false &&
+  /已经全部展开/.test(report.noopToastText ?? '') &&
+  report.noopToastTone === 'info' &&
+  report.noopRowVersionKept === true;
+// #9 收口：项数标点击 = 展开/收起（4 → 5 → 4），且不改变选中行
+const countBadgeOk =
+  report.countBadgeFound === true &&
+  report.countBadgeClickable === true &&
+  /点击(展开|收起)/.test(report.countBadgeTitle ?? '') &&
+  report.countCollapsed?.totalRows === 4 &&
+  report.countAfterClick?.totalRows === 5 &&
+  report.countAfterClick2?.totalRows === 4 &&
+  report.countClickKeptSelection === true;
+// #11 / ADR-0003 修订：>50MB 出现体积提示条（role=status、含「源文本」），关闭后隐藏；10MB 不出现
+const docWarnOk =
+  report.docWarn10mbHidden === true &&
+  report.budget?.docWarnHidden === false &&
+  report.budget?.docWarnRole === 'status' &&
+  /源文本/.test(report.budget?.docWarnText ?? '') &&
+  report.budget?.docWarnHiddenAfterClose === true;
+
 const checks = {
   'adaptive:small-doc-fully-expanded': smallAdaptiveOk,
   'adaptive:buttons-enabled': report.buttonsPresent === true && report.buttonsEnabled === true,
   'adaptive:collapse-expand-roundtrip': smallToggleOk,
+  'expand-all:noop-toast': noopToastOk,
+  'count-badge:click-expand-collapse': countBadgeOk,
   '10mb:collapsed-default': report.collapsed?.totalRows > 0 && report.collapsed?.totalRows < 500,
   '10mb:expand-all': expandOk,
   '10mb:selection-kept': selectionKept,
@@ -284,6 +350,7 @@ const checks = {
   '10mb:expand-no-flash-frame': expandNoFlashFrame,
   '10mb:collapse-no-flash-frame': collapseNoFlashFrame,
   '50mb:budget-reject': budgetRejectOk,
+  '50mb:doc-warn-bar': docWarnOk,
   'perf:no-long-task-no-console-error': perfOk,
 };
 for (const [name, ok] of Object.entries(checks)) console.log(`${ok ? '✅' : '❌'} ${name}`);

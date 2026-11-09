@@ -10,7 +10,10 @@
  *     （文档已变更，提示重搜）；
  *   - `markStale()` 用于文档变更时主动作废当前命中集。
  *
- * 契约：docs/design/slice4-search-contract.md §2（权威）。
+ * 本轮搜索选项（ADR-0014）：`begin(query, opts)` 把 `{caseSensitive, regex}` 快照下来供热
+ * 渲染回填；正则错误由 app 层映射成文案后经 `markPatternError()` 写入，置错时清空结果回到 idle。
+ *
+ * 契约：docs/design/slice4-search-contract.md §2（权威）+ docs/adr/0014-search-options-case-and-regex.md §2.5–§2.6。
  */
 import type { Hit } from '../protocol/types';
 import { computeVirtualWindow } from '../shared/window';
@@ -38,6 +41,14 @@ export interface SearchReplyInput {
   truncated: boolean;
 }
 
+/** 一轮搜索的选项（app 层的 `searchOpts` 快照；viewmodel 只存快照用于渲染） */
+export interface SearchQueryOpts {
+  /** 区分大小写；子串模式 = 是否忽略大小写，正则模式 = 是否加 `i` flag */
+  caseSensitive?: boolean;
+  /** 查询串按 ECMAScript RegExp 解释（ADR-0014） */
+  regex?: boolean;
+}
+
 export interface SearchWindow {
   start: number;
   count: number;
@@ -58,6 +69,12 @@ export interface SearchPanelView {
   current: number;
   filter: SearchFilter;
   truncated: boolean;
+  /** 本轮是否区分大小写（`Aa` toggle 回填） */
+  caseSensitive: boolean;
+  /** 本轮是否正则模式（`.*` toggle 回填） */
+  regex: boolean;
+  /** 非空 = 正则不可用（语法错误/超长/被安全筛查拒绝）；置错时结果已清空 */
+  patternError: string | null;
 }
 
 export interface SearchStateOptions {
@@ -98,6 +115,11 @@ export class SearchState {
   private pendingValue = false;
   private staleValue = false;
   private filterValue: SearchFilter;
+  /** 本轮 begin() 的选项快照（渲染用；不持久化，ADR-0014 §2.5） */
+  private caseSensitiveValue = false;
+  private regexValue = false;
+  /** 非空 = 正则错误文案；置错时 phase 回 idle、结果清空 */
+  private patternErrorValue: string | null = null;
 
   /** 回包原序（未过滤） */
   private allHitsValue: Hit[] = [];
@@ -137,6 +159,21 @@ export class SearchState {
 
   get filter(): SearchFilter {
     return this.filterValue;
+  }
+
+  /** 本轮选项快照：是否区分大小写 */
+  get caseSensitive(): boolean {
+    return this.caseSensitiveValue;
+  }
+
+  /** 本轮选项快照：是否正则模式 */
+  get regex(): boolean {
+    return this.regexValue;
+  }
+
+  /** 正则错误文案；null = 无错误 */
+  get patternError(): string | null {
+    return this.patternErrorValue;
   }
 
   /** 过滤后命中（current 指向它） */
@@ -200,16 +237,34 @@ export class SearchState {
   /**
    * 开始一次搜索：seq += 1、清空旧结果、pending=true；
    * query === '' 时 pending=false（idle，用于清空/重载）。
+   * 同时快照本轮选项（缺省 `{caseSensitive:false, regex:false}`）并清掉上一轮的正则错误。
    */
-  begin(query: string): number {
+  begin(query: string, opts: SearchQueryOpts = {}): number {
     this.seqValue += 1;
     this.queryValue = query;
+    this.caseSensitiveValue = opts.caseSensitive ?? false;
+    this.regexValue = opts.regex ?? false;
+    this.patternErrorValue = null;
     const idle = query === '';
     this.pendingValue = !idle;
     this.staleValue = false;
     this.clearResults();
     this.phaseValue = idle ? 'idle' : 'searching';
     return this.seqValue;
+  }
+
+  /**
+   * 记录正则不可用（`BAD_PATTERN`）：写入 `patternError` 并清空屏幕上的旧结果。
+   * 置错时 phase 回 `'idle'`（不显示「无命中」）、清 hits/counts/current/stale；
+   * 传 null 只清错误，不动结果。错误态下编辑查询/切开关走 `begin()` 自带清除。
+   */
+  markPatternError(message: string | null): void {
+    this.patternErrorValue = message;
+    if (message === null) return;
+    this.clearResults();
+    this.pendingValue = false;
+    this.staleValue = false;
+    this.phaseValue = 'idle';
   }
 
   /**
@@ -221,6 +276,8 @@ export class SearchState {
    */
   apply(reply: SearchReplyInput, docRevision: number): boolean {
     if (reply.seq !== this.seqValue) return false;
+    // 本轮已有回包：正则错误态结束（结果要么被采纳，要么因文档变更清空）
+    this.patternErrorValue = null;
 
     if (reply.docRevision !== docRevision) {
       this.clearResults();
@@ -260,6 +317,7 @@ export class SearchState {
   /** 清空 query/结果/current/stale（seq 不变；filter 是用户偏好，保留）。 */
   clear(): void {
     this.queryValue = '';
+    this.patternErrorValue = null;
     this.pendingValue = false;
     this.staleValue = false;
     this.clearResults();
@@ -319,6 +377,9 @@ export class SearchState {
       current: this.currentValue,
       filter: this.filterValue,
       truncated: this.truncatedValue,
+      caseSensitive: this.caseSensitiveValue,
+      regex: this.regexValue,
+      patternError: this.patternErrorValue,
     };
   }
 

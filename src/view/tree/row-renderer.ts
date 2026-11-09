@@ -227,6 +227,9 @@ export class DomRowPool implements RowRenderer {
       slot.keyEl.textContent = '';
       slot.value.textContent = '';
       slot.count.textContent = '';
+      // 隐藏槽位也清掉项数标的可点态（#9）：池复用后不会残留 title / is-clickable
+      slot.count.className = 'row__count';
+      slot.count.removeAttribute('title');
       slot.preview.textContent = '';
       slot.type.textContent = '';
       if (this.selectedKey === slot.key) this.selectedKey = null;
@@ -346,14 +349,22 @@ export class DomRowPool implements RowRenderer {
     }
 
     if (row.hasChildren) {
+      // 项数标是展开/收起的第二入口（#9 / direction §5）：可点、带 title；
+      // 容器行的 count 只在这一支出现，空容器 hasChildren=false 走下面的标量分支。
       slot.count.hidden = false;
       slot.count.className =
-        'row__count' + (row.kind === 'array' ? ' row__count--arr' : '');
+        'row__count' +
+        (row.kind === 'array' ? ' row__count--arr' : '') +
+        ' is-clickable';
       slot.count.textContent =
         row.kind === 'array' ? `[${row.count}]` : `${row.count} 项`;
+      slot.count.title = row.open ? '点击收起' : '点击展开';
     } else {
+      // 标量行没有项数标：清文本的同时必须清 class/title，否则行池复用到标量行会留可点态
       slot.count.hidden = true;
+      slot.count.className = 'row__count';
       slot.count.textContent = '';
+      slot.count.removeAttribute('title');
     }
 
     const previewText = row.hasChildren ? row.preview : '';

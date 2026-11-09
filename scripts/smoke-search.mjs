@@ -572,6 +572,91 @@ async function pageStatesPhase(cfg) {
   return out;
 }
 
+/**
+ * 搜索选项 Aa / 正则（ADR-0014，2026-11-09）。
+ * 全部走真实 UI：输入框 dispatch input（250ms debounce）+ 点击 #searchCase / #searchRegex。
+ * fixture 设计成四个模式互不相同的命中数（6 / 2 / 5 / 1），可证伪：
+ *   {"Hotel":1,"hotel":2,"HOTEL":3,"list":["HoTel","xhotelx"],"deep":{"Hotel":"v"}}
+ */
+async function pageOptionsPhase(cfg) {
+  const out = {};
+  window.__smoke.reset();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const input = () => document.getElementById('searchInput');
+  const toggle = (id) => document.getElementById(id);
+  const setQuery = async (q) => {
+    const el = input();
+    el.focus();
+    el.value = q;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(450); // debounce 250 + worker 往返
+  };
+  const clickToggle = async (id) => {
+    toggle(id).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await sleep(350); // onOptionsChange 直跑（无 debounce）
+  };
+  const snap = () => ({
+    diag: window.__tjv.searchPanel(),
+    dom: window.__smoke.dom(),
+    inputValue: input().value,
+    inputInvalid: input().getAttribute('aria-invalid'),
+    errorHidden: document.getElementById('searchPatternError')?.hidden ?? null,
+    errorText: document.getElementById('searchPatternError')?.textContent ?? '',
+    ariaPressed: {
+      case: toggle('searchCase')?.getAttribute('aria-pressed') ?? null,
+      regex: toggle('searchRegex')?.getAttribute('aria-pressed') ?? null,
+    },
+  });
+
+  // 面板打开（必须在 loadText 之后：onLoaded 会把左面板切回「文档」）
+  await window.__tjv.loadText(JSON.stringify(cfg.doc), 'options.json');
+  await sleep(300);
+  if (document.body.dataset.panel !== 'search') {
+    document.querySelector('[data-panel-btn="search"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await sleep(200);
+  }
+  out.panelOpen = document.body.dataset.panel === 'search';
+
+  // 1) 默认：大小写不敏感子串 → 6（键 4 + 值 2）
+  await setQuery(cfg.term);
+  out.defaultMode = snap();
+
+  // 2) 只开 Aa：大小写敏感子串 → 2（键 hotel 1 + 值 xhotelx 1）
+  await clickToggle('searchCase');
+  out.caseOnly = snap();
+
+  // 3) Aa 关、开正则（^hotel$，i）→ 5（键 4 + 值 HoTel 1）
+  await clickToggle('searchCase');
+  await clickToggle('searchRegex');
+  await setQuery(cfg.regex);
+  out.regexOnly = snap();
+
+  // 4) 正则 + Aa → 1（只有键 hotel）
+  await clickToggle('searchCase');
+  out.regexCase = snap();
+
+  // 5) 非法正则 → 内联错误 + 结果/树高亮清空（不弹 toast）
+  await setQuery(cfg.badRegex);
+  out.badPattern = snap();
+  out.badPatternToastHidden = document.getElementById('toast')?.hidden ?? null;
+
+  // 6) 灾难性回溯筛查 → 拒绝并提示
+  await setQuery(cfg.unsafeRegex);
+  out.unsafePattern = snap();
+
+  // 7) Aa 关 + 改回合法正则（^hotel$，i）→ 错误态清除、结果恢复 5
+  await clickToggle('searchCase');
+  await setQuery(cfg.regex);
+  out.recovered = snap();
+
+  // 8) 关正则、清空查询（两开关回默认、错误态与统计归零）
+  await clickToggle('searchRegex');
+  await setQuery('');
+  out.cleared = snap();
+  out.longTasks = window.__smoke.take();
+  return out;
+}
+
 /** stale（review 新增 dev hook）：search 成功 → searchMarkStale() → 再搜索恢复。 */
 async function pageStalePhase() {
   const out = {};
@@ -1376,6 +1461,102 @@ try {
       nextDisabled: nohitDom.nextDisabled,
       countText: nohitDom.countText,
     });
+  }
+
+  /* ---- 搜索选项 Aa / 正则（ADR-0014；真实点击开关 + 输入框） ---- */
+  const optionsPhase = statesPhase
+    ? await runPhase('options', pageOptionsPhase, {
+        term: 'hotel',
+        regex: '^hotel$',
+        badRegex: '(',
+        unsafeRegex: '(a+)+',
+        doc: { Hotel: 1, hotel: 2, HOTEL: 3, list: ['HoTel', 'xhotelx'], deep: { Hotel: 'v' } },
+      })
+    : null;
+  if (optionsPhase) {
+    report.options = optionsPhase;
+    const d = optionsPhase.defaultMode || {};
+    const c = optionsPhase.caseOnly || {};
+    const r = optionsPhase.regexOnly || {};
+    const rc = optionsPhase.regexCase || {};
+    const bad = optionsPhase.badPattern || {};
+    const unsafe = optionsPhase.unsafePattern || {};
+    const rec = optionsPhase.recovered || {};
+    const clr = optionsPhase.cleared || {};
+    metric('options', {
+      panelOpen: optionsPhase.panelOpen,
+      defaultSize: d.diag && d.diag.size,
+      caseSize: c.diag && c.diag.size,
+      regexSize: r.diag && r.diag.size,
+      regexCaseSize: rc.diag && rc.diag.size,
+      badError: bad.diag && bad.diag.patternError,
+      recoveredSize: rec.diag && rec.diag.size,
+    });
+    check('options:panel-open', optionsPhase.panelOpen === true, { panelOpen: optionsPhase.panelOpen });
+    check(
+      'options:default-ci-substring',
+      d.diag?.size === 6 && d.diag?.caseSensitive === false && d.diag?.regex === false && d.ariaPressed?.case === 'false' && d.ariaPressed?.regex === 'false',
+      { size: d.diag?.size, pressed: d.ariaPressed, expect: 6, note: '键 Hotel/hotel/HOTEL/deep.Hotel 4 + 值 HoTel/xhotelx 2' },
+    );
+    check(
+      'options:case-sensitive',
+      c.diag?.size === 2 && c.diag?.caseSensitive === true && c.ariaPressed?.case === 'true' && c.inputInvalid === null,
+      { size: c.diag?.size, pressed: c.ariaPressed, expect: 2, note: '键 hotel 1 + 值 xhotelx 1' },
+    );
+    check(
+      'options:regex',
+      r.diag?.size === 5 && r.diag?.regex === true && r.diag?.caseSensitive === false && r.ariaPressed?.regex === 'true' && r.inputInvalid === null,
+      { size: r.diag?.size, pressed: r.ariaPressed, expect: 5, note: '/^hotel$/i：键 4 + 值 HoTel 1（子串模式不可能有锚点语义）' },
+    );
+    check(
+      'options:regex+case',
+      rc.diag?.size === 1 && rc.diag?.regex === true && rc.diag?.caseSensitive === true,
+      { size: rc.diag?.size, expect: 1, note: '/^hotel$/：只有键 hotel' },
+    );
+    check(
+      'options:bad-pattern-inline-error',
+      typeof bad.diag?.patternError === 'string' &&
+        /正则/.test(bad.diag.patternError) &&
+        bad.inputInvalid === 'true' &&
+        bad.errorHidden === false &&
+        bad.dom?.visibleRows === 0 &&
+        bad.dom?.treeHitRows === 0,
+      {
+        error: bad.diag?.patternError,
+        inputInvalid: bad.inputInvalid,
+        errorHidden: bad.errorHidden,
+        visibleRows: bad.dom?.visibleRows,
+        treeHitRows: bad.dom?.treeHitRows,
+        note: '无效正则 → 内联错误 + 结果/树高亮清空（不是「无命中」态）',
+      },
+    );
+    check(
+      'options:bad-pattern-no-toast',
+      bad.diag?.phase === 'idle' && optionsPhase.badPatternToastHidden === true,
+      { phase: bad.diag?.phase, toastHidden: optionsPhase.badPatternToastHidden },
+    );
+    check(
+      'options:unsafe-pattern-rejected',
+      typeof unsafe.diag?.patternError === 'string' && /灾难性回溯/.test(unsafe.diag.patternError),
+      { error: unsafe.diag?.patternError, note: '嵌套量词 (a+)+ 被安全筛查拒绝（ADR-0014 §2.4）' },
+    );
+    check(
+      'options:recovered',
+      rec.diag?.patternError === null && rec.inputInvalid === null && rec.errorHidden === true && rec.diag?.size === 5,
+      { error: rec.diag?.patternError, inputInvalid: rec.inputInvalid, size: rec.diag?.size },
+    );
+    check(
+      'options:cleared',
+      clr.diag?.size === 0 && clr.diag?.phase === 'idle' && clr.ariaPressed?.case === 'false' && clr.ariaPressed?.regex === 'false' && clr.diag?.patternError === null,
+      { size: clr.diag?.size, phase: clr.diag?.phase, pressed: clr.ariaPressed },
+    );
+    const optionLong = longTasksOf(optionsPhase);
+    check('options:longtasks<=50ms', maxLongTask(optionLong) <= 50, {
+      count: optionLong.length,
+      maxMs: maxLongTask(optionLong),
+    });
+    await page.screenshot(path.join(SHOTS, 'search-options.png'));
+    report.screenshots = [...(report.screenshots || []), path.join(SHOTS, 'search-options.png')];
   }
 } catch (error) {
   fatal.push({ phase: 'main', error: String((error && error.stack) || error) });
