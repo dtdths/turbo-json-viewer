@@ -25,6 +25,7 @@ import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
 import type { CopyFormat, DocumentMeta, FidelityReport, JsonKind, RawMeta, Row } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
+import { DocSession, type LandingPlan } from './doc-session';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
 import { SettingsState, type SettingsKey } from '../viewmodel/settings-state';
@@ -243,10 +244,9 @@ const subtreeEditor = new SubtreeEditor({
 
 /* ---------------- session state ---------------- */
 
-let rootId: string | null = null;
-let docRevision = 0;
-let rowVersion = 0;
-let totalRows = 0;
+/** 回包落地会话（ADR-0008 修订 2026-11-09）：四个会话字段的唯一真相源；只在 applyLanding 前由 land() 更新。 */
+const session = new DocSession();
+
 let meta: DocumentMeta | null = null;
 let selected: string | null = null;
 let loadSeq = 0;
@@ -271,6 +271,34 @@ const editState = new EditState();
 editState.subscribe(renderEditBadge);
 let editingPath: string | null = null;
 let ctxPath: string | null = null;
+
+/**
+ * 回包落地执行器（app 侧唯一副作用点）：把 `LandingPlan` 变成行窗口 / 视口 / 命中 / 状态栏动作。
+ * 「意图 → 附加动作」全部由 `DocSession.land()` 决定，这里只照做（ADR-0008 修订 2026-11-09）。
+ */
+function applyLanding(plan: LandingPlan): void {
+  const rootId = plan.state.rootId;
+  if (!rootId) return;
+  rowSource.setRoot(
+    { rootId, rowVersion: plan.state.rowVersion, totalRows: plan.state.totalRows },
+    plan.scroll.kind === 'top' ? { scrollTopPx: 0 } : {},
+  );
+  if (plan.scroll.kind === 'top') tree.scrollToPx(0);
+  else if (plan.scroll.kind === 'center') tree.scrollToPx(plan.scroll.scrollTopPx);
+  else if (plan.scroll.kind === 'shift-anchor') rowSource.restoreAnchor(plan.scroll.anchor);
+  rowSource.requestWindow();
+  if (plan.reapplyHits) applySearchToTree();
+  if (plan.refreshOutline) void outlineState.refresh();
+  if (plan.markSearchStale) markSearchStale();
+  if (plan.history) editState.sync(plan.history);
+  if (plan.clearSelection) setSelection(null);
+  if (plan.selectPath) setSelection(plan.selectPath);
+  if (plan.flashPath) {
+    tree.setChangedPath(plan.flashPath);
+    window.setTimeout(() => tree.setChangedPath(null), CHANGED_FLASH_MS);
+  }
+  updateStatus();
+}
 
 function metrics(): { rowHeight: number; viewportRows: number } {
   return { rowHeight: settings.get('rowHeight'), viewportRows: Math.max(1, tree.viewportRows()) };
@@ -301,11 +329,11 @@ function applySettings(): void {
   setTheme(current.theme);
   tree.setRowHeight(current.rowHeight);
   rowSource.setMetrics(metrics());
-  if (rootId) rowSource.requestWindow();
+  if (session.rootId) rowSource.requestWindow();
   // 原文视图与树共用行高（ADR-0003 修订：行高是唯一进入逻辑层的视觉参数）
   rawView.setRowHeight(current.rowHeight);
   rawSource.setMetrics(rawMetrics());
-  if (rootId && isRawView()) rawSource.requestWindow();
+  if (session.rootId && isRawView()) rawSource.requestWindow();
   // 大纲行高跟随设置（20–26），spacer / 窗口重算在面板内部完成
   outlinePanel.setRowHeight(current.rowHeight);
   document.documentElement.style.setProperty('--row-indent', `${current.indent}px`);
@@ -372,7 +400,7 @@ function resetImportLayerView(): void {
 
 /** 已打开文档时：点「导入」/文件 chip / ⌘O 打开显式替换层。返回是否真的打开。 */
 function openImportLayer(): boolean {
-  if (!rootId || importLayerOpen()) return false;
+  if (!session.rootId || importLayerOpen()) return false;
   if (!confirmDiscardEdits()) return false;
   resetImportLayerView();
   empty.dataset.mode = 'replace';
@@ -391,7 +419,7 @@ function openImportLayer(): boolean {
 
 /** 取消替换层：丢弃在途导入回包，回到文档视图。 */
 function closeImportLayer(): void {
-  if (!rootId || !importLayerOpen()) return;
+  if (!session.rootId || !importLayerOpen()) return;
   if (empty.classList.contains('is-busy')) loadSeq += 1;
   empty.classList.add('is-hidden');
   resetImportLayerView();
@@ -448,10 +476,8 @@ async function importFile(file: File): Promise<void> {
 
 function onLoaded(reply: LoadReply): void {
   const rid = reply.rootId;
-  rootId = rid;
-  docRevision = reply.docRevision;
-  rowVersion = reply.rowVersion;
-  totalRows = reply.totalRows;
+  // 换文档 = document 意图：版本字段 / 回顶 / 清选中都由落地计划统一（executor 内）
+  const plan = session.land(reply, { kind: 'document' });
   meta = reply.meta;
   selected = null;
 
@@ -481,16 +507,13 @@ function onLoaded(reply: LoadReply): void {
   rawSource.clear();
   renderRawChrome();
 
-  rowSource.setRoot({ rootId: rid, rowVersion, totalRows });
+  applyLanding(plan);
   rowSource.setMetrics(metrics());
   rowSource.requestWindow();
-  rowSource.scrollTo(0);
-  setSelection(null);
   resetSearch();
   // 新文档：重置大纲并加载根页（面板此刻可能未打开，数据先备好）
   void outlineState.open(rid);
   setPanel('doc');
-  updateStatus();
   focusTree();
   void setViewMode(settings.uiState().viewMode === 'raw' ? 'raw' : 'tree', { persist: false });
 }
@@ -512,7 +535,7 @@ document.addEventListener('paste', (event: ClipboardEvent) => {
   if (isEditableTarget(event.target)) return;
   const text = event.clipboardData?.getData('text/plain');
   if (!text || !text.trim()) return;
-  if (!rootId) {
+  if (!session.rootId) {
     // 初始空态：粘贴 = 打开文档
     event.preventDefault();
     void importBuffer('paste', text, '剪贴板.json');
@@ -531,7 +554,7 @@ window.addEventListener('drop', (event: DragEvent) => {
   event.preventDefault();
   const file = event.dataTransfer?.files?.[0];
   if (!file) return;
-  if (!rootId) {
+  if (!session.rootId) {
     // 初始空态：直接导入
     void importFile(file);
     return;
@@ -550,7 +573,7 @@ window.addEventListener('drop', (event: DragEvent) => {
 });
 
 importBtn.addEventListener('click', () => {
-  if (rootId) openImportLayer();
+  if (session.rootId) openImportLayer();
   else fileInput.click();
 });
 pickBtn.addEventListener('click', () => fileInput.click());
@@ -562,7 +585,7 @@ dropzone.addEventListener('click', (event: MouseEvent) => {
   if (!pickBtn.disabled) fileInput.click();
 });
 fileChip.addEventListener('click', () => {
-  if (rootId) openImportLayer();
+  if (session.rootId) openImportLayer();
   else fileInput.click();
 });
 emptyClose.addEventListener('click', () => closeImportLayer());
@@ -574,7 +597,7 @@ emptyPendingReplace.addEventListener('click', () => {
 });
 empty.addEventListener('click', (event: MouseEvent) => {
   // 点遮罩（inner 之外）关闭替换层
-  if (event.target === empty && rootId && importLayerMode() === 'replace') closeImportLayer();
+  if (event.target === empty && session.rootId && importLayerMode() === 'replace') closeImportLayer();
 });
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
@@ -685,14 +708,10 @@ document.addEventListener(
 /* ---------------- tree intents ---------------- */
 
 async function toggleNode(path: string, open: boolean): Promise<void> {
-  if (!rootId) return;
+  if (!session.rootId) return;
   try {
-    const reply = await core.toggle({ rootId, path, open });
-    rowVersion = reply.rowVersion;
-    totalRows = reply.totalRows;
-    rowSource.setRoot({ rootId, rowVersion, totalRows });
-    rowSource.requestWindow();
-    updateStatus();
+    const reply = await core.toggle({ rootId: session.rootId, path, open });
+    applyLanding(session.land(reply, { kind: 'toggle' }));
   } catch (error) {
     showError(error);
   }
@@ -708,23 +727,18 @@ async function toggleNode(path: string, open: boolean): Promise<void> {
  * no-op（已全展开/已全收起）用 `rowVersion` 是否变化判定，给中性 info toast（与 #9 同口径）。
  */
 async function toggleSubtree(path: string, open: boolean): Promise<void> {
-  if (!rootId) return;
+  if (!session.rootId) return;
   // 树动作：原文视图下先切回树（与「全部展开 / 收起」一致）
   if (isRawView()) await setViewMode('tree');
   try {
-    const rowVersionBefore = rowVersion;
-    const reply = await core.toggleSubtree({ rootId, path, open });
-    if (reply.rowVersion === rowVersionBefore) {
+    // no-op 判据统一来自落地计划（rowVersion 是否真的推进），不再手抄 rowVersionBefore
+    const plan = session.land(await core.toggleSubtree({ rootId: session.rootId, path, open }), { kind: 'subtree' });
+    if (!plan.changed) {
       showToast(open ? '整棵子树已经全部展开了' : '整棵子树已经全部收起了', 1800, 'info');
       return;
     }
-    rowVersion = reply.rowVersion;
-    totalRows = reply.totalRows;
-    rowSource.setRoot({ rootId, rowVersion, totalRows });
-    rowSource.requestWindow();
-    // 命中集按路径仍然有效（docRevision 未变），但新出现的行要重新带上命中标记
-    applySearchToTree();
-    updateStatus();
+    // 命中集按路径仍然有效（docRevision 未变），但新出现的行要重新带上命中标记（在 executor 内）
+    applyLanding(plan);
   } catch (error) {
     showError(error);
   }
@@ -741,30 +755,25 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
 let expandAllBusy = false;
 
 async function applyExpandAll(open: boolean): Promise<void> {
-  if (!rootId || expandAllBusy) return;
+  if (!session.rootId || expandAllBusy) return;
   // 展开/收起是树动作：原文视图下先切回树（按钮保持可用，不靠禁用态说话）
   if (isRawView()) await setViewMode('tree');
   expandAllBusy = true;
   try {
     // #9 收口：已是目标状态（core no-op → 不推进 rowVersion）时给一句中性反馈，
     // 不做无意义的换版本/回顶/重取窗口——此前点了完全没反应。
-    // 判定口径 = rowVersion 是否变化（core 只在 changed 时 rowVersion++，不额外加协议字段）。
-    const rowVersionBefore = rowVersion;
-    const reply = open ? await core.expandAll(rootId) : await core.collapseAll(rootId);
-    if (reply.rowVersion === rowVersionBefore) {
+    // 判定口径 = 落地计划的 changed（core 只在 changed 时 rowVersion++，不额外加协议字段）。
+    const plan = session.land(
+      open ? await core.expandAll(session.rootId) : await core.collapseAll(session.rootId),
+      { kind: 'expandAll' },
+    );
+    if (!plan.changed) {
       showToast(open ? '已经全部展开了' : '已经全部收起了', 1800, 'info');
       return;
     }
-    rowVersion = reply.rowVersion;
-    totalRows = reply.totalRows;
-    // 回顶与换版本同一拍完成：避免「旧 start 的保留帧被新 totalRows 裁到视口外」（空白帧）
-    // 与「按旧滚动位置算出的中间窗口」（1 行闪帧）。见 RowWindowSource.setRoot 的 opts.scrollTopPx。
-    rowSource.setRoot({ rootId, rowVersion, totalRows }, { scrollTopPx: 0 });
-    tree.scrollToPx(0);
-    rowSource.requestWindow();
-    // 命中集仍按路径有效（docRevision 未变），重推高亮
-    applySearchToTree();
-    updateStatus();
+    // 回顶与换版本同一拍完成（plan.scroll = top，executor 用 setRoot 的 scrollTopPx）：
+    // 避免「旧 start 的保留帧被新 totalRows 裁到视口外」（空白帧）与 1 行闪帧。
+    applyLanding(plan);
   } catch (error) {
     showError(error);
   } finally {
@@ -801,27 +810,9 @@ function confirmReset(): boolean {
  * + 选中与短暂高亮 + 修改计数。search stale 由调用方按需补。
  */
 function applyModelReply(reply: EditReply): void {
-  if (!rootId) return;
-  const anchor = rowSource.anchor();
-  const delta = reply.totalRows - totalRows;
-  docRevision = reply.docRevision;
-  rowVersion = reply.rowVersion;
-  totalRows = reply.totalRows;
-  rowSource.setRoot({ rootId, rowVersion, totalRows });
-  // 变更发生在视口上方：按行数差值平移锚点，保持视口内容不跳
-  if (anchor && reply.changedRow !== undefined && reply.changedRow >= 0 && reply.changedRow < anchor.row) {
-    rowSource.restoreAnchor({ row: Math.max(0, anchor.row + delta), offsetPx: anchor.offsetPx });
-  }
-  rowSource.requestWindow();
-  if (reply.changedPath) {
-    setSelection(reply.changedPath);
-    tree.setChangedPath(reply.changedPath);
-    window.setTimeout(() => tree.setChangedPath(null), CHANGED_FLASH_MS);
-  }
-  editState.sync(reply.history);
-  // 编辑改变 docRevision：大纲回到根展开、丢弃子页（ADR-0013 §5）
-  void outlineState.refresh();
-  updateStatus();
+  if (!session.rootId) return;
+  // 锚点必须在换根前记录（edit-spec §4.4）；滚动策略与编辑类附加动作在 landing 内统一
+  applyLanding(session.land(reply, { kind: 'edit' }, { anchor: rowSource.anchor() }));
 }
 
 /** 文档已修改：清空搜索命中并提示重搜（edit-spec §6）。 */
@@ -832,9 +823,9 @@ function markSearchStale(): void {
 }
 
 async function openEditor(path: string): Promise<void> {
-  if (!rootId || subtreeEditor.isOpen()) return;
+  if (!session.rootId || subtreeEditor.isOpen()) return;
   try {
-    const reply = await core.getNodeJson({ rootId, path });
+    const reply = await core.getNodeJson({ rootId: session.rootId, path });
     editingPath = path;
     await subtreeEditor.open({
       path,
@@ -860,14 +851,14 @@ async function openEditor(path: string): Promise<void> {
 }
 
 async function applyEditText(text: string): Promise<void> {
-  if (!rootId || !editingPath) return;
+  if (!session.rootId || !editingPath) return;
   const path = editingPath;
   subtreeEditor.setError(null);
   subtreeEditor.setBusy(true);
   try {
-    const reply = await core.replaceNode({ rootId, path, docRevision, jsonText: text });
+    const reply = await core.replaceNode({ rootId: session.rootId, path, docRevision: session.docRevision, jsonText: text });
+    // 搜索 stale / 大纲刷新已在 applyLanding（edit 意图的 landing 计划）内统一
     applyModelReply(reply);
-    markSearchStale();
     subtreeEditor.close();
     editingPath = null;
   } catch (error) {
@@ -879,11 +870,11 @@ async function applyEditText(text: string): Promise<void> {
 }
 
 async function undoEdit(): Promise<boolean> {
-  if (!rootId) return false;
+  if (!session.rootId) return false;
   try {
-    const reply = await core.undo(rootId);
+    const reply = await core.undo(session.rootId);
+    // 搜索 stale / 大纲刷新已在 applyLanding（edit 意图的 landing 计划）内统一
     applyModelReply(reply);
-    markSearchStale();
     return true;
   } catch (error) {
     if (CoreError.from(error).code === 'NO_HISTORY') return false;
@@ -893,11 +884,11 @@ async function undoEdit(): Promise<boolean> {
 }
 
 async function redoEdit(): Promise<boolean> {
-  if (!rootId) return false;
+  if (!session.rootId) return false;
   try {
-    const reply = await core.redo(rootId);
+    const reply = await core.redo(session.rootId);
+    // 搜索 stale / 大纲刷新已在 applyLanding（edit 意图的 landing 计划）内统一
     applyModelReply(reply);
-    markSearchStale();
     return true;
   } catch (error) {
     if (CoreError.from(error).code === 'NO_HISTORY') return false;
@@ -908,12 +899,12 @@ async function redoEdit(): Promise<boolean> {
 
 /** 重置全部临时修改（反向撤销到打开时状态）；skipConfirm 供 dev hook 用。 */
 async function resetEdits(skipConfirm = false): Promise<boolean> {
-  if (!rootId || !editState.dirty) return false;
+  if (!session.rootId || !editState.dirty) return false;
   if (!skipConfirm && !confirmReset()) return false;
   try {
-    const reply = await core.reset(rootId);
+    const reply = await core.reset(session.rootId);
+    // 搜索 stale / 大纲刷新已在 applyLanding（edit 意图的 landing 计划）内统一
     applyModelReply(reply);
-    markSearchStale();
     return true;
   } catch (error) {
     if (CoreError.from(error).code !== 'NO_HISTORY') showError(error);
@@ -999,10 +990,10 @@ async function runExportMode(mode: ExportMode): Promise<void> {
 
 /** 文件导出（既有行为）：Blob + `<a download>`，文件名带 -edited / -truncated-repaired。 */
 async function exportDoc(): Promise<void> {
-  if (!rootId || !meta) return;
+  if (!session.rootId || !meta) return;
   setExportButtonsDisabled(true);
   try {
-    const { text, bytes } = await core.exportDoc(rootId, 2);
+    const { text, bytes } = await core.exportDoc(session.rootId, 2);
     const name = exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1026,10 +1017,10 @@ async function exportDoc(): Promise<void> {
  * >20MB 拒绝并提示用文件导出；剪贴板写入复用 ADR-0010 §7 的零权限路径。
  */
 async function copyDocJson(): Promise<void> {
-  if (!rootId || !meta) return;
+  if (!session.rootId || !meta) return;
   setExportButtonsDisabled(true);
   try {
-    const reply = await core.exportDoc(rootId, 2);
+    const reply = await core.exportDoc(session.rootId, 2);
     const refusal = clipboardRefusal(reply.bytes);
     if (refusal) {
       exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied: false };
@@ -1192,9 +1183,9 @@ function setCtxItemDisabled(act: string, disabled: boolean, why?: string, hint?:
  * 只读操作，不推进版本；TOO_LARGE 引导用「导出」而不是静默截断。
  */
 async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<void> {
-  if (!rootId) return;
+  if (!session.rootId) return;
   try {
-    const reply = await core.copyNode({ rootId, path, format, indent: settings.get('copyIndent') });
+    const reply = await core.copyNode({ rootId: session.rootId, path, format, indent: settings.get('copyIndent') });
     const copied = await writeClipboard(reply.text);
     if (copied) showToast(`已复制：${COPY_LABELS[format]}`, 2000, 'success');
     else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
@@ -1318,14 +1309,14 @@ async function runSearch(query: string): Promise<boolean> {
   renderSearch();
 
   if (!trimmed) return false;
-  if (!rootId) {
+  if (!session.rootId) {
     searchState.begin('', searchOpts);
     renderSearch();
     return false;
   }
 
   try {
-    const reply = await core.search({ rootId, seq, query: trimmed, opts: searchOpts });
+    const reply = await core.search({ rootId: session.rootId, seq, query: trimmed, opts: searchOpts });
     if (loadAtStart !== loadSeq) return false;
     const accepted = searchState.apply(
       {
@@ -1335,7 +1326,7 @@ async function runSearch(query: string): Promise<boolean> {
         total: reply.total,
         truncated: reply.truncated,
       },
-      docRevision,
+      session.docRevision,
     );
     searchJumped = false;
     applySearchToTree();
@@ -1395,23 +1386,18 @@ function applyFilter(filter: SearchFilter): void {
  * 返回 `{ ok, row }`（row = 树内行号；失败 -1），错误已在内部提示。
  */
 async function jumpToPath(path: string): Promise<{ ok: boolean; row: number }> {
-  if (!rootId) return { ok: false, row: -1 };
+  if (!session.rootId) return { ok: false, row: -1 };
   // 跳转是树动作：原文视图下先切回树（ADR-0003 修订：两视图 v1 不联动）
   if (isRawView()) await setViewMode('tree');
   try {
-    const reply = await core.expandTo({ rootId, path });
-    rowVersion = reply.rowVersion;
-    totalRows = reply.totalRows;
-    rowSource.setRoot({ rootId, rowVersion, totalRows });
-    rowSource.requestWindow();
-
-    const viewportPx = tree.clientHeightPx();
-    const rowH = settings.get('rowHeight');
-    const centerOffset = Math.max(0, Math.floor((viewportPx - rowH) / 2 / rowH)) * rowH;
-    tree.scrollToPx(Math.max(0, reply.row * rowH - centerOffset));
-
-    setSelection(path);
-    updateStatus();
+    const reply = await core.expandTo({ rootId: session.rootId, path });
+    // 居中 + 选中都在 landing 里（viewport 与行高作为纯数据传入）
+    applyLanding(
+      session.land(reply, { kind: 'jump', path, row: reply.row }, {
+        viewportPx: tree.clientHeightPx(),
+        rowHeightPx: settings.get('rowHeight'),
+      }),
+    );
     return { ok: true, row: reply.row };
   } catch (error) {
     showError(error);
@@ -1484,7 +1470,7 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
   const key = event.key.toLowerCase();
   // 撤销/重做临时修改（输入控件内交给浏览器原生）
   if (mod && key === 'z' && !isEditableTarget(event.target)) {
-    if (!rootId) return;
+    if (!session.rootId) return;
     event.preventDefault();
     if (event.shiftKey) void redoEdit();
     else void undoEdit();
@@ -1497,19 +1483,19 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
   }
   // 打开导入层（已打开文档时的显式替换入口，Q11-B）
   if (mod && key === 'o') {
-    if (!rootId) return;
+    if (!session.rootId) return;
     event.preventDefault();
     openImportLayer();
     return;
   }
-  if (event.key === 'Escape' && rootId && importLayerOpen() && importLayerMode() === 'replace') {
+  if (event.key === 'Escape' && session.rootId && importLayerOpen() && importLayerMode() === 'replace') {
     event.preventDefault();
     closeImportLayer();
     return;
   }
   // 下一个/上一个命中：⌘G / ⇧⌘G，或 F3 / ⇧F3
   if ((mod && key === 'g') || key === 'f3') {
-    if (!rootId) return;
+    if (!session.rootId) return;
     event.preventDefault();
     if (event.shiftKey) void searchPrev();
     else void searchNext();
@@ -1595,22 +1581,22 @@ function resetFidelity(): void {
  * 不显示「检查中」进度；换文档用 `fidelitySeq` + rootId 双重判定丢弃迟到回包。
  */
 function scheduleFidelityScan(): void {
-  const rid = rootId;
+  const rid = session.rootId;
   if (!rid) return;
   const seq = fidelitySeq;
   fidelityPending = true;
   const run = (): void => {
-    if (rid !== rootId || seq !== fidelitySeq) return;
+    if (rid !== session.rootId || seq !== fidelitySeq) return;
     void (async () => {
       try {
         const reply = await core.fidelity({ rootId: rid });
-        if (rid !== rootId || seq !== fidelitySeq) return;
+        if (rid !== session.rootId || seq !== fidelitySeq) return;
         // 不用 docRevision 判过期：编辑会推进它，但源文本不变、报告仍有效（ADR 修订 §1）
         fidelity = reply.report;
         fidelityPending = false;
         renderFidelity();
       } catch (error) {
-        if (rid !== rootId || seq !== fidelitySeq) return;
+        if (rid !== session.rootId || seq !== fidelitySeq) return;
         fidelityPending = false;
         const coreError = CoreError.from(error);
         // 取消 / 根已换是正常竞态，静默；其余是真错误
@@ -1681,7 +1667,7 @@ function renderRawChrome(): void {
  * 惰性构建索引（Worker 内，50MB ≈300ms）。persist=false 用于「打开文档后恢复上次模式」。
  */
 async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {}): Promise<void> {
-  if (!rootId) return;
+  if (!session.rootId) return;
   const changed = mode !== (isRawView() ? 'raw' : 'tree');
   document.body.dataset.view = mode;
   viewTreeBtn.classList.toggle('is-active', mode === 'tree');
@@ -1697,16 +1683,16 @@ async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {
   }
 
   // 原文：已构建则直接复用；否则先给「构建中」反馈（桌面读屏与冒烟都能看到）
-  const rid = rootId;
+  const rid = session.rootId;
   const seq = ++rawOpenSeq;
   if (!rawMetaInfo) {
     statusRows.textContent = '正在构建原文索引…';
-    statusSize.textContent = meta ? `${formatBytes(meta.bytes)} · v${docRevision}` : '—';
+    statusSize.textContent = meta ? `${formatBytes(meta.bytes)} · v${session.docRevision}` : '—';
   }
   try {
     const info = await rawSource.open(rid);
     // 迟到回包：已换文档 / 已切回树 / 有更新的 open → 丢弃
-    if (seq !== rawOpenSeq || rid !== rootId || !isRawView()) return;
+    if (seq !== rawOpenSeq || rid !== session.rootId || !isRawView()) return;
     rawMetaInfo = info;
     renderRawChrome();
     rawView.setRowHeight(settings.get('rowHeight'));
@@ -1724,9 +1710,9 @@ async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {
 
 /** 复制整份原文（ADR-0003 修订 §4：>maxBytes 由 core 抛 TOO_LARGE，与导出复制同口径）。 */
 async function copyRawSource(): Promise<void> {
-  if (!rootId) return;
+  if (!session.rootId) return;
   try {
-    const reply = await core.rawSource({ rootId, maxBytes: CLIPBOARD_MAX_BYTES });
+    const reply = await core.rawSource({ rootId: session.rootId, maxBytes: CLIPBOARD_MAX_BYTES });
     const copied = await writeClipboard(reply.text);
     if (copied) showToast('已复制：原始文本', 2000, 'success');
     else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
@@ -1750,13 +1736,13 @@ async function copyRawSource(): Promise<void> {
  * 切原文视图 → rawLocate 偏移反查行号 → 滚到该行 + 短暂高亮。
  */
 async function revealRepairOffset(offset: number): Promise<number> {
-  if (!rootId) return -1;
-  const rid = rootId;
+  if (!session.rootId) return -1;
+  const rid = session.rootId;
   await setViewMode('raw');
-  if (rid !== rootId) return -1;
+  if (rid !== session.rootId) return -1;
   try {
     const located = await core.rawLocate({ rootId: rid, offset });
-    if (rid !== rootId) return -1;
+    if (rid !== session.rootId) return -1;
     rawView.flashLine(located.line);
     return located.line;
   } catch (error) {
@@ -1766,7 +1752,7 @@ async function revealRepairOffset(offset: number): Promise<number> {
 }
 
 function updateStatus(): void {
-  if (!rootId || !meta) {
+  if (!session.rootId || !meta) {
     statusRows.textContent = '未打开文档';
     statusSize.textContent = '—';
     statusPath.textContent = '';
@@ -1779,9 +1765,9 @@ function updateStatus(): void {
     statusRows.textContent = `${lines.toLocaleString()} 行 · 原文 · 已渲染 ${rawSnapshot.lines.length}`;
   } else {
     const snapshot = rowSource.snapshot();
-    statusRows.textContent = `${totalRows.toLocaleString()} 行 · 已渲染 ${snapshot.rows.length}`;
+    statusRows.textContent = `${session.totalRows.toLocaleString()} 行 · 已渲染 ${snapshot.rows.length}`;
   }
-  statusSize.textContent = `${formatBytes(meta.bytes)} · v${docRevision}`;
+  statusSize.textContent = `${formatBytes(meta.bytes)} · v${session.docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
   // 修复角标独立于修复条显隐：数据仍不完整，状态栏要一直能看出来
@@ -1939,10 +1925,10 @@ if (!isExtension) {
   };
 
   const stateOf = (): Record<string, unknown> => ({
-    rootId,
-    totalRows,
-    rowVersion,
-    docRevision,
+    rootId: session.rootId,
+    totalRows: session.totalRows,
+    rowVersion: session.rowVersion,
+    docRevision: session.docRevision,
     selected,
     rendered: rowSource.snapshot().rows.length,
     start: rowSource.snapshot().start,
@@ -2091,8 +2077,8 @@ if (!isExtension) {
     redo: async () => ({ ok: await redoEdit(), ...stateOf() }),
     resetEdits: async () => ({ ok: await resetEdits(true), ...stateOf() }),
     exportDocText: async () => {
-      if (!rootId) return null;
-      const reply = await core.exportDoc(rootId, 2);
+      if (!session.rootId) return null;
+      const reply = await core.exportDoc(session.rootId, 2);
       return {
         bytes: reply.bytes,
         text: reply.text,
@@ -2148,9 +2134,9 @@ if (!isExtension) {
     },
     /** 走 core 的复制路径但不写剪贴板（逐字断言用）。 */
     copyResolve: async (path: string, format: CopyFormat) => {
-      if (!rootId) return { error: { code: 'NO_ROOT', message: 'no document loaded' } };
+      if (!session.rootId) return { error: { code: 'NO_ROOT', message: 'no document loaded' } };
       try {
-        const reply = await core.copyNode({ rootId, path, format, indent: settings.get('copyIndent') });
+        const reply = await core.copyNode({ rootId: session.rootId, path, format, indent: settings.get('copyIndent') });
         return { text: reply.text, bytes: reply.bytes, format: reply.format };
       } catch (error) {
         const coreError = CoreError.from(error);
@@ -2211,7 +2197,7 @@ if (!isExtension) {
       return {
         rowHeight: tree.rowHeightPx(),
         viewportRows: tree.viewportRows(),
-        totalRows,
+        totalRows: session.totalRows,
         rowHeightCss: scroller ? getComputedStyle(scroller).getPropertyValue('--row-h').trim() : '',
         rowHeightComputed: firstRow ? getComputedStyle(firstRow).height : '',
         indentCss: getComputedStyle(document.documentElement).getPropertyValue('--row-indent').trim(),
@@ -2286,15 +2272,15 @@ if (!isExtension) {
     },
     /** 直接走 core 取原文窗口（逐字断言/性能用；不影响视图）。 */
     rawWindowText: async (start: number, count: number) => {
-      if (!rootId) return null;
+      if (!session.rootId) return null;
       const started = performance.now();
-      const reply = await core.rawWindow({ rootId, seq: 0, start, count });
+      const reply = await core.rawWindow({ rootId: session.rootId, seq: 0, start, count });
       return { ms: ms(started), ...reply };
     },
     /** 源文本偏移 → 行号（逐字断言用）。 */
     rawLocate: async (offset: number) => {
-      if (!rootId) return null;
-      return core.rawLocate({ rootId, offset });
+      if (!session.rootId) return null;
+      return core.rawLocate({ rootId: session.rootId, offset });
     },
     /** 修复摘要跳行（走真实 revealRepairOffset：切视图 + locate + 高亮）。 */
     rawRevealAt: async (offset: number) => {
@@ -2312,9 +2298,9 @@ if (!isExtension) {
     },
     /** 走 core 取整份原文（不写剪贴板；逐字断言与守卫用）。 */
     rawCopyText: async (maxBytes?: number) => {
-      if (!rootId) return null;
+      if (!session.rootId) return null;
       try {
-        const reply = await core.rawSource({ rootId, maxBytes });
+        const reply = await core.rawSource({ rootId: session.rootId, maxBytes });
         return { bytes: reply.bytes, chars: reply.text.length, text: reply.text };
       } catch (error) {
         const coreError = CoreError.from(error);
