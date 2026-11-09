@@ -1,24 +1,31 @@
 /**
- * viewmodel/raw-window-source 单测 — 原文窗口不变量（ADR-0003 修订 §4/§7）。
+ * viewmodel/raw-window-source 单测 — S2 原文侧 adapter（ADR-0003 修订 §4/§7 / ADR-0008 修订 2026-11-09）。
  *
- * 覆盖：open → rawOpen → 首窗（含 stale 帧、滚动复位）、单飞 + 合并、
- * seq / rootId 迟到回包丢弃且自动重取、open 竞态（epoch）、失败保留上一帧、
- * STALE_* 自动重取、metrics 变化重取、clear、空文档、truncated 对齐、同根重进保留旧行。
- *
- * 风格与 tests/unit/viewmodel/row-window-source.test.ts 一致：fake CoreApi 由测试手动 resolve/reject，
- * 用 setTimeout(0) flush 微任务。
+ * 共享窗口不变量（单飞/合并、seq/根丢弃、失败降级、空窗口、重试上限、metrics）走
+ * `window-source.contract.ts` 契约，对 row/raw 各跑一遍；本文件只留原文侧专有行为：
+ * 两拍 `open`（rawOpen → rawWindow）、同根重进保留旧行、open 竞态（epoch）、rawOpen 失败、
+ * clear、truncated 对齐、mode 跟随回包、末尾窗口不越界、STALE_ROW 自动重取。
  */
 import { describe, expect, it, vi } from 'vitest';
 import { RawWindowSource } from '../../../src/viewmodel/raw-window-source';
 import type { CoreApi } from '../../../src/protocol/core-api';
 import { CoreError } from '../../../src/protocol/errors';
 import type { RawMeta, RawWindow, RootId } from '../../../src/protocol/types';
+import {
+  BASE_COUNT,
+  OVERSCAN,
+  ROW_H,
+  TOTAL_ROWS,
+  VIEWPORT,
+  flush,
+  runWindowSourceContract,
+  type ContractHarness,
+  type ContractHarnessFactoryOptions,
+  type ContractReplyOverrides,
+  type ContractSource,
+} from './window-source.contract';
 
-const ROW_H = 24;
-const VIEWPORT = 40;
-const OVERSCAN = 8;
-const TOTAL_LINES = 10_000;
-const BASE_COUNT = VIEWPORT + 1 + 2 * OVERSCAN; // 57
+const TOTAL_LINES = TOTAL_ROWS;
 
 function makeLines(start: number, count: number): string[] {
   const lines: string[] = [];
@@ -93,7 +100,7 @@ class FakeRawCore {
     next.reject(error);
   }
 
-  /** 回窗口（FIFO）；默认按请求原样构造，overrides 模拟乱序 / 伪造回包。 */
+  /** 回窗口（FIFO）；overrides 模拟乱序 / 伪造回包 / mode / truncated。 */
   resolveNextWindow(overrides: Partial<RawWindow> = {}): void {
     const next = this.pendingWindows.shift();
     if (!next) throw new Error('no pending rawWindow request');
@@ -109,14 +116,27 @@ class FakeRawCore {
     });
   }
 
+  /** 契约用：按 seq 偏移 / 错根构造回包。 */
+  resolveNextWindowWith(patch: ContractReplyOverrides = {}): void {
+    const next = this.pendingWindows.shift();
+    if (!next) throw new Error('no pending rawWindow request');
+    const { request } = next;
+    next.resolve({
+      rootId: patch.wrongRoot ? 'other-root' : request.rootId,
+      seq: request.seq + (patch.seqDelta ?? 0),
+      start: request.start,
+      lines: makeLines(request.start, request.count),
+      totalLines: this.totalLines,
+      mode: 'source',
+    });
+  }
+
   rejectNextWindow(error: unknown): void {
     const next = this.pendingWindows.shift();
     if (!next) throw new Error('no pending rawWindow request');
     next.reject(error);
   }
 }
-
-const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 function setup(options: { totalLines?: number; overscan?: number; viewportRows?: number } = {}) {
   const api = new FakeRawCore(options.totalLines ?? TOTAL_LINES);
@@ -138,7 +158,45 @@ async function openReady(api: FakeRawCore, source: RawWindowSource, rootId = 'do
   await flush();
 }
 
-describe('RawWindowSource — open → 首窗', () => {
+/** 共享契约：原文侧 adapter 与树侧 adapter 跑同一套窗口不变量。 */
+function rawContractHarness(opts: ContractHarnessFactoryOptions): ContractHarness {
+  const api = new FakeRawCore(opts.totalRows);
+  const source = new RawWindowSource(api as unknown as CoreApi, {
+    rowHeight: ROW_H,
+    overscan: opts.overscan ?? OVERSCAN,
+  });
+  return {
+    source: source as unknown as ContractSource,
+    requests: api.windows,
+    view() {
+      const snapshot = source.snapshot();
+      return {
+        stale: snapshot.stale,
+        start: snapshot.start,
+        payload: snapshot.lines.length,
+        total: snapshot.totalLines,
+        scrollTopPx: snapshot.scrollTopPx,
+      };
+    },
+    resolveNext(patch = {}) {
+      api.resolveNextWindowWith(patch);
+    },
+    rejectNext(error) {
+      api.rejectNextWindow(error);
+    },
+    async seed() {
+      source.setMetrics({ rowHeight: ROW_H, viewportRows: VIEWPORT });
+      const opened = source.open('doc');
+      api.resolveNextOpen();
+      await opened;
+      await flush();
+    },
+  };
+}
+
+runWindowSourceContract('RawWindowSource', rawContractHarness);
+
+describe('RawWindowSource — open → 首窗（两拍）', () => {
   it('open 先 emit stale 空帧，rawOpen 成功后 pump 首窗（start=0）', async () => {
     const { api, source } = setup();
     const seen = vi.fn();
@@ -218,91 +276,10 @@ describe('RawWindowSource — open → 首窗', () => {
     expect(source.snapshot().start).toBe(0);
     expect(source.snapshot().stale).toBe(false);
   });
-
-  it('空文档：rawOpen 后不发行窗口，直接给空且非 stale 的帧', async () => {
-    const { api, source } = setup({ totalLines: 0 });
-    const opened = source.open('doc');
-    api.resolveNextOpen();
-    await opened;
-    await flush();
-
-    expect(api.windows).toHaveLength(0);
-    expect(source.snapshot().stale).toBe(false);
-    expect(source.snapshot().totalLines).toBe(0);
-    expect(source.snapshot().lines).toEqual([]);
-  });
 });
 
-describe('RawWindowSource — 单飞 + 合并', () => {
-  it('连续 scrollTo 只保留一个在途请求，回包后补发最后一个目标', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const before = api.windows.length;
-
-    source.scrollTo(10 * ROW_H);
-    source.scrollTo(20 * ROW_H);
-    expect(api.windows.length).toBe(before + 1); // 合并没有取消在途
-    expect(api.pendingWindowCount).toBe(1);
-
-    api.resolveNextWindow();
-    await flush();
-
-    expect(api.windows.length).toBe(before + 2);
-    expect(api.windows.at(-1)?.start).toBe(20 - OVERSCAN);
-  });
-
-  it('requestWindow 幂等：已覆盖同一窗口时不重复请求', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const before = api.windows.length;
-
-    source.requestWindow();
-    source.requestWindow();
-    expect(api.windows.length).toBe(before);
-  });
-});
-
-describe('RawWindowSource — 过期回包', () => {
-  it('seq 落后的回包被丢弃、不 notify、自动按当前目标重取', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const linesBefore = source.snapshot().lines.slice();
-    const windowsBefore = api.windows.length;
-
-    const seen = vi.fn();
-    source.subscribe(seen);
-    source.scrollTo(20 * ROW_H);
-    api.resolveNextWindow({ seq: 0 }); // 伪造落后 seq
-    await flush();
-
-    expect(seen).not.toHaveBeenCalled();
-    expect(source.snapshot().lines).toEqual(linesBefore);
-    expect(source.snapshot().stale).toBe(false);
-    expect(api.windows.length).toBe(windowsBefore + 2); // 丢弃后自动重取
-
-    api.resolveNextWindow();
-    await flush();
-    expect(source.snapshot().start).toBe(20 - OVERSCAN);
-  });
-
-  it('rootId 不符的回包被丢弃、不 notify、自动重取', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const linesBefore = source.snapshot().lines.slice();
-    const windowsBefore = api.windows.length;
-
-    const seen = vi.fn();
-    source.subscribe(seen);
-    source.scrollTo(20 * ROW_H);
-    api.resolveNextWindow({ rootId: 'doc:other' });
-    await flush();
-
-    expect(seen).not.toHaveBeenCalled();
-    expect(source.snapshot().lines).toEqual(linesBefore);
-    expect(api.windows.length).toBe(windowsBefore + 2);
-  });
-
-  it('open 竞态（epoch）：旧 rawOpen / 旧行窗口回包不污染新根', async () => {
+describe('RawWindowSource — open 竞态（epoch）', () => {
+  it('旧 rawOpen / 旧行窗口回包不污染新根', async () => {
     const { api, source } = setup();
     await openReady(api, source, 'doc:1');
     expect(api.windows.at(-1)?.rootId).toBe('doc:1');
@@ -360,61 +337,7 @@ describe('RawWindowSource — 过期回包', () => {
   });
 });
 
-describe('RawWindowSource — 失败降级', () => {
-  it('普通错误 → stale=true、保留上一帧、notify、不自动重试', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const linesBefore = source.snapshot().lines.slice();
-    const windowsBefore = api.windows.length;
-
-    const seen = vi.fn();
-    source.subscribe(seen);
-    source.scrollTo(20 * ROW_H);
-    api.rejectNextWindow(new CoreError({ code: 'TIMEOUT', message: 'rawWindow timeout' }));
-    await flush();
-
-    expect(seen).toHaveBeenCalledTimes(1);
-    expect(source.snapshot().stale).toBe(true);
-    expect(source.snapshot().lines).toEqual(linesBefore);
-    expect(source.lastError()?.code).toBe('TIMEOUT');
-    expect(api.windows.length).toBe(windowsBefore + 1); // 不自动重试
-  });
-
-  it('STALE_ROW 视为迟到竞争 → 自动重取，不标记 stale/error', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const windowsBefore = api.windows.length;
-
-    source.scrollTo(20 * ROW_H);
-    api.rejectNextWindow(new CoreError({ code: 'STALE_ROW', message: 'stale' }));
-    await flush();
-
-    expect(api.windows.length).toBe(windowsBefore + 2); // 自动重取
-    expect(source.snapshot().stale).toBe(false);
-    expect(source.lastError()).toBeNull();
-
-    api.resolveNextWindow();
-    await flush();
-    expect(source.snapshot().start).toBe(20 - OVERSCAN);
-    expect(source.snapshot().stale).toBe(false);
-  });
-
-  it('STALE_ROOT 连续超过 3 次：停止重取，标记 stale + lastError（防风暴）', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const windowsBefore = api.windows.length;
-
-    source.scrollTo(20 * ROW_H);
-    for (let i = 0; i < 4; i++) {
-      api.rejectNextWindow(new CoreError({ code: 'STALE_ROOT', message: 'root gone' }));
-      await flush();
-    }
-
-    expect(api.windows.length).toBe(windowsBefore + 4); // 1 次原始 + 3 次重取
-    expect(source.snapshot().stale).toBe(true);
-    expect(source.lastError()?.code).toBe('STALE_ROOT');
-  });
-
+describe('RawWindowSource — rawOpen 失败 / clear', () => {
   it('rawOpen 失败：emit stale 帧、记录 lastError、reject 且不发窗口', async () => {
     const { api, source } = setup();
     const seen = vi.fn();
@@ -432,25 +355,6 @@ describe('RawWindowSource — 失败降级', () => {
     expect(source.snapshot().lines).toEqual([]);
     expect(source.lastError()?.code).toBe('TIMEOUT');
     expect(api.windows).toHaveLength(0);
-  });
-});
-
-describe('RawWindowSource — metrics / clear / 回包细节', () => {
-  it('setMetrics 变化后重取；相同度量不重复请求', async () => {
-    const { api, source } = setup();
-    await openReady(api, source);
-    const windowsBefore = api.windows.length;
-
-    source.setMetrics({ rowHeight: ROW_H, viewportRows: VIEWPORT });
-    expect(api.windows.length).toBe(windowsBefore); // 无变化
-
-    source.setMetrics({ rowHeight: ROW_H, viewportRows: 20 });
-    expect(api.windows.length).toBe(windowsBefore + 1);
-    expect(api.windows.at(-1)?.count).toBe(20 + 1 + 2 * OVERSCAN);
-
-    api.resolveNextWindow();
-    await flush();
-    expect(source.metrics()).toEqual({ rowHeight: ROW_H, viewportRows: 20 });
   });
 
   it('clear：清空快照并使在途回包作废', async () => {
@@ -487,7 +391,9 @@ describe('RawWindowSource — metrics / clear / 回包细节', () => {
     source.requestWindow();
     expect(api.pendingWindowCount).toBe(0);
   });
+});
 
+describe('RawWindowSource — 回包细节', () => {
   it('truncated 与 lines 对齐（缺省补 0）', async () => {
     const { api, source } = setup();
     const opened = source.open('doc');
@@ -513,5 +419,24 @@ describe('RawWindowSource — metrics / clear / 回包细节', () => {
     api.resolveNextWindow({ mode: 'plain' });
     await flush();
     expect(source.snapshot().mode).toBe('plain');
+  });
+
+  it('STALE_ROW 视为迟到竞争 → 自动重取，不标记 stale / error', async () => {
+    const { api, source } = setup();
+    await openReady(api, source);
+    const windowsBefore = api.windows.length;
+
+    source.scrollTo(20 * ROW_H);
+    api.rejectNextWindow(new CoreError({ code: 'STALE_ROW', message: 'stale' }));
+    await flush();
+
+    expect(api.windows.length).toBe(windowsBefore + 2); // 自动重取
+    expect(source.snapshot().stale).toBe(false);
+    expect(source.lastError()).toBeNull();
+
+    api.resolveNextWindow();
+    await flush();
+    expect(source.snapshot().start).toBe(20 - OVERSCAN);
+    expect(source.snapshot().stale).toBe(false);
   });
 });

@@ -65,6 +65,8 @@ export interface FrameMeta {
   start: number;
   stale: boolean;
   scrollTopPx: number;
+  /** adapter 附加信息（如原文 mode）；machine 不解释 */
+  extra?: Record<string, unknown>;
 }
 
 export interface SnapshotResult<P> {
@@ -128,6 +130,8 @@ export class WindowMachine<P, R> {
   private lastFailure: CoreError | null = null;
   private lastInvalidateReason: string | null = null;
   private staleResends = 0;
+  /** 原文 open 的 `ready` 门：rawOpen 落地前不发窗口请求（row 恒为 true） */
+  private ready = true;
 
   constructor(adapter: WindowAdapter<P, R>, opts: MachineOptions = {}) {
     this.adapter = adapter;
@@ -193,18 +197,11 @@ export class WindowMachine<P, R> {
     this.emit();
   }
 
-  /** 只改总数（原文 `open` 拿到 `rawOpen` 回包后用它续上首窗请求）；不清帧、不换 epoch。 */
-  setTotal(total: number): void {
-    this.total = Math.max(0, total);
-    this.desired = null;
-    this.lastSent = null;
-    this.pump();
-  }
-
   /** 清空根与帧（原文 `clear`）：`epoch++` 使在途回包作废。 */
   clear(): void {
     this.epoch += 1;
     this.rootId = null;
+    this.ready = false;
     this.version = 0;
     this.total = 0;
     this.scrollTopPx = 0;
@@ -216,11 +213,84 @@ export class WindowMachine<P, R> {
     this.staleResends = 0;
     this.payloadPresent = false;
     this.currentStart = 0;
-    this.currentStale = true;
+    this.currentStale = false;
     this.current = this.adapter.frame(
-      { rootId: '', total: 0, version: 0, start: 0, stale: true, scrollTopPx: 0 },
+      { rootId: '', total: 0, version: 0, start: 0, stale: false, scrollTopPx: 0 },
       null,
     );
+    this.emit();
+  }
+
+  /**
+   * 原文 `open()` 的第一步：`epoch++`、关 ready 门、回到顶部；同根且上一帧带 payload 时保留上一帧
+   * （连 `start` / 总数 / mode 一起保留，避免闪白）。返回本次 epoch，供 `open` 判断是否被后来者取代。
+   */
+  openRoot(rootId: RootId): number {
+    this.epoch += 1;
+    const rootChanged = rootId !== this.rootId;
+    const keep = !rootChanged && this.payloadPresent;
+    this.rootId = rootId;
+    this.ready = false;
+    this.version = 0;
+    this.total = keep ? this.total : 0;
+    this.scrollTopPx = 0;
+    this.lastRequestScrollTopPx = 0;
+    this.inFlight = null;
+    this.desired = null;
+    this.lastSent = null;
+    this.lastFailure = null;
+    this.staleResends = 0;
+    const start = keep ? this.currentStart : 0;
+    this.current = this.adapter.frame(
+      { rootId, total: this.total, version: 0, start, stale: true, scrollTopPx: 0 },
+      keep ? this.current : null,
+    );
+    this.currentStale = true;
+    this.currentStart = start;
+    if (!keep) this.payloadPresent = false;
+    this.emit();
+    return this.epoch;
+  }
+
+  /** 本次 open 是否仍是最新一次（被后来者取代 → false，调用方不改状态）。 */
+  isEpoch(epoch: number): boolean {
+    return epoch === this.epoch;
+  }
+
+  /** 打开 ready 门（rawOpen 成功后调用，之后才发窗口请求）。 */
+  setReady(ready: boolean): void {
+    this.ready = ready;
+  }
+
+  /**
+   * rawOpen 回包落地：更新总数并重发一帧 stale（`extra` 供 adapter 更新 mode 等附加字段）。
+   * 调用方随后 `setReady(true)` + `requestWindow()` 取首窗。
+   */
+  refreshStale(total: number, extra?: Record<string, unknown>): void {
+    this.total = Math.max(0, total);
+    this.currentStale = true;
+    this.current = this.adapter.frame(
+      {
+        rootId: this.rootId ?? '',
+        total: this.total,
+        version: this.version,
+        start: this.currentStart,
+        stale: true,
+        scrollTopPx: this.scrollTopPx,
+        extra,
+      },
+      this.payloadPresent ? this.current : null,
+    );
+    this.emit();
+  }
+
+  /** rawOpen 失败：记录 lastError + 发一帧 stale；调用方负责把错误 reject 出去。 */
+  failOpen(error: CoreError): void {
+    this.lastFailure = error;
+    this.ready = false;
+    this.currentStale = true;
+    this.rebuildCurrentFrame();
+    this.emit();
   }
 
   /** 行高 / 视口行数变化后必须重取（renderer 不自行感知）。 */
@@ -333,7 +403,7 @@ export class WindowMachine<P, R> {
 
   private pump(): void {
     if (this.inFlight) return;
-    if (this.rootId === null) return;
+    if (this.rootId === null || !this.ready) return;
 
     // 空窗口：不发请求，直接给一个空且非 stale 的帧（上一帧 stale 或带 payload 时才值得换）
     if (this.total <= 0) {
