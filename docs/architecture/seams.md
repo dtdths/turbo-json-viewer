@@ -127,25 +127,38 @@ export interface RowWindowSource {
 }
 ```
 
-**原文窗口（同纪律，ADR-0003 修订）**：`RawWindowSource` 与 `RowWindowSource` 守同一套纪律（单飞/合并/`seq` 丢弃/overscan），但是**独立实现**——原文没有 rowVersion、没有方向预取、没有锚点换算，状态机更小；改 S2 语义要同时看两处（已知重复，见 README §11 已知差距）。快照是 `RawSnapshot { mode, lines, start, totalLines, stale }`。
+**窗口状态机（2026-11-09 收口，ADR-0008 修订）**：上述规则现在只有一份实现——`src/viewmodel/window-machine.ts` 的 `WindowMachine<P>`（几何 / 单飞 + 合并 / `epoch` / `seq` 丢弃 / stale 帧 / 空窗口帧 / 锚点 / 过期重试上限）。`RowWindowSource` 与 `RawWindowSource` 保留原 interface，内部组合它，退化为 adapter：
 
-**契约**
+```ts
+export interface WindowAdapter<P, Reply> {
+  fetchWindow(target: Target, ctx: FetchCtx): Promise<Reply>;  // row: CoreApi.window；raw: CoreApi.rawWindow
+  validate(reply: Reply, sent: SentRequest): 'ok' | 'stale' | 'wrong-root';
+  toSnapshot(reply: Reply): P;                                 // WindowSnapshot / RawSnapshot
+  emptySnapshot(): P;                                          // totalRows/totalLines = 0 的空帧
+}
+```
+
+**原文窗口（同上，ADR-0003 修订）**：`RawWindowSource` 也是 adapter——关方向预取、无 `rowVersion`、`open()` 的异步两拍 + `ready` 门与 `alignTruncated` 留在自身映射；快照仍是 `RawSnapshot { mode, lines, start, totalLines, stale }`。改 S2 语义只改 machine 一处。
+
+**契约（machine 内统一，adapter 只做映射）**
 - **单飞 + 合并**：同一时刻最多 1 个 in-flight；新目标覆盖排队目标，不取消 in-flight（回包后按 `seq` 丢弃）。连续拖动最多 1 个在途请求。
-- **`seq` 丢弃**：发号单调；`reply.seq < 已发最大 seq` 或 `reply.rowVersion ≠ snapshot.rowVersion` → 丢弃、不 notify。
-- **窗口范围与预取**：`start = floor(scrollTop / rowHeight) - overscan`（夹到 `[0, totalRows)`），`count = viewportRows + 1 + 2 × overscan`；`|ΔscrollTop| > overscan × rowHeight` 时按方向扩一屏（合并为更宽请求，最多 3 屏）。
-- **滚动锚点**：`toggle`/`replaceNode` 前记 `(row, offsetPx)`；模型更新后 `scrollTo(row × rowHeight + offsetPx)` 并重取窗口，视口不跳。
+- **`epoch` / `seq` 丢弃**：换根/换文档/`open` 递增 `epoch`；迟到回包按 `seq`（row 另加 `rowVersion`）丢弃、不 notify；`CANCELLED` / `CLOSED` 不标 stale。
+- **过期重试（2026-11-09 统一）**：`STALE_ROW` / `STALE_ROOT` / `STALE_DOC` 自动重取，**上限 3 次**，成功后清零、换根/换 `epoch` 重置；超限或普通错误 → 保留上一帧 + `stale` + `lastError`，不自动重试。
+- **窗口范围与预取（per-adapter 配置）**：`start = floor(scrollTop / rowHeight) - overscan`（夹到 `[0, totalRows)`），`count = viewportRows + 1 + 2 × overscan`；row 开方向预取（`|ΔscrollTop| > overscan × rowHeight` 扩一屏、合并最多 3 屏），raw 关。
+- **滚动锚点**：row 用——`toggle`/`replaceNode` 前记 `(row, offsetPx)`，模型更新后 `scrollTo(row × rowHeight + offsetPx)` 并重取；raw 不调用。
+- **空窗口帧**：目标 `totalRows` / `totalLines = 0` 时，当前帧 stale 或带 payload → 发一张空且非 stale 的帧（两个 adapter 同一规则）。
 - **滚动条映射**：`contentPx = min(totalRows × rowHeight, 33_554_428)`；展开触及 1,000,000 行软预算时由 `core` 回 `TOO_MANY_ROWS`，view 显示护栏提示；映射与窗口协议不变（ADR-0001）。
 - **超时/断连**：`stale = true` 保留上一帧，view 显示细的「加载中」，**不出现空白列表**。
 
 | Adapter | implementation | 用途 |
 |---|---|---|
-| `TransportRowSource` | 经 `CoreApi.window` 取真实窗口 | v1 生产 |
-| `ScriptedRowSource` | 回放脚本化 `Row` 序列（可注入 seq 乱序、版本过期、超时） | viewmodel/view 单测 |
-| `CachedRowSource` | 主线程缓存 2–3 屏（ADR-0001 的 H 形态降级预案） | 低端机，v1 不启用 |
+| `RowWindowSource` | `WindowMachine` + row adapter（`CoreApi.window`、`rowVersion`、方向预取、3 屏上限、锚点） | v1 生产（树） |
+| `RawWindowSource` | `WindowMachine` + raw adapter（`CoreApi.rawWindow`、`ready` 门、`alignTruncated`） | v1 生产（原文） |
+| 测试替身 | 注入伪 `CoreApi`（脚本化 seq / 版本 / 超时 / 错误）；共享契约套件对两个 adapter 各跑一遍 | viewmodel 单测 |
 
-**失败模式**：`STALE_ROW` 内部消化不冒泡；连续超时 → `stale` 常驻 + 提示「数据未就绪」。
+**失败模式**：`STALE_ROW`/`STALE_ROOT`/`STALE_DOC` 在重试上限内内部消化、不冒泡；超限或连续超时 → `stale` 常驻 + `lastError` + 提示「数据未就绪」。
 **性能约束**：单行窗口 p95 0.1ms；端到端含 rAF ≈2ms；overscan 8 下平滑滚动空白率 0。
-**删除测试**：删掉 → `TreeView` 自己维护 seq/合并/版本/锚点，滚动空白与错行出现在 DOM 层，且只能靠浏览器测。
+**删除测试**：删掉 machine → row/raw 各自复制单飞/合并/版本/重试/锚点，S2 语义分叉、两套测试复现；删掉 adapter → `view` 越过 S2 直接依赖传输形状，换数据源要改 `TreeView`/`RawView`。
 
 ## 4. S3 · 行渲染器
 

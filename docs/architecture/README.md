@@ -79,8 +79,9 @@
 
 | module | 职责 | 接口（一句话） |
 |---|---|---|
-| `RowWindowSource` | 行窗口状态机：单飞+合并+`seq` 丢弃+`rowVersion` 校验+overscan 8+方向预取+锚点换算 | `setMetrics/scrollTo/request/snapshot/subscribe/invalidate`；快照 `WindowSnapshot { rows, totalRows, start, rowVersion, stale }` |
-| `RawWindowSource` | **原文**窗口状态机（ADR-0003 修订）：单飞+合并+`seq` 丢弃+overscan；原文不需要 `rowVersion`（doc 生命周期即版本） | `open(rootId)`/`setMetrics/scrollTo/request/snapshot/subscribe`；快照 `RawSnapshot { mode, lines, start, totalLines, stale }` |
+| `WindowMachine` | 窗口状态机（ADR-0008 修订 2026-11-09）：几何（overscan / 方向预取 / 上限）+ 单飞 + 合并 + `epoch` + `seq` 丢弃 + stale 帧 + 锚点；过期重试统一（上限 3）；只此一份实现 | adapter 供 `fetchWindow/validate/toSnapshot/emptySnapshot`；快照由 adapter 决定（`WindowSnapshot` / `RawSnapshot`） |
+| `RowWindowSource` | **树**的行窗口 adapter：组合 `WindowMachine`；开方向预取 / 3 屏上限 / `rowVersion` 校验 / 锚点 | `setMetrics/scrollTo/requestWindow/snapshot/subscribe/invalidate/anchor/restoreAnchor`；快照 `WindowSnapshot { rows, totalRows, start, rowVersion, stale }` |
+| `RawWindowSource` | **原文**窗口 adapter（ADR-0003 修订）：组合 `WindowMachine`；关预取、无 `rowVersion`；`open()` 异步两拍 + `ready` 门、`alignTruncated` 留在自身 | `open(rootId)`/`setMetrics/scrollTo/requestWindow/snapshot/subscribe/clear`；快照 `RawSnapshot { mode, lines, start, totalLines, stale }` |
 | `Selection` | 当前选中 `NodeHandle` + 键盘导航意图 | `select/handle/onChange` |
 | `SearchState` | 命中集合（全部/过滤）、当前命中、`docRevision` 过期判定、结果列表虚拟窗口 | `begin/apply/markStale/next/prev/view/window` |
 | `OutlineState` | 大纲面板状态机（ADR-0013）：按容器分页缓存 + 展开集合 + 扁平化 + epoch 丢弃 + 单飞；`open/refresh/setOpen/toggle/loadMore/setSelected/close/view` | `view(): OutlineView`；面板只读快照，数据源注入 `OutlineSource` |
@@ -158,7 +159,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | # | 位置 | 接口 | v1 适配器 | 测试替身 |
 |---|---|---|---|---|
 | S1 | 主线程 ↔ Worker | `CoreApi` 门面 + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` |
-| S2 | viewmodel → view | `RowWindowSource.snapshot()` | 真实窗口状态机 | `ScriptedRowSource` |
+| S2 | viewmodel → view | `RowWindowSource.snapshot()` / `RawWindowSource.snapshot()` | `WindowMachine` + row/raw adapter | 伪 `CoreApi`（脚本化 seq / 版本 / 错误） |
 | S3 | TreeView → 单行 | `RowRenderer` | DOM 行池 + textContent | 记录型 renderer |
 | S4 | 全局 → CSS | `data-theme` + token 变量 + `RowMetrics` | `tokens.css` | 测试 fixture token 表 |
 | S5 | 全局 → 持久化/编辑器 | `ViewStateStore`、`CodeEditor` | chrome.storage.local、CM6 | memory store、textarea |

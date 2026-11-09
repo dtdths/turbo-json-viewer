@@ -31,7 +31,7 @@
 
 ### 3. 行窗口状态机放 viewmodel，不放 view、不放 core
 
-`core` 只回答「第 start 行起 count 行是什么、当前版本号多少」；单飞/合并/`seq` 丢弃/`rowVersion` 校验/overscan 8/方向预取/滚动锚点换算属于**主线程视图状态**，由 `RowWindowSource` 承担。视图只消费 `WindowSnapshot { rows, totalRows, start, version, stale }`，不知道请求时序的存在。这样滚动策略可以独立单测，且换渲染器时协议不变。
+`core` 只回答「第 start 行起 count 行是什么、当前版本号多少」；单飞/合并/`seq` 丢弃/`rowVersion` 校验/overscan 8/方向预取/滚动锚点换算属于**主线程视图状态**，由 `RowWindowSource` 承担（2026-11-09 修订：该职责收口为一个 `WindowMachine` module，`RowWindowSource` / `RawWindowSource` 退化为 adapter，见文末「修订（2026-11-09）」）。视图只消费 `WindowSnapshot { rows, totalRows, start, version, stale }`，不知道请求时序的存在。这样滚动策略可以独立单测，且换渲染器时协议不变。
 
 ### 4. 行渲染 = `RowRenderer` 适配器 + 固定行高契约
 
@@ -68,3 +68,16 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
 | 把 CM6 打进首屏 | 首屏预算从 ~45KB 涨到 ~190KB gz，与「极速首帧」定位冲突 |
 | 用 Service Worker 承载文档状态 | SW 可被浏览器随时终止；文档必须在页面创建的 module worker 内（生命周期与页面一致） |
 | 可变行高（用换行解决长值） | 破坏 `totalRows × rowH` 滚动映射与行窗口坐标（ADR-0001）；长值改在「选中节点」面板换行展示（C 定稿） |
+
+## 修订（2026-11-09）：S2 收口为一台窗口状态机 + 两个 adapter
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-09，候选 1）+ `grilling` 拍板（Q1–Q11）。
+> 术语见 `CONTEXT.md`「窗口状态机（Window Machine）」。
+
+1. **一台深 module**：`WindowMachine<P>` 收口 S2 的窗口规则——几何（overscan、方向预取、单屏上限，per-adapter 配置）、单飞 + 合并、`epoch`、`seq` 丢弃、stale 帧、空窗口帧、滚动锚点、过期重试上限。`RowWindowSource` / `RawWindowSource` 保留现有类与 interface、内部组合它；调用方（`app` / `view`）不改。
+2. **两个 adapter**：adapter 只供四个能力——`fetchWindow(target, ctx)` 发请求、`validate(reply, sent)` 判迟到/错根、`toSnapshot(reply)` 拼不可变快照、`emptySnapshot()` 给空窗口帧。差异用配置与映射表达，不是第二份状态机：row 开方向预取与 3 屏上限、有 `rowVersion` 校验与锚点；raw 全关、无 `rowVersion`，`open()` 的异步两拍 + `ready` 门与 `alignTruncated` 留在 raw adapter。
+3. **统一过期策略（本修订唯一行为变更）**：`STALE_ROW` / `STALE_ROOT` / `STALE_DOC` 一律当作迟到竞争 → 自动重取，**上限 3 次**，成功后清零、换根/换 `epoch` 时重置；超限或普通错误 → 保留上一帧 + `stale: true` + `lastError`，不自动重试；`CANCELLED` / `CLOSED` 不标 stale。row 从「`STALE_DOC` 永久 stale」改为「3 次后 stale」。
+4. **空窗口帧**：目标 `totalRows` / `totalLines = 0` 时统一为「当前帧是 stale 或带 payload → 发空且非 stale 的帧」，消除两处隐式差异。
+5. **契约测试替两套**：一份共享用例打在 adapter interface 上、对 `RowWindowSource` / `RawWindowSource` 各跑一遍；旧的两套重复 describe（单飞 + 合并 / 过期回包 / 失败降级 / metrics）删除，adapter 专有行为（raw `open` / `ready` / `alignTruncated`；row 预取配置 / 锚点 / 闪帧回归）留在各自测试。
+6. **范围**：只收 row + raw。`OutlineState`（按容器分页的缓存与单飞）与 `SearchState`（无几何 / 滚动）状态形状不同，不并入；它们与 S2 只共享词汇。
+7. **被否决**：只抽共享策略函数、保留两个 class（interface 不变，重复只是搬家）；合并成一个 class + `mode` 分支（两套快照挤进一个 interface）；把 raw 也统一成 row 的几何 / 锚点（行为变化、无收益）。
