@@ -272,5 +272,6 @@ export interface CodeEditor {
 | `PARSE` | `core`（`load`/`replaceNode` 的 parse） | reply error（line/column/message） | 编辑器错误行 + Apply 禁用；`load` 时提示无法解析 |
 | `TIMEOUT` / `WORKER_CRASH` | `app`（S1 `CoreTransport`/`onerror`） | 单请求 reject / 全部 pending reject | 超时：`window`/`getTrail` → S2 降级 stale，其余 toast；崩溃：重建 worker 并提示「查看器已恢复，请重新导入」 |
 | `CANCELLED` | `core`/`app`（被新 `load` 抢占） | reply error | 按 `loadId` 静默丢弃，无 UI |
+| `BAD_PATTERN` | `core`（`search` 的正则模式：语法错 / 超 `SEARCH_PATTERN_MAX` / 灾难性回溯筛查，ADR-0014） | reply error（`message` 已是面向用户的中文） | 搜索面板**内联错误行**（`role=alert` + 输入框 `aria-invalid`）+ 结果/树高亮清空；**不弹 toast**、不算「无命中」 |
 
 原则：**错误在离真相最近的一层产生、在离用户最近的一层展示**——`core` 只说哪条规则不满足，`viewmodel` 决定丢弃还是降级，`view` 决定文案与可操作项；`window`/`getTrail` 超时降级为 stale 等下一次滚动，其余重试一律由用户显式触发（重搜/重跑/重新导入）。

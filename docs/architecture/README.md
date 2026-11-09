@@ -208,7 +208,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -224,9 +224,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.2 导出分体按钮：下载文件 / 复制到剪贴板（ADR-0012） | ✅ | `viewmodel/export-state.ts`（方式枚举/校验 + 20MB 剪贴板守卫 + 面板文案）+ `main.ts` 分体按钮（主=上次方式、箭头菜单两项、勾选、↑↓/Esc、外部点击关闭）；`exportMode` 是**设置项**（`Settings.exportMode`，`tjv.settings.v1`），设置面板第 9 行与分体按钮菜单**双向同步**（同一 `SettingsState`，ADR-0012 修订）；复制文本 = `core.exportDoc(rootId, 2)` 同一份（含临时修改/修复后值图），复用零权限剪贴板；超限 toast 引导文件导出；**单测 281**（+8）；冒烟 `smoke-export` **16/16**（含双向同步 2 项） |
 | 6.3 原始文本视图（#11 / ADR-0003 修订 2026-11-03） | ✅ | `core/raw-text.ts`（`probeText` + `RawTextIndex`：**source/pretty/plain** 三模式、检查点 `Int32Array` 每 2048 行、惰性 build、`windowText` 单行 ≤4096 截断、`locate` 偏移→1-based 行）+ `import.ts` 返回源文本、`Root.source` 保留（文档替换即释放）；`DocService` 新增 **rawOpen/rawWindow/rawLocate/rawSource**（只读、不推版本，`rawSource` >maxBytes 抛 `TOO_LARGE`）；`viewmodel/raw-window-source.ts`（单飞/合并/seq 丢弃/epoch；无 rowVersion）+ `view/raw/raw-view.ts`（固定行高虚拟化 + 行号 gutter + 横向滚动 + `lexLine` 屏内高亮 + flash）；工具栏 `[树|原文]` 分段切换（`UiState.viewMode` 持久化）、视图内提示（plain/minified/不含临时修改）、修复摘要 `at` 可点击跳行、复制原文（20MB 守卫）；`shared/json-lex.ts` 一份 lexer 供 core 行走器与 view 高亮共用；**单测 354**（新增 73：raw-text 35 / raw-window-source 18 / doc-service 10 / json-lex 10）；冒烟 `smoke-raw` **25/25** |
 | 6.4 大纲面板（ADR-0013 / #24，2026-11-03） | ✅ | `core/outline.ts`（`outlinePage` 纯函数：容器子项**按需分页**、clamp、标量回空、`appendKey/appendIndex` 路径；不建树/不缓存）+ `DocService.outline`（只读、不推版本，`rowModel.valueAt` 解析路径 → `BAD_COMMAND`）；`viewmodel/outline-state.ts`（每容器页缓存 + 展开集合 + 脏标记扁平化 + epoch 丢弃迟到回包 + 单飞 + `computeOutlineWindow`）；`view/panels/outline-panel.{ts,css}`（行池虚拟列表、行高跟随设置、overscan 6、caret/行点击/键盘 ↑↓←→/Enter/Home/End、`role=tree`/`treeitem`、分页哨兵、`#outlineEmpty`/`#outlineFoot`）；活动栏第 3 模式 + `UiState.panel` 持久化；`jumpToPath` 从 `gotoHit` 抽出（搜索/大纲共用跳转链路）；编辑（`docRevision` 变化）→ 回根展开；**单测 410**（+56：outline core 12 / doc-service 12 / outline-state 32）；冒烟 `smoke-outline` **53/53**（含 10MB 性能、键盘翻页、大文档 expandTo/居中、行高跟随、关闭重开、0 长任务） |
+| 6.5 搜索选项 `Aa`/正则 + 导入体积提示 + `#9` 两小件（ADR-0014 / #10 #11 #9，2026-11-09） | ✅ | `core/search.ts`：`opts.regex` 模式（`new RegExp`、`Aa` → `i` flag）、`SEARCH_PATTERN_MAX=256` 长度守卫、灾难性回溯静态筛查（只拒**外层无界重复量词**，`(a+)+` 拒 / `(foo|bar)+` 放行）、`BAD_PATTERN` 错误码；子串路径零改动。`viewmodel/search-state.ts`：`begin(query, opts)` 快照 + `markPatternError(message)`（置错清结果回 idle）。`view/panels/search-panel.{ts,css}`：`#searchCase`/`#searchRegex` 两个 `aria-pressed` 切换（Tab 顺序在查询框后）、`#searchPatternError` 内联错误行（`role=alert`、输入框 `aria-invalid`）。`app/main.ts`：`searchOpts` 为唯一会话态（切换即重跑、**不持久化**）、`BAD_PATTERN` → 内联错误（不弹 toast）。**导入体积提示**：`LARGE_DOC_WARN_BYTES=50_000_000` + `#docWarnBar`（32px warn 条、`role=status`、可关闭只关条、换文档按新 `meta.bytes` 重新判定、十进制 MB 文案；**不阻断导入、不加协议字段**）。**#9 两小件**：树行项数标 `.row__count.is-clickable`（点击 = toggle、不改选中、不进 Tab 序列、双击不误触编辑）+ 「全部展开/收起」no-op → info toast 且不换版本。**单测 440**（+30：search core 32 / search-state 48）；冒烟 `smoke-search` **94/94**（+12）、`smoke-expand` **14/14**（+3） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **28.7KB gz**（预算 45，slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6）、`worker.js` **11.9KB gz**（原文索引 +2.3 / 大纲 +0.2）、`page.css` **7.2KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **29.6KB gz**（预算 45，slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9）、`worker.js` **12.4KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5）、`page.css` **7.3KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -321,6 +322,17 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **10MB 性能**：导入→大纲根页 `ready` **63ms**（含导入总时长）；展开 `$.data` **1ms**、`$.data.items` **1ms**；行数 205（根+status+data+items+200 项+哨兵）；滚动/分页 0 长任务、0 异常、0 console error。
 - **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，**达标**——2026-11-09 用户拍板 A：目标 +2.5 修订为 +3.6 并注依据（虚拟列表 + 键盘 + 分页 + a11y 完整实现）；预算 45 未动、无新增依赖、余量 16.3KB；#21 仍可复查压缩空间，不作达标条件）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2。
 
+**slice 6.5 验收**（2026-11-09，CfT headless 1440×900；`smoke-search` **94/94**、`smoke-expand` **14/14**）：
+
+- **Aa（区分大小写，真实点击 `#searchCase`）**：fixture `{"Hotel":1,"hotel":2,"HOTEL":3,"list":["HoTel","xhotelx"],"deep":{"Hotel":"v"}}` 上，默认子串 **6** 命中（键 4 + 值 2）→ 开 Aa **2**（键 `hotel` + 值 `xhotelx`）；`aria-pressed` 往返正确、输入框无 `aria-invalid`。
+- **正则（`.*`）**：`/^hotel$/i` → **5**（键 4 + 值 `HoTel`；子串模式不可能有锚点语义，故与默认 6 不同，可证伪）；正则 + Aa → **1**（只有键 `hotel`）。
+- **无效正则**：`(` → `#searchPatternError` 文案「正则语法错误：…」、输入框 `aria-invalid="true"`、结果列表 **0 行**、树 **0** 个 `is-hit`、**无 toast**、`phase=idle`（不是「无命中」态）；`(a+)+` → 「该正则可能触发灾难性回溯」被拒；改回合法模式 → 错误态清除、结果恢复 5；关开关/清空 → 统计归零。
+- **导入体积提示（`#docWarnBar`）**：50MB 样本（`meta.bytes = 52,429,000` > 50,000,000）→ 条可见、`role=status`、文案含「源文本」、点 `#docWarnClose` 后隐藏；10MB 文档 → 不出现（换文档按新 `meta.bytes` 重新判定）；不阻断导入、无弹窗。
+- **项数标点击（#9）**：小文档收起后点 `$.c` 行的「1 项」→ `totalRows` 4→5→4、选中行不变、`is-clickable` + `title`（展开/收起）就位；标量行无项数标。
+- **全部展开 no-op（#9）**：已全展开时点「全部展开」→ 中性 info toast「已经全部展开了」，`rowVersion` 不变（不做无意义换版本/回顶）。
+- **性能 / 零异常**：两个阶段 **0 长任务**、0 console error；单测 **440/440**。
+- **体积**：`page.js` 28.7→**29.6KB gz**（+0.9，ADR-0014 目标 **≤ +1.5 达标**）、`worker.js` 11.9→12.4（正则 +0.5）、`page.css` 7.2→7.3。
+
 **复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
@@ -330,11 +342,12 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - `RowRenderer.setHit` 与 seams §4 接口漂移（TreeView 实际走 `RowContext.hit`）；`DomRowPool` 双构造重载无第二个调用点。
 - `CoreTransport` 契约测试（InProcess vs Worker 同一套用例）与 `WORKER_CRASH` 错误路径测试仍缺（`TIMEOUT`/`CLOSED` 已在 `WorkerTransport` 实现）。
 - 搜索高亮 helper 在 `row-renderer` 与 `search-panel` 各一份；大小写折叠对 `İ/ẞ` 等字符会错位（罕见）；smoke 脚本的 reference walk 与 `core/search.ts` 是两份实现。
+- 搜索选项（slice 6.5 / ADR-0014）：正则的灾难性回溯防护是**启发式静态筛查**（只拒外层无界重复量词）——`(a|a)+` 这类「重叠分支 + 量词」会漏过，漏网病态正则可卡住 Worker 至 5s 命令超时（v1 无 Worker 自动恢复，需重新导入文档）；反向也会误杀 `(?:[.-][a-z]+)*` 这类常见「分组内含 `+` + 外层 `*`」写法。两个开关是会话态**不持久化**（刷新回默认，ADR-0011 的「不进 v1 设置」仍未变）。
 - `44px` / `SEARCH_LIMIT=50,000` 在常量、CSS、smoke 脚本多处重复；结果列表滚动直接重绘、未做 rAF 合并（实测 0 长任务）。
 - 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
 - 编辑：弹层未做 **focus trap**（Tab 可离开面板）；CM6 对「文档末尾」的 lint 诊断是空范围（只有 gutter marker，无行内下划线）；`getNodeJson` 先 stringify 再判 5MB（超大子树会先在 Worker 内付出 stringify 成本才拒绝，建议预计算子树大小）；50MB 文档导出（stringify + 50MB postMessage）未实测。
 - 「替换文档」已有未保存确认；「关闭文档」功能本身尚未存在（随 #11 最近文档 / 多标签再做）。
-- 「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）；~~「N=500 可关」待设置面板~~ → 已实现（设置「小文档自动全部展开」）。
+- ~~「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）~~ → **已实现**（2026-11-09 slice 6.5：`rowVersion` 未变 → info toast「已经全部展开了」/「已经全部收起了」，且不做无意义的换版本/回顶）；~~「N=500 可关」待设置面板~~ → 已实现（设置「小文档自动全部展开」）。
 - `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。
 - 复制（slice 5.5）：子树 JSON >5MB 只能走导出（`TOO_LARGE` toast 引导）；~~「缩进/压缩跟随当前设置」未做~~ → 已实现（设置「复制缩进」2/4/紧凑 + 「默认复制格式」，ADR-0011 §1）；**真实扩展页未实测剪贴板**（HTTP 模式验到 `navigator.clipboard` 逐字读回，扩展内无 `__tjv`，需真机向导补）；菜单未加复制快捷键（⌘C 保留给原生文本选择，见 ADR-0010 §8）。
 - 截断修复（slice 6.0 / #8）：~~「关闭修复」开关待设置面板~~ → 已实现（设置「导入时自动修复截断 JSON」，关闭后截断直接 `PARSE`，ADR-0011 §1）；~~修复摘要 `at` 只展示偏移~~ → **已实现跳行**（slice 6.3：`@at` 可点击 → 切原文 + `rawLocate` + 高亮，ADR-0003 修订 §5）；修复耗时按「仅解析失败时才扫描」控制成本，50MB 级截断文本未实测。
@@ -343,7 +356,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
   - **>1.4M 行 spacer 封顶**：`min(totalLines×rowH, MAX_SCROLL_PX)` 与 TreeView 同源问题——50MB pretty ≈3.33M 行时滚动条封顶、底部行不可达（ADR-0001 §4 的缩放映射未实现）；本 slice 用 15k 行样本验收。
   - **解析失败的文本仍不能进原文视图**（导入层报 `PARSE`，无值图 → 无 doc 根）；「报错也可看原文」需无值图的文档会话，记 backlog（ADR-0003 修订 §6）。
   - **原文视图的产品定位与再评估时机**（用户 2026-11-03 拍板）：两个视图**维持现状**（常驻 `[树|原文]`、v1 不联动/不搜索/不编辑）；等**保真提示（失真检测）**落地后再评估其价值与形态（入口降级 / 只保留「复制原文 + at 跳行」）。注意：ADR-0003 §1–4 的保真扫描/提示**本身尚未实现**（`import.ts` 只有 parse/修复），已开票 **#23**——`#7` 已收口的是 IR/管线设计，不等于保真提示已做。
-  - **>50MB 导入提示（含源文本 ≈1.9× 内存）仍未实现**：源文本现在静默常驻；该提示属 #11「导入 UX」余项，未在 slice 6.3 落地（ADR-0003 修订 §2 已注明）。
+  - ~~**>50MB 导入提示（含源文本 ≈1.9× 内存）仍未实现**~~ → **已实现**（2026-11-09 slice 6.5 / #11 收口）：`meta.bytes > LARGE_DOC_WARN_BYTES`（50 MB 十进制 = 50,000,000）→ `#docWarnBar` 32px warn 条（`role=status`、可关闭、只关条不释放源文本、换文档重新判定），文案给出「源文本常驻 UTF-16 最多约 2× 文件大小 + 值图另计」，文件大小与估算都用十进制 MB 以与阈值同单位。剩余差距：内存数字是**估算**（不含实测堆水位），50MB+ 文档未做长时间会话的内存曲线。
   - 原文内**查找/选中/跳转树**不做（v1 不联动）；切回树再进原文会回到顶部（`open()` 复位滚动；保留位置是小改进，未做）；行内高亮 run >512 时该行退回纯文本（保逐字，仅影响 4096 字符级超长标量行）；无方向预取，极快拖动滚动条可能 1 帧空白（overscan 8 覆盖平滑滚动）。
   - `RawWindowSource` 与 `RowWindowSource` 的窗口纪律是**两份实现**（单飞/合并/seq 丢弃/overscan 各自一份，raw 无 rowVersion/预取/锚点）；改 S2 语义要同时改两处，后续可抽公共窗口策略。
   - **50MB 原文端到端未实测**（UI 链路 smoke 用 3000 项/15k 行）；但 core 基准已跑 50MB：索引构建 **107.2ms**、窗口 p95 0.071ms（Node v24 同 V8；Chrome Worker 内会略高）。
