@@ -265,9 +265,14 @@ export class WindowMachine<P, R> {
   /**
    * rawOpen 回包落地：更新总数并重发一帧 stale（`extra` 供 adapter 更新 mode 等附加字段）。
    * 调用方随后 `setReady(true)` + `requestWindow()` 取首窗。
+   *
+   * **总数落地即作废排队目标**：open 在途（ready 门关着）时 `setMetrics` / `scrollTo` 可能已经
+   * 按「总数未定 = 0」算过一个目标（`computeTarget` 会把它夹成 count=1）。这里必须按新总数重算，
+   * 否则 `requestWindow` 见 `desired` 非 null 就不再重算，首窗永远只有 1 行（#首次进入原文视图）。
    */
   refreshStale(total: number, extra?: Record<string, unknown>): void {
     this.total = Math.max(0, total);
+    this.desired = this.computeTarget(this.scrollTopPx);
     this.currentStale = true;
     this.current = this.adapter.frame(
       {
@@ -397,7 +402,11 @@ export class WindowMachine<P, R> {
     if (this.maxScreens !== null) {
       count = Math.min(count, Math.max(this.viewportRows * this.maxScreens, base));
     }
-    count = Math.max(1, Math.min(this.total - start, count));
+    // total=0 有两种含义：真空文档，或**总数未定**（原文 open 的 ready 门关着）。后者不能把
+    // count 夹成 1（会把后续「已覆盖同一窗口」判断和首窗请求一起毒化）；真空文档由 pump 的
+    // 空窗口分支直接出帧、根本不会 send，所以这里只在总数已知时才按 total 夹取。
+    const available = this.total > 0 ? this.total - start : count;
+    count = Math.max(1, Math.min(available, count));
     return { start, count };
   }
 

@@ -278,6 +278,44 @@ describe('RawWindowSource — open → 首窗（两拍）', () => {
   });
 });
 
+describe('RawWindowSource — 首次进入：open 在途时的 metrics 不得毒化首窗', () => {
+  it('rawOpen 回包前量到新视口 + requestWindow（totalLines 未知）→ 首窗仍按真实视口取行', async () => {
+    // 真实 app 时序：进入原文视图时 setViewMode 先 settings.setUi → applySettings 同步
+    // setMetrics(真实视口) + requestWindow；此时 rawSource.open() 的 rawOpen 还没回包，
+    // machine.totalLines 仍是 0（placeholder）。首窗 count 不能被这个 0 夹成 1。
+    const { api, source } = setup({ viewportRows: 1 });
+    const opened = source.open('doc');
+
+    source.setMetrics({ rowHeight: ROW_H, viewportRows: VIEWPORT });
+    source.requestWindow();
+    expect(api.windows).toHaveLength(0); // ready 门：rawOpen 落地前不发窗口
+
+    api.resolveNextOpen();
+    await opened;
+    await flush();
+
+    expect(api.windows).toHaveLength(1);
+    expect(api.windows[0]).toMatchObject({ rootId: 'doc', start: 0, count: BASE_COUNT });
+  });
+
+  it('rawOpen 在途时发生 scroll（同样 totalLines 未知）→ 首窗仍是满视口', async () => {
+    const { api, source } = setup({ viewportRows: 1 });
+    const opened = source.open('doc');
+
+    source.scrollTo(3 * ROW_H); // 例如浏览器恢复旧 scrollTop 触发 scroll
+    source.setMetrics({ rowHeight: ROW_H, viewportRows: VIEWPORT });
+
+    api.resolveNextOpen();
+    await opened;
+    await flush();
+
+    expect(api.windows).toHaveLength(1);
+    const first = api.windows[0];
+    expect(first?.start).toBe(0); // open 已把锚点复位到顶部
+    expect(first?.count).toBe(BASE_COUNT);
+  });
+});
+
 describe('RawWindowSource — open 竞态（epoch）', () => {
   it('旧 rawOpen / 旧行窗口回包不污染新根', async () => {
     const { api, source } = setup();

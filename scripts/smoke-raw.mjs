@@ -337,6 +337,13 @@ const checks = {
     report.source?.window?.mode === 'source',
   'source:first-line-gutter':
     report.source?.head?.lines?.[0]?.line === 1 && report.source?.head?.lines?.[0]?.text === MED_PRETTY_LINES[0],
+  // 首次进入原文视图必须一次给满视口：open 在途时（totalLines 未知）算出的排队目标不能被沿用，
+  // 否则首窗被夹成 1 行、只露出第一行 `{`，要切树再切回来才恢复（窗口状态机 refreshStale 回归）。
+  'source:first-frame-fills-viewport': (() => {
+    const head = report.source?.head;
+    const wanted = Math.min(MED_PRETTY_LINES.length, head?.viewportRows ?? 1);
+    return typeof head?.rendered === 'number' && head.rendered >= wanted;
+  })(),
   'source:rendered-bound': renderedBound(report.source?.head) && renderedBound(report.source?.mid),
   'source:scroll-absolute-lines':
     (report.source?.mid?.start ?? 0) > 0 &&

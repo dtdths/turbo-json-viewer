@@ -146,6 +146,7 @@ export interface WindowAdapter<P, Reply> {
 - **过期重试（2026-11-09 统一）**：`STALE_ROW` / `STALE_ROOT` / `STALE_DOC` 自动重取，**上限 3 次**，成功后清零、换根/换 `epoch` 重置；超限或普通错误 → 保留上一帧 + `stale` + `lastError`，不自动重试。
 - **窗口范围与预取（per-adapter 配置）**：`start = floor(scrollTop / rowHeight) - overscan`（夹到 `[0, totalRows)`），`count = viewportRows + 1 + 2 × overscan`；row 开方向预取（`|ΔscrollTop| > overscan × rowHeight` 扩一屏、合并最多 3 屏），raw 关。
 - **滚动锚点**：row 用——`toggle`/`replaceNode` 前记 `(row, offsetPx)`，模型更新后 `scrollTo(row × rowHeight + offsetPx)` 并重取；raw 不调用。
+- **总数落地即重算排队目标**：目标窗口由 `(scrollTop, totalRows, metrics)` 推导；`totalRows` 未知（`0` = 空文档或尚未回包）时 `computeTarget` **不按 `totalRows` 夹取** `count`（否则占位值 0 会把目标夹成 1 行），且总数落地（raw 的 `open` 回包 → `refreshStale`）时必须作废并重算 `desired`。回归：首次进入原文视图时 `setMetrics` / `scroll` 可能先于 `rawOpen` 回包，沿用旧目标会让首窗永远只有 1 行（2026-11-09 修复）。
 - **空窗口帧**：目标 `totalRows` / `totalLines = 0` 时，当前帧 stale 或带 payload → 发一张空且非 stale 的帧（两个 adapter 同一规则）。
 - **滚动条映射**：`contentPx = min(totalRows × rowHeight, 33_554_428)`；展开触及 1,000,000 行软预算时由 `core` 回 `TOO_MANY_ROWS`，view 显示护栏提示；映射与窗口协议不变（ADR-0001）。
 - **超时/断连**：`stale = true` 保留上一帧，view 显示细的「加载中」，**不出现空白列表**。
