@@ -151,15 +151,15 @@ export interface OutlineReply {
 - **冒烟** `scripts/smoke-outline.mjs`：面板打开与空态 / 根行与三层展开 / caret 与行点击语义 / 键盘 / 当前高亮 / 分页「加载更多」 / 大数组虚拟化（渲染行 ≤ 屏行 + 2×overscan）/ 换文档重置 / 编辑后刷新 / 原文视图跳转切回树 / 持久化 / 0 长任务 0 console error。截图 `.spike/smoke/outline-*.png`。
 - **性能**（10MB 样本）：打开面板到首屏 < 100ms；展开 `data` / `items` 页请求 < 20ms；滚动 0 长任务。
 - **回归**：`npm run check` + 全部 12 套冒烟（含既有 11 套）全绿。
-- **体积**：`page.js` minify 后 gz 增量目标 ≤ +2.5KB（预算 45）。**实测 +3.6KB，目标未达成**（见验收结果；偏差是否接受待用户拍板）。
+- **体积**：`page.js` minify 后 gz 增量目标 **≤ +3.6KB**（预算 45）。原目标 +2.5KB 在实测 +3.6KB 后于 2026-11-09 由用户拍板 A 修订，依据见「验收结果」。
 
 ## 验收结果（2026-11-03 实测）
 
 - **单测 410/410**（17 文件；+56：outline core 12 / doc-service 12 / outline-state 32；settings 断言 +3）。`tsc --noEmit` 0 error。
 - **冒烟 12/12 全绿**：新增 `smoke-outline` **53/53**，既有 11 套全部通过（`smoke-search` 82/82、`smoke-extension-search` 56/56、`smoke-expand` 11/11、`smoke-edit` 14/14、`smoke-copy` 27/27、`smoke-repair` 14/14、`smoke-settings` 21/21、`smoke-export` 16/16、`smoke-raw` 25/25、`smoke`/`smoke:ext` OK）。
 - **性能**：10MB 导入→大纲根页 `ready` **63ms**（含导入）；展开 `$.data` / `$.data.items` 各 **1ms**；450 项数组分页 203→403→452 行；滚到底渲染 **38 行**（末窗 = `min(屏行 31 + 2×overscan 6, size − start = 452 − 414)`，被尾部截断为 38）；全程 **0 长任务 / 0 异常 / 0 console error**。
-- **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，**超 +2.5 目标 1.1KB**，仍远低于预算 45）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2（+0.4）。
-  超目标来自虚拟列表 + 键盘 + 分页 + a11y 完整实现（含 `aria-activedescendant`/`aria-selected`、`shared/window` 抽公共窗口计算）。**该偏差不静默豁免**：预算 45 未动、无新增依赖，但是否接受 +3.6（超目标 1.1KB）需用户拍板；#21 视觉走查时复查、可再压。
+- **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，**达标**——目标已于 2026-11-09 修订为 +3.6；仍远低于预算 45）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2（+0.4）。
+  **目标修订依据（用户拍板 A，2026-11-09）**：+3.6 是「虚拟列表 + 键盘 + 分页 + a11y 完整实现」的实测代价（含 `aria-activedescendant`/`aria-selected`、`shared/window` 抽公共窗口计算）。预算 45 未动、无新增运行时依赖、余量 16.3KB；按 +2.5 硬压需要砍 a11y/键盘细节，可用性取舍上不划算。修订前的偏差经历：ADR「验收」与 README §11 均显式标注「未达成、不静默豁免」，用户 2026-11-09 选择 A（接受并改目标），**不是**事后静默豁免。#21 视觉走查时仍可复查压缩空间，但不再作为达标条件。
 
 ## 已知差距（记录，不在本 slice 实现）
 

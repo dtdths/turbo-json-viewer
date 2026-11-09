@@ -319,7 +319,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **分页 / 虚拟化**（450 项数组）：展开首屏 **203 行**（200 + 哨兵）→ 键盘 ↓ 翻页 **403** → 真点「加载更多」哨兵 **452 行**（末行 `$.items[449]`，哨兵消失；到末页 hook 返回 `ok:false`）；spacer 精确 = `452 × 24 = 10848`；滚到底渲染 **38**（末窗 `min(屏行 31 + 2×overscan 6, size − start)` 截断），`#outlineFoot` = `已渲染 38 / 452 行`。
 - **生命周期**：换文档 → 回根展开（rows `['$','$.x']`、expanded `['$']`）；编辑（`docRevision` 2）→ `refresh` 回根展开；大纲展开态独立于树。
 - **10MB 性能**：导入→大纲根页 `ready` **63ms**（含导入总时长）；展开 `$.data` **1ms**、`$.data.items` **1ms**；行数 205（根+status+data+items+200 项+哨兵）；滚动/分页 0 长任务、0 异常、0 console error。
-- **体积**：`page.js` 25.1→**28.7KB gz**（+3.6；**ADR 目标 +2.5 未达成**，预算 45 未动、无新增依赖；偏差待用户拍板，#21 时复查可压）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2。
+- **体积**：`page.js` 25.1→**28.7KB gz**（+3.6，**达标**——2026-11-09 用户拍板 A：目标 +2.5 修订为 +3.6 并注依据（虚拟列表 + 键盘 + 分页 + a11y 完整实现）；预算 45 未动、无新增依赖、余量 16.3KB；#21 仍可复查压缩空间，不作达标条件）、`worker.js` 11.7→11.9、`page.css` 6.8→7.2。
 
 **复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
 
