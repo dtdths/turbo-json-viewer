@@ -115,3 +115,42 @@ slice 3 骨架在每行末尾渲染了 ⧉/✎ 两个 `<span class="row__action"
 - `view/tree/tree-view.ts`：`TreeViewOptions` 新增 `onRowAction?(path, action: 'copy' | 'edit')`；click 委托命中 `.row__action` 时先 `onSelect` 再回调，不再直接丢弃。
 - `app/main.ts`：接线 → copy 走 `copyNodeFromMenu(path, 'subtree')`（同一剪贴板/错误处理），edit 走 `openEditor(path)`。
 - 冒烟：`scripts/smoke-copy.mjs` 追加「行尾浮条」段（2 个 `<button>` + `aria-label` + `tabindex="-1"`、hover 显示、点复制 → 剪贴板 = 该行子树 JSON + toast、点编辑 → 弹层打开、容器行与标量行均验）。
+
+## 修订（2026-11-09）：右键菜单新增「展开 / 收起所有子孙节点」（#22）
+
+> 决策来源：`grilling` 2026-11-09（Q1–Q16）；core 语义与预算口径见 ADR-0002 修订（2026-11-09 子树批量展开/收起）。
+> 本修订只改**菜单契约**（项数 / 顺序 / 启用态 / 键盘 / 反馈），**不掺视觉改动**（菜单观感并入 #21 统一走查）。
+
+### 菜单契约（5 → 7 项）
+
+固定顺序变为：**复制子树 JSON / 复制路径 / 复制原始值 / 复制键名 / ── 分隔 ── / 展开所有子孙节点 /
+收起所有子孙节点 / ── 分隔 ── / 编辑此节点 JSON**。
+
+- 两项**固定存在**（不按状态翻转文案）：避免「子节点是否已全展开」的探活与中间态歧义；
+  `title` 说明作用域「仅此子树（不含更上层）」。
+- 不新增键盘快捷键（`Enter` 仍 = 切该行展开/折叠；递归能力只走菜单，`#22` 明确「只做右键菜单」）；
+  菜单内键盘契约不变（`↑↓` 只走可用项、`Home`/`End`、`Enter` 原生、`Esc`；打开时焦点落第一个可用项）。
+
+### 启用规则（UI 禁用 + `title` 说明；core 侧兜底校验，契约不依赖 UI 状态）
+
+| 菜单项 | 可用性 | 说明 |
+|---|---|---|
+| 展开所有子孙节点 | **容器且 `count > 0` 且非根** | 根禁用（请用工具栏「全部展开」）；标量禁用（无子孙）；空容器禁用（没有子节点） |
+| 收起所有子孙节点 | 同上 | 同上；收起 = 深度复位（ADR-0002 修订 §3） |
+
+### 反馈
+
+- 有变化：行模型按新 `rowVersion` 重取窗口，**保持锚点与选中、不滚回顶部**（与 `expandAll` 的「回顶」不同）；
+- no-op：info toast「其下所有子孙节点已经全部展开了 / 已经全部收起了」；
+- 超预算：`TOO_MANY_ROWS` 走既有 error toast（零部分修改）。
+
+### 接线与验收
+
+- `protocol`：命令 +1（`toggleSubtree`）；`CoreApi` +1；`page.html` 菜单 5 → 7 项 + 第二条分隔线；
+  `main.ts` 菜单回调载荷补 `open`/`count`/`hasChildren`（原只有 `kind`），并按上表判定禁用态；
+  dev hook `ctxOpen` 通过 `TreeView.rowInfo(path)` 取同一份行数据（菜单与 hook 不各算一套）。
+- 单测：`row-model.test.ts`（展开整子树 / 深度复位 / 空容器不参与 / 已全开·已全收 no-op / 预算原子拒绝 /
+  根 no-op / 标量 `BAD_COMMAND` / 子树外状态不受影响）；`doc-service.test.ts`（changed 才推 `rowVersion`）。
+- 冒烟：`smoke-copy.mjs` 菜单顺序/禁用态断言 5 → 7 项；`smoke-expand.mjs` 新增菜单驱动段
+  （右键容器 → 展开所有子孙节点 → 行数/版本/选中、再收起 → 行数回退且下次展开只剩一层、标量/根/空容器禁用、
+  已全展开 no-op toast、50MB 级子树 `TOO_MANY_ROWS` 零部分修改）。

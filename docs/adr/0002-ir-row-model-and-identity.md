@@ -81,3 +81,35 @@
    `rowVersion` 重取。
 5. **未实测**：expand-all 的 dry-run 成本（受预算封顶，最坏约遍历 `ROW_BUDGET` 个节点）未单独测过；
    实现时按 `prototype/p1` 口径补测，并把 50MB 文档的 early-stop 行为纳入验收。
+
+## 修订（2026-11-09）：子树批量展开 / 收起（#22）
+
+> 决策来源：`grilling` 2026-11-09（Q1–Q16，用户逐项拍板）；交互入口归 ADR-0010 修订（右键菜单 5 → 7 项）。
+> 术语见 `CONTEXT.md`「子树批量展开 / 收起」。
+
+1. **新增一条核心原语：`toggleSubtree(path, open)`**，走新协议命令 `toggleSubtree { rootId, path, open }`
+   → 既有 `EditReply`（与 `toggle` 同形）。**不在 `toggle` 上加可选参数**：`toggle` 有 4 个既有调用面
+   （caret / Enter / 行点击 / `expandPath` 内部路径）且契约测试逐条断言，加可选参数会把「单节点」与「子树」
+   两种原子性混在一个命令里；`expandAll` 是整根语义，也不适合塞 path。
+2. **展开语义（open=true）**：把该容器（若当前折叠）与子树内**所有非空容器**加入 `expanded` 并建 Fenwick；
+   空容器与 `expandAll` 同口径**不参与**（`rebuildAllOpen` 规则：没有可展开内容，`open=false` 才符合语义）。
+   等价于「把 `expandAll` 的规则限制在这棵子树上」，但**不重建整模型**：只重建子树内的索引，
+   祖先链只做一次 delta 传播（`propagate`），子树外的展开态与索引原样保留。
+3. **收起语义（open=false）= 深度复位**：把子树内所有容器从 `expanded` 移除、释放其索引，本节点折叠。
+   下次展开只剩一层（不是恢复上次的展开现场）——与「展开所有子孙」互为逆操作，可预测。
+   子树外的展开态不动。若本节点已经折叠，后代可能仍留有惰性展开标记（不可见）；
+   此时仍执行复位（保证语义一致），但**可见结果没变 → `changed:false`、不推 `rowVersion`**。
+4. **原子性 / 预算（总量口径）**：
+   - dry-run：`countAllExpandedRows(子树值, limit)` 得「子树全展开后的可见行数」；`delta = 目标 - 当前`；
+     `totalRows + delta > ROW_BUDGET`(1,000,000) → 抛 `TOO_MANY_ROWS`、**零部分修改**（沿用既有原子约定）。
+   - 预算内才写入；写入用「重建子树索引」的单趟后序（迭代，不递归），不做逐节点 `toggle`。
+   - 否决「子树增量上限」：`ROW_BUDGET` 是 `totalRows` 的护栏，再加一条子树上限会形成两套预算口径。
+5. **版本与 no-op**：只有**可见结果变化**（`changed`）才 `rowVersion++`（沿用 `toggle`/`expandAll` 纪律）；
+   已经全展开 / 已经全收起 → `changed:false`、不推版本，UI 给 info toast（与 #9「已经全部展开了」同款）。
+6. **根 / 标量 / 空容器**：`toggleSubtree('$', …)` 与 `toggle('$')` 同样 no-op（根永远 open；子树操作会把
+   整个文档当子树，与工具栏「全部展开/全部收起」完全重复，UI 上直接禁用、不在 core 层特判）；
+   标量 → `BAD_COMMAND`（与 `toggle` 一致）；空容器 → `changed:false`（没有可展开内容，UI 已禁用）。
+7. **性能目标**：O(子树节点数) 的干跑 + 单趟后序建索引；10MB 样本（595,030 行）的根子树展开与
+   `expandAll` 同量级（68ms 级）、0 长任务；子树越小越快，`ROW_BUDGET` 已封顶最坏规模。
+8. **已知边界**：空容器无法通过菜单展开（禁用，与 `expandAll` 不把空容器置 open 一致，ADR-0013 同款口径）；
+   与 `expandAll`/`collapseAll` 共用同一条 `ROW_BUDGET` 护栏。
