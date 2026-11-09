@@ -83,8 +83,8 @@ type MutationIntent = 'view' | 'value';
 /** 一次根变更计划：命令体只描述「改什么、意图是什么」。 */
 interface RootMutation {
   intent: MutationIntent;
-  /** 执行变更：单步返回一步；reset 返回 N 步（每步都推两版本）。 */
-  run(): MutationStep | MutationStep[];
+  /** 执行一步变更（必须原子）。reset 由调用方逐步调用本路径，每步各自推版本。 */
+  run(): MutationStep;
   /** 回包附带 changedPath（只有值图变更才有）。 */
   path?: Path;
   /** 历史记账：仅在 run() 成功后调用。 */
@@ -246,6 +246,9 @@ export class DocService {
         lastUsedAt: now,
       };
       this.roots.put(root);
+      // 新文档：丢弃上一份文档的编辑历史（rootId 复用同一 DOC_ROOT_ID）——否则 ⌘Z / reset 会
+      // 把旧文档的条目应用到新文档（值图被静默改写）；历史是「打开时状态」的撤销记录，换根即失效。
+      this.histories.delete(root.rootId);
       return {
         rootId: root.rootId,
         docRevision: root.docRevision,
@@ -300,23 +303,24 @@ export class DocService {
    * - 回包形状恒定：`history` 永远在（展开态命令不再另成方言）。
    * - 报字段：`changedRow` 取最后一步（要求 changed 且行可见）；`changedPath` 只由值图变更给。
    *
-   * `run()` 抛错时不得留下部分修改（命令体负责原子性）。reset 的多步是「全部替换成功后统一
-   * 推版本」：中间版本号对迟到回包不可观测（worker 按序处理命令），成功路径上的终值与逐条推进
-   * 完全一致。
+   * `run()` 抛错时不得留下部分修改（命令体负责原子性）。reset 逐步调用本路径：每个历史条目
+   * 应用后立即推版本——中途失败时，已落地步骤的版本已推进，迟到的行窗口回包因此 stale
+   * （与旧实现同口径；不回退版本，避免客户端把「半重置」的模型当成最新）。
    */
   private mutateRoot(root: Root, mutation: RootMutation): EditReply {
-    const raw = mutation.run();
-    const steps = Array.isArray(raw) ? raw : [raw];
-    for (const step of steps) {
-      if (mutation.intent === 'view' && !step.changed) continue;
+    const step = mutation.run();
+    // view 意图只在可见结果真的变了时推版本；value 意图每步必推（值图变了就是变了）
+    if (mutation.intent === 'value' || step.changed) {
       if (mutation.intent === 'value') root.docRevision += 1;
       root.rowVersion += 1;
     }
     mutation.record?.();
 
-    const last = steps[steps.length - 1];
     const changed: { row?: number; path?: Path } = {};
-    if (last !== undefined && last.changed && last.row !== undefined && last.row >= 0) changed.row = last.row;
+    // changedRow：view 意图要求 changed；value 意图只看行是否可见（与旧实现 replace/undo/redo 一致）
+    if (step.row !== undefined && step.row >= 0 && (mutation.intent === 'value' || step.changed)) {
+      changed.row = step.row;
+    }
     if (mutation.path !== undefined) changed.path = mutation.path;
     return this.editReply(root, changed);
   }
@@ -566,15 +570,16 @@ export class DocService {
     const history = this.historyOf(root.rootId);
     const applied = history.reset();
     if (applied.length === 0) return this.editReply(root);
-    return this.mutateRoot(root, {
-      intent: 'value',
-      run: () =>
-        [...applied].reverse().map((entry) => {
-          this.applyReplace(root, entry.path, entry.oldValue);
-          // 不报 changedRow：reset 的回包只表达「已回到打开时状态」（与既有行为一致）
-          return { changed: true };
-        }),
-    });
+    for (let i = applied.length - 1; i >= 0; i--) {
+      const entry = applied[i];
+      // 每个条目各自走一次根变更路径：应用成功后立即推两版本（中途失败时前面已落地的步骤已 stale）
+      this.mutateRoot(root, {
+        intent: 'value',
+        run: () => this.applyReplace(root, entry.path, entry.oldValue),
+      });
+    }
+    // 回包只表达「已回到打开时状态」：不带 changedRow / changedPath（与旧实现一致）
+    return this.editReply(root);
   }
 
   /**

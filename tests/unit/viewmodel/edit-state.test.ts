@@ -66,7 +66,7 @@ describe('EditState — 同步编辑历史', () => {
     expect(notified).toBe(2);
   });
 
-  it('sync(undefined) 视为清零（新文档没有 history 字段）', () => {
+  it('sync(undefined) 视为清零（仅 clear() 走这条；EditReply.history 已必填）', () => {
     const state = new EditState();
     state.sync({ applied: 1, canUndo: true, canRedo: false });
 

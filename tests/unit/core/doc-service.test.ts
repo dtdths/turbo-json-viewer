@@ -78,6 +78,18 @@ describe('DocService — load', () => {
     const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 1, seq: 1, start: 0, count: 10 });
     expect(windowPaths(win)).toEqual(['$', '$.x', '$.y']);
   });
+
+  it('重新 load 清空旧编辑历史：上一份文档的 undo 记录不得残留', async () => {
+    const svc = new DocService();
+    await loadEditDoc(svc);
+    await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
+    expect((await svc.dispatch({ t: 'stats', rootId: DOC_ROOT })).rowVersion).toBe(2);
+    // 换文档（同一 doc rootId）：旧历史必须被丢弃，否则 ⌘Z 会把上一份文档的编辑应用到新文档
+    await load(svc, EDIT_DOC_TEXT, 2);
+    expect((await errorOf(svc.dispatch({ t: 'undo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
+    const reset = await svc.dispatch({ t: 'reset', rootId: DOC_ROOT });
+    expect(reset.history).toEqual({ applied: 0, canUndo: false, canRedo: false });
+  });
 });
 
 describe('DocService — window', () => {

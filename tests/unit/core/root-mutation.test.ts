@@ -37,6 +37,15 @@ async function stats(svc: DocService): Promise<{ docRevision: number; rowVersion
   return svc.dispatch({ t: 'stats', rootId: DOC_ROOT });
 }
 
+async function errorOf(promise: Promise<unknown>): Promise<{ code?: string }> {
+  try {
+    await promise;
+  } catch (err) {
+    return err as { code?: string };
+  }
+  throw new Error('expected the command to reject');
+}
+
 interface MatrixCase {
   name: string;
   data: string;
@@ -133,6 +142,16 @@ const MATRIX: MatrixCase[] = [
     docBump: 0,
     rowBump: 0,
     history: EMPTY_HISTORY,
+  },
+  {
+    name: 'replaceNode 不可见节点（祖先折叠）：推两版本、给 changedPath 但不给 changedRow',
+    data: COLLAPSED_DOC,
+    run: (svc) =>
+      svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.items[3]', docRevision: 1, jsonText: '99' }),
+    docBump: 1,
+    rowBump: 1,
+    changedPath: '$.items[3]',
+    history: { applied: 1, canUndo: true, canRedo: false },
   },
   {
     name: 'undo：value 意图推两版本，报被撤销条目的 changedRow + changedPath',
@@ -240,7 +259,7 @@ describe('DocService — 根变更路径：版本矩阵与形状契约（ADR-000
     expect(subtree.history).toEqual({ applied: 1, canUndo: true, canRedo: false });
   });
 
-  it('版本纪律：value 变更后旧 rowVersion 的窗口回包 stale（reset 的多步推进同理）', async () => {
+  it('版本纪律：value 变更后旧 rowVersion 的窗口回包 stale（reset 的逐步推进同理）', async () => {
     const svc = new DocService();
     await load(svc, EDIT_DOC_TEXT); // rowVersion 1
     await replaceN(svc); // rowVersion 2
@@ -255,6 +274,38 @@ describe('DocService — 根变更路径：版本矩阵与形状契约（ADR-000
       .then(() => null)
       .catch((err: { code?: string }) => err.code);
     expect(stale).toBe('STALE_ROOT');
+  });
+
+  it('错误路径不推版本：校验/解析/守卫失败都不得改动 docRevision/rowVersion', async () => {
+    const svc = new DocService();
+    await load(svc, EDIT_DOC_TEXT);
+    const before = await stats(svc);
+
+    const failures: Array<[ReturnType<DocService['dispatch']>, string]> = [
+      // docRevision 不符
+      [svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 99, jsonText: '2' }), 'STALE_DOC'],
+      // 非法 JSON
+      [svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '{' }), 'PARSE'],
+      // 路径不存在
+      [svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.absent', docRevision: 1, jsonText: '1' }), 'BAD_COMMAND'],
+      // 空历史
+      [svc.dispatch({ t: 'undo', rootId: DOC_ROOT }), 'NO_HISTORY'],
+      [svc.dispatch({ t: 'redo', rootId: DOC_ROOT }), 'NO_HISTORY'],
+    ];
+    for (const [promise, code] of failures) {
+      expect((await errorOf(promise)).code).toBe(code);
+    }
+    expect(await stats(svc)).toEqual(before);
+  });
+
+  it('expandTo 仍在路径外：独立 ExpandReply（无 history / docRevision），只为跳转推 rowVersion', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, COLLAPSED_DOC);
+    const reply = await svc.dispatch({ t: 'expandTo', rootId: DOC_ROOT, path: '$.items[5]' });
+    expect(reply).toMatchObject({ rootId: DOC_ROOT, rowVersion: loaded.rowVersion + 1 });
+    expect('history' in reply).toBe(false);
+    expect('docRevision' in reply).toBe(false);
+    expect((await stats(svc)).docRevision).toBe(loaded.docRevision);
   });
 
   it('回包形状恒定：同一条命令在 changed / no-op 两种结果下都带 history', async () => {
