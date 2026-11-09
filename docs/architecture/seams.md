@@ -13,7 +13,7 @@
 
 | # | seam | interface | v1 adapter | 测试 adapter | 接口背后藏什么（depth） |
 |---|---|---|---|---|---|
-| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 24 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
+| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 26 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
 | S2 | viewmodel → view | `RowWindowSource.snapshot()` / `RawWindowSource.snapshot()` | `TransportRowSource` + `RawWindowSource` | `ScriptedRowSource` | 单飞、合并、seq 丢弃、版本校验、overscan、预取、锚点换算 |
 | S3 | TreeView → 单行 / RawView → 单行 | `RowRenderer` | `DomRowPool` + `RawView` 行池 | `RecordingRowRenderer` | 行池复用、textContent、选中/命中态、固定行高纪律 |
 | S4 | 全局 → 样式 | `ThemeController` + `RowMetrics` | `tokens.css`（`data-theme`） | `FixedThemeController` | token 名与语义、双主题、Canvas palette 读取 |
@@ -98,7 +98,7 @@ export interface CoreTransport {
 3. 一切读请求带 `rootId + 版本`；版本不匹配由 core 回 `STALE_ROOT`/`STALE_DOC`，不返回旧数据。
 4. `load` 可被下一次 `load` 抢占：旧 pending 以 `CANCELLED` 结束、旧根释放，主线程按 `loadId` 丢弃。
 5. 超时默认 5s（`window`/`getTrail` 2s）且 **不自动重试**；`close()` **幂等**，pending 全部 reject `CLOSED`、关闭端口、不再派 event；Worker 崩溃（`onerror`/`onmessageerror`）→ pending 全部 reject `WORKER_CRASH`、清 timer，**之后新命令立即 reject 且不再 postMessage**（文档已丢失）。
-6. 同一 `rootId` 的结构变更（`toggle`/`replaceNode`/`undo`）由主线程串行化，读可并发；消息体必须 structured-clone-safe（`ArrayBuffer` 只在 `load` transfer）。
+6. 同一 `rootId` 的结构变更（`toggle`/`toggleSubtree`/`replaceNode`/`undo`）由主线程串行化，读可并发；消息体必须 structured-clone-safe（`ArrayBuffer` 只在 `load` transfer）。
 
 **契约测试**（2026-11-09 落地）：`tests/contract/` 一份共享用例（`core-transport.cases.ts`）分别打在 `InProcessCore` 与 `createWorkerCore(FakeWorker)` 上（load/window/toggle/expand/search/outline/编辑/复制/导出/raw/fidelity/stats/trail/profile/事件通道）；TIMEOUT/CLOSED/WORKER_CRASH 属 Worker 适配器专有，放独立 describe。
 

@@ -107,9 +107,11 @@
 5. **版本与 no-op**：只有**可见结果变化**（`changed`）才 `rowVersion++`（沿用 `toggle`/`expandAll` 纪律）；
    已经全展开 / 已经全收起 → `changed:false`、不推版本，UI 给 info toast（与 #9「已经全部展开了」同款）。
 6. **根 / 标量 / 空容器**：`toggleSubtree('$', …)` 与 `toggle('$')` 同样 no-op（根永远 open；子树操作会把
-   整个文档当子树，与工具栏「全部展开/全部收起」完全重复，UI 上直接禁用、不在 core 层特判）；
+   整个文档当子树，与工具栏「全部展开/全部收起」完全重复）——**UI 上直接禁用根**，core 侧不设额外拒绝分支：
+   `locateChain('$')` 为空链时直接返回 `{ row: 0, changed: false }`（与 `toggle('$')` 同款）。
    标量 → `BAD_COMMAND`（与 `toggle` 一致）；空容器 → `changed:false`（没有可展开内容，UI 已禁用）。
-7. **性能目标**：O(子树节点数) 的干跑 + 单趟后序建索引；10MB 样本（595,030 行）的根子树展开与
-   `expandAll` 同量级（68ms 级）、0 长任务；子树越小越快，`ROW_BUDGET` 已封顶最坏规模。
+7. **性能目标（待实测）**：O(子树节点数) 的干跑 + 单趟后序建索引；子树越小越快，`ROW_BUDGET` 已封顶最坏规模。
+   「10MB（595,030 行）子树全展开与 `expandAll` 同量级（68ms 级）、0 长任务」只是**目标**、尚未实测——
+   根子树在 core 层是 no-op、不能代表真实成本，大子树全展开的耗时基准待补（见 README §11 已知差距）。
 8. **已知边界**：空容器无法通过菜单展开（禁用，与 `expandAll` 不把空容器置 open 一致，ADR-0013 同款口径）；
    与 `expandAll`/`collapseAll` 共用同一条 `ROW_BUDGET` 护栏。
