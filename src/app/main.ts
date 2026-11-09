@@ -23,7 +23,7 @@ import { OutlinePanel } from '../view/panels/outline-panel';
 import { CoreError } from '../protocol/errors';
 import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
-import type { CopyFormat, DocumentMeta, JsonKind, RawMeta } from '../protocol/types';
+import type { CopyFormat, DocumentMeta, FidelityReport, JsonKind, RawMeta } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
@@ -95,6 +95,10 @@ const repairClose = el<HTMLButtonElement>('repairClose');
 const docWarnBar = el('docWarnBar');
 const docWarnText = el('docWarnText');
 const docWarnClose = el<HTMLButtonElement>('docWarnClose');
+const fidelityBar = el('fidelityBar');
+const fidelityText = el('fidelityText');
+const fidelityJump = el<HTMLButtonElement>('fidelityJump');
+const fidelityClose = el<HTMLButtonElement>('fidelityClose');
 const viewTreeBtn = el<HTMLButtonElement>('viewTreeBtn');
 const viewRawBtn = el<HTMLButtonElement>('viewRawBtn');
 const rawHost = el('raw');
@@ -245,6 +249,13 @@ let searchJumped = false;
 let rawMetaInfo: RawMeta | null = null;
 /** 原文 open 竞态守卫（切视图 / 换文档时递增，迟到回包丢弃） */
 let rawOpenSeq = 0;
+
+/** 保真报告（#23 / ADR-0003 修订）：只在当前文档会话内存；null = 未扫/无报告。 */
+let fidelity: FidelityReport | null = null;
+/** 扫描在途标记（dev hook / 冒烟判定用；不显示进度） */
+let fidelityPending = false;
+/** 保真扫描代次（换文档递增，迟到回包丢弃） */
+let fidelitySeq = 0;
 
 /** 编辑会话（slice 5 / #16 / ADR-0006）：当前编辑目标 + 修改计数/撤销可用性。 */
 const editState = new EditState();
@@ -452,6 +463,8 @@ function onLoaded(reply: LoadReply): void {
   renderEditBadge();
   renderRepair();
   renderDocWarn();
+  resetFidelity();
+  scheduleFidelityScan();
 
   // 新文档：旧原文索引随旧根丢弃（惰性重建）；恢复上次视图模式（ADR-0003 修订）
   rawOpenSeq += 1;
@@ -591,6 +604,13 @@ repairClose.addEventListener('click', () => {
 docWarnClose.addEventListener('click', () => {
   // 只关提示条：源文本仍常驻（原文视图不受影响），只是一个提醒
   docWarnBar.hidden = true;
+});
+// 保真提示条（#23）：主点击 = 跳原文第一个失真；关闭只关条（报告保留在会话内存）
+fidelityJump.addEventListener('click', () => {
+  void revealFirstFidelityHit();
+});
+fidelityClose.addEventListener('click', () => {
+  fidelityBar.hidden = true;
 });
 // 修复摘要的 `at` → 跳到原文对应行（#8 / ADR-0003 修订 §5）
 repairOps.addEventListener('click', (event: MouseEvent) => {
@@ -1491,6 +1511,80 @@ function renderDocWarn(): void {
   docWarnText.title = text;
 }
 
+/* ---------------- 保真提示（#23 / ADR-0003 修订 2026-11-09） ---------------- */
+
+function resetFidelity(): void {
+  fidelitySeq += 1;
+  fidelity = null;
+  fidelityPending = false;
+  fidelityBar.hidden = true;
+  fidelityText.textContent = '—';
+  fidelityText.removeAttribute('title');
+  fidelityJump.hidden = true;
+}
+
+/**
+ * 首帧后异步扫描（ADR 修订 §1）：`requestIdleCallback`（2s 兜底）→ `core.fidelity`。
+ * 不显示「检查中」进度；换文档用 `fidelitySeq` + rootId 双重判定丢弃迟到回包。
+ */
+function scheduleFidelityScan(): void {
+  const rid = rootId;
+  if (!rid) return;
+  const seq = fidelitySeq;
+  fidelityPending = true;
+  const run = (): void => {
+    if (rid !== rootId || seq !== fidelitySeq) return;
+    void (async () => {
+      try {
+        const reply = await core.fidelity({ rootId: rid });
+        if (rid !== rootId || seq !== fidelitySeq) return;
+        // 不用 docRevision 判过期：编辑会推进它，但源文本不变、报告仍有效（ADR 修订 §1）
+        fidelity = reply.report;
+        fidelityPending = false;
+        renderFidelity();
+      } catch (error) {
+        if (rid !== rootId || seq !== fidelitySeq) return;
+        fidelityPending = false;
+        const coreError = CoreError.from(error);
+        // 取消 / 根已换是正常竞态，静默；其余是真错误
+        if (coreError.code !== 'CANCELLED' && coreError.code !== 'NO_ROOT') showError(error);
+      }
+    })();
+  };
+  const idle = (
+    window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }
+  ).requestIdleCallback;
+  if (typeof idle === 'function') idle(run, { timeout: 2000 });
+  else window.setTimeout(run, 16);
+}
+
+/** 精确数量文案（ADR §3：误报会教用户忽略提示，所以必须给精确数）。 */
+function renderFidelity(): void {
+  const report = fidelity;
+  const total = report?.counts.total ?? 0;
+  fidelityBar.hidden = total === 0;
+  fidelityJump.hidden = (report?.hits.length ?? 0) === 0;
+  if (!report || total === 0) {
+    fidelityText.textContent = '—';
+    fidelityText.removeAttribute('title');
+    return;
+  }
+  const parts: string[] = [];
+  if (report.counts.number > 0) parts.push(`大整数精度 ${report.counts.number} 处`);
+  if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
+  const tail = report.truncated ? `（仅列前 ${report.hits.length} 条）` : '';
+  const text = `检测到 ${total} 处失真：${parts.join(' · ')}${tail}`;
+  fidelityText.textContent = text;
+  fidelityText.title = text;
+}
+
+/** 跳原文：与修复摘要 `at` 完全同一条链路（切原文 → rawLocate → 行 flash）。 */
+async function revealFirstFidelityHit(): Promise<number> {
+  const hit = fidelity?.hits[0];
+  if (!hit) return -1;
+  return revealRepairOffset(hit.offset);
+}
+
 /* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
 
 /** 当前视图的唯一运行期真相 = `body[data-view]`（持久化走 SettingsState，不另存一份变量）。 */
@@ -2078,6 +2172,33 @@ if (!isExtension) {
     repairClose: () => {
       repairClose.click();
       return repairBar.hidden;
+    },
+
+    // ---- 保真提示 dev hook（#23 / ADR-0003 修订）----
+    /** 报告 + 提示条状态；`pending=true` 表示扫描在途（冒烟可轮询等它变 false）。 */
+    fidelityState: () => ({
+      pending: fidelityPending,
+      status: fidelity?.status ?? null,
+      counts: fidelity?.counts ?? null,
+      hits: fidelity?.hits ?? [],
+      scanMs: fidelity?.scanMs ?? null,
+      truncated: fidelity?.truncated ?? null,
+      barVisible: !fidelityBar.hidden,
+      barText: fidelityText.textContent ?? '',
+      jumpVisible: !fidelityJump.hidden,
+      viewMode: document.body.dataset.view === 'raw' ? 'raw' : 'tree',
+      statusRows: statusRows.textContent ?? '',
+    }),
+    /** 点「查看原文」（真实 DOM click → 切原文 + rawLocate + 行 flash），等 200ms 后回快照。 */
+    fidelityJump: async () => {
+      const started = performance.now();
+      fidelityJump.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      return { ms: ms(started), ...rawHookState(), fidelity: { barVisible: !fidelityBar.hidden } };
+    },
+    fidelityClose: () => {
+      fidelityClose.click();
+      return fidelityBar.hidden;
     },
 
     // ---- 原始文本视图 dev hook（契约见 docs/adr/0003 修订 §7）----

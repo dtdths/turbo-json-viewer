@@ -126,6 +126,35 @@ kbd {
 }
 .docwarnbar__close { flex: 0 0 auto; color: var(--muted); }
 
+/* 保真提示条（#23 / ADR-0003 修订）：尺寸/语义色与修复条、体积条一致，类名独立（显隐逻辑解耦）。
+   三条 DOM 顺序 = 修复 → 体积 → 保真；视觉细节归 #21，这里只做最小可用形态。 */
+.fidelitybar {
+  position: relative;
+  flex: 0 0 var(--repairbar-h, 32px);
+  height: var(--repairbar-h, 32px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn-border);
+  color: var(--warn);
+  font-size: 11.5px;
+}
+.fidelitybar[hidden] { display: none; }
+.fidelitybar__icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--warn); }
+.fidelitybar__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+/* 「查看原文」是动作而不是链接语义：保留 linkbtn 的强调色，但不要下划虚线干扰整条提示 */
+.fidelitybar__jump { flex: 0 0 auto; border-bottom: none; font-size: 11.5px; white-space: nowrap; }
+.fidelitybar__close { flex: 0 0 auto; color: var(--muted); }
+
 /* ---------------- activity bar ---------------- */
 
 .activity {

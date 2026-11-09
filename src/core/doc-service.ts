@@ -12,6 +12,9 @@
  *
  * 大纲（ADR-0013 §3）：`outline` 只读，按容器**分页**枚举子项；不推任何版本、不依赖树展开态、不缓存。
  *
+ * 保真（#23 / ADR-0003 修订 2026-11-09）：`fidelity` 只读扫描源文本，**不推版本**；
+ * 报告按根对象身份缓存（源文本不变不重扫），文档替换/关闭即取消（CANCELLED）。
+ *
  * 骨架 slice：getNodeJson / replaceNode / undo / redo / reset / getTrail / profile 只保证签名，
  * 一律抛 BAD_COMMAND('not implemented in skeleton slice')。
  */
@@ -23,6 +26,7 @@ import type {
   EditReply,
   ExpandReply,
   ExportReply,
+  FidelityReply,
   LoadReply,
   NodeJsonReply,
   ReplyOf,
@@ -31,6 +35,7 @@ import type {
 } from '../protocol/messages';
 import { ROOT_PATH } from '../shared/path';
 import type {
+  FidelityReport,
   OutlineReply,
   Path,
   RawLocateReply,
@@ -45,6 +50,7 @@ import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
 import { EditHistory, type EditEntry } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
+import { scanFidelity } from './fidelity';
 import { jsonKind, RowModel } from './row-model';
 import { outlinePage } from './outline';
 import { DOC_ROOT_ID, RootStore, type Root, type RootSource } from './root-store';
@@ -63,6 +69,11 @@ export class DocService {
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   private readonly pendingLoads = new Map<number, { cancelled: boolean }>();
   private readonly cancelledSearches = new Set<number>();
+  /**
+   * 保真报告缓存（#23）：按**根对象身份**缓存——源文本不变就不重扫（编辑不重扫，ADR 修订 §1）。
+   * 用 WeakMap 而不是 Root 字段：文档替换 = 旧根被丢弃 → 缓存随根一起可回收，无需清理代码。
+   */
+  private readonly fidelityCache = new WeakMap<Root, FidelityReport>();
   private latestLoadId = -1;
   private latestSearchSeq = -1;
   private closed = false;
@@ -140,6 +151,8 @@ export class DocService {
         return this.rawLocate(cmd);
       case 'rawSource':
         return this.rawSource(cmd);
+      case 'fidelity':
+        return this.fidelity(cmd);
       case 'getTrail':
       case 'profile':
         throw new CoreError({ code: 'BAD_COMMAND', message: NOT_IMPLEMENTED });
@@ -568,6 +581,39 @@ export class DocService {
       });
     }
     return { text: source.text, bytes };
+  }
+
+  /* ------------------------------ 保真提示 ------------------------------ */
+
+  /**
+   * 保真扫描（#23 / ADR-0003 修订 2026-11-09 §1）：单趟扫描**源文本**，报告失真字面量/键序。
+   *
+   * - **只读**：不推进 docRevision / rowVersion、不动行模型、不发事件。
+   * - **缓存**：报告挂在当前根对象身份上（WeakMap）；同一文档重复调用直接回缓存。
+   *   编辑（replaceNode/undo/reset）不重扫——失真针对源文本，源文本不变（ADR 修订 §1）。
+   * - **取消**：扫描分段让出事件循环；`shouldCancel` 以「根对象还是不是当前根的同一个对象」
+   *   判定——文档被替换/关闭即取消，抛 `CANCELLED`（与 load/search 同口径，app 静默丢弃）。
+   * - 文档没有保留源文本（expression 根）→ `BAD_COMMAND`；未知根 → `NO_ROOT`。
+   */
+  private async fidelity(cmd: Cmd<'fidelity'>): Promise<FidelityReply> {
+    const root = this.roots.require(cmd.rootId);
+    const cached = this.fidelityCache.get(root);
+    if (cached !== undefined) {
+      return { rootId: root.rootId, docRevision: root.docRevision, report: cached };
+    }
+    const source = this.requireSource(root);
+    const report = await scanFidelity(source.text, {
+      shouldCancel: () => this.roots.get(cmd.rootId) !== root,
+    });
+    // 取消（文档被替换 / 关闭）：报告作废，回包由 app 静默丢弃
+    if (report === null || this.roots.get(cmd.rootId) !== root) {
+      throw new CoreError({
+        code: 'CANCELLED',
+        message: `fidelity scan for root ${cmd.rootId} cancelled`,
+      });
+    }
+    this.fidelityCache.set(root, report);
+    return { rootId: root.rootId, docRevision: root.docRevision, report };
   }
 
   private historyOf(rootId: RootId): EditHistory {

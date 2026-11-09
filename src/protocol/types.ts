@@ -230,3 +230,46 @@ export interface RawSourceReply {
   /** UTF-8 字节数 */
   bytes: number;
 }
+
+/* --------------------------- 保真提示（#23 / ADR-0003 修订 2026-11-09） --------------------------- */
+
+/**
+ * 一条失真命中（ADR-0003 修订 §3）。
+ *
+ * `offset` 是**源文本 UTF-16 偏移**，可直接喂 `rawLocate`（跳原文行）。
+ * 命中顺序由 core 按源文本出现顺序排好（同源顺序，非字典序）。
+ */
+export interface FidelityHit {
+  kind: 'number' | 'key-order';
+  /** 源文本 UTF-16 偏移（数字字面量起点 / 对象 `{` 的位置） */
+  offset: number;
+  /** ≤48 字符的异常片段（超长截断 + 省略号） */
+  snippet: string;
+  /** kind==='number' 时的失真类别 */
+  reason?: 'precision' | 'overflow' | 'underflow';
+  /** 「原文 vs 解析后」对照（各自 ≤48 字符；kind==='number'） */
+  literal?: string;
+  parsed?: string;
+}
+
+/**
+ * 保真报告（ADR-0003 修订 §3）：`hit` 只留前 `FIDELITY_MAX_HITS` 条片段，
+ * `counts` 始终是**全量**统计（提示文案用精确数量，不能被截断误导）。
+ */
+export interface FidelityReport {
+  /**
+   * 无失真 = `none`，有 = `found`。
+   * `skipped` 为形状预留：当前 core 的取消语义是回包 `CANCELLED`（见 `DocService.fidelity`），
+   * 不会产出 `skipped`；app 侧按「丢弃回包 / 条不出现」处理即可。
+   */
+  status: 'none' | 'found' | 'skipped';
+  counts: { number: number; keyOrder: number; total: number };
+  /** 前 `FIDELITY_MAX_HITS` 条（≤100），按源文本顺序 */
+  hits: FidelityHit[];
+  /** true = 命中数超过 hits 长度（被截断） */
+  truncated: boolean;
+  /** 扫描耗时（Worker 内 ms，诊断/验收用；不进常驻 UI） */
+  scanMs: number;
+  /** status==='skipped' 时的原因（当前 core 不产出） */
+  skippedReason?: 'cancelled';
+}

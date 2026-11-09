@@ -19,6 +19,7 @@
     "smoke:export": "node scripts/smoke-export.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "smoke:raw": "node scripts/smoke-raw.mjs",
+    "smoke:fidelity": "node scripts/smoke-fidelity.mjs",
     "smoke:outline": "node scripts/smoke-outline.mjs"
   },
   "devDependencies": {

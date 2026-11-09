@@ -6,6 +6,7 @@ import type {
   CopyFormat,
   DocumentMeta,
   DocumentProfile,
+  FidelityReport,
   Hit,
   JsonKind,
   MapTrail,
@@ -67,7 +68,9 @@ export type Command =
   | { t: 'rawOpen'; rootId: RootId }
   | { t: 'rawWindow'; rootId: RootId; seq: number; start: number; count: number }
   | { t: 'rawLocate'; rootId: RootId; offset: number }
-  | { t: 'rawSource'; rootId: RootId; maxBytes?: number };
+  | { t: 'rawSource'; rootId: RootId; maxBytes?: number }
+  /* 保真提示（#23 / ADR-0003 修订 2026-11-09）：只读、不推版本，首帧后由 app 显式调用 */
+  | { t: 'fidelity'; rootId: RootId };
 
 export interface LoadReply {
   rootId: RootId;
@@ -139,6 +142,16 @@ export interface SearchReply extends SearchResult {
   rootId: RootId;
 }
 
+/**
+ * 保真回包（#23）：`report` 只描述**源文本**（临时修改不重扫），
+ * `docRevision` 供 app 判定回包是否已过期（换文档/重载后丢弃迟到回包）。
+ */
+export interface FidelityReply {
+  rootId: RootId;
+  docRevision: Rev;
+  report: FidelityReport;
+}
+
 export interface ReplyByKind {
   load: LoadReply;
   cancelLoad: void;
@@ -164,6 +177,7 @@ export interface ReplyByKind {
   rawWindow: RawWindow;
   rawLocate: RawLocateReply;
   rawSource: RawSourceReply;
+  fidelity: FidelityReply;
 }
 
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];

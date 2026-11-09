@@ -1319,3 +1319,103 @@ describe('DocService — outline（大纲分页 / ADR-0013）', () => {
     }
   });
 });
+
+/* ===================== 保真提示（#23 / ADR-0003 修订 2026-11-09） ===================== */
+
+/** 同时含「整数键重排」与「大整数精度流失」的源文本：counts = { number:1, keyOrder:1 }。 */
+const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1234567890123456789}';
+
+describe('DocService — fidelity（保真扫描 / #23）', () => {
+  it('回包形状：rootId + docRevision + report（命中按源顺序、counts 分类正确）', async () => {
+    const svc = new DocService();
+    await load(svc, FIDELITY_TEXT);
+    const reply = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+
+    expect(reply).toMatchObject({ rootId: DOC_ROOT, docRevision: 1 });
+    expect(reply.report.status).toBe('found');
+    expect(reply.report.counts).toEqual({ number: 1, keyOrder: 1, total: 2 });
+    expect(reply.report.hits.map((hit) => hit.kind)).toEqual(['key-order', 'number']);
+    expect(reply.report.truncated).toBe(false);
+    expect(typeof reply.report.scanMs).toBe('number');
+    // offset 可直接喂 rawLocate（源文本 UTF-16 偏移）：键序命中在对象 `{`
+    expect(reply.report.hits[0]?.offset).toBe(0);
+    expect(reply.report.hits[1]?.offset).toBe(FIDELITY_TEXT.indexOf('1234567890123456789'));
+  });
+
+  it('无失真文档：status none、counts 0、hits 空', async () => {
+    const svc = new DocService();
+    await load(svc, '{"a":1,"b":[true,null]}');
+    const reply = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    expect(reply.report).toMatchObject({ status: 'none', counts: { number: 0, keyOrder: 0, total: 0 }, hits: [] });
+    expect(reply.report.truncated).toBe(false);
+  });
+
+  it('只读：不推进 docRevision / rowVersion、不改 totalRows', async () => {
+    const svc = new DocService();
+    await load(svc, FIDELITY_TEXT);
+    const before = await svc.dispatch({ t: 'stats', rootId: DOC_ROOT });
+    await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    expect(await svc.dispatch({ t: 'stats', rootId: DOC_ROOT })).toEqual(before);
+  });
+
+  it('缓存：同一文档重复调用回同一份 report（不重扫）；编辑后仍复用（源文本不变）', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, FIDELITY_TEXT);
+    const first = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    const second = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    expect(second.report).toBe(first.report); // 引用相同 = 缓存命中（没有第二次扫描）
+    expect(second.report.scanMs).toBe(first.report.scanMs);
+
+    // 临时编辑不改变源文本 → 报告不重扫（docRevision 跟着当前根走）
+    await svc.dispatch({
+      t: 'replaceNode',
+      rootId: DOC_ROOT,
+      path: '$.big',
+      docRevision: loaded.docRevision,
+      jsonText: '1',
+    });
+    const third = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    expect(third.report).toBe(first.report);
+    expect(third.docRevision).toBe(2);
+  });
+
+  it('未知 rootId → NO_ROOT（走 RootStore.require）', async () => {
+    const svc = new DocService();
+    expect((await errorOf(svc.dispatch({ t: 'fidelity', rootId: 'nope' }))).code).toBe('NO_ROOT');
+  });
+
+  it('重新 load 后：旧根的报告不延续（新文档重新扫描，结果反映新源文本）', async () => {
+    const svc = new DocService();
+    await load(svc, FIDELITY_TEXT);
+    const old = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    expect(old.report.counts.total).toBe(2);
+
+    // 单文档（v1）rootId 恒为 'doc'：替换后同一 id 指向新根，旧报告不能被复用
+    const reloaded = await load(svc, '{"a":1}', 2);
+    const fresh = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    expect(fresh.docRevision).toBe(reloaded.docRevision);
+    expect(fresh.report).not.toBe(old.report);
+    expect(fresh.report.counts).toEqual({ number: 0, keyOrder: 0, total: 0 });
+  });
+
+  it('扫描中途换文档 → CANCELLED（分段让出 + 根身份校验；app 静默丢弃）', async () => {
+    const svc = new DocService();
+    // > 2 × FIDELITY_YIELD_BYTES(256KB)：确保换文档发生在第二次让出之后
+    await load(svc, JSON.stringify({ pad: 'x'.repeat(1024 * 1024) }));
+
+    const pending = svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
+    const reload = load(svc, '{"a":1}', 2);
+
+    expect((await errorOf(pending)).code).toBe('CANCELLED');
+    await reload; // 新文档正常可用
+    expect((await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT })).report.status).toBe('none');
+  });
+
+  it('close 之后 → CLOSED；扫描被取消时的取消语义与 load/search 一致', async () => {
+    const svc = new DocService();
+    await load(svc, FIDELITY_TEXT);
+    svc.close();
+    expect((await errorOf(svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT }))).code).toBe('CLOSED');
+  });
+});

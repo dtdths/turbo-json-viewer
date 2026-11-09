@@ -13,6 +13,7 @@ import type {
   EditReply,
   ExpandReply,
   ExportReply,
+  FidelityReply,
   LoadOptions,
   LoadReply,
   NodeJsonReply,
@@ -115,6 +116,12 @@ export interface CoreApi {
   /** 整份源文本（复制原文）；超过 maxBytes 抛 TOO_LARGE。 */
   rawSource(req: { rootId: RootId; maxBytes?: number }): Promise<RawSourceReply>;
 
+  /**
+   * 保真扫描（#23 / ADR-0003 修订 2026-11-09）：只读、不推版本，首帧后由 app 显式调用。
+   * 文档被替换 → 抛 `CANCELLED`（app 静默丢弃）；同一文档重复调用走 core 内缓存。
+   */
+  fidelity(req: { rootId: RootId }): Promise<FidelityReply>;
+
   getTrail(req: { rootId: RootId; path: Path | null }): Promise<TrailReply>;
   profile(rootId: RootId): Promise<DocumentProfile>;
   stats(rootId: RootId): Promise<StatsReply>;
@@ -155,6 +162,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     rawWindow: (req) => send({ t: 'rawWindow', ...req }),
     rawLocate: (req) => send({ t: 'rawLocate', ...req }),
     rawSource: (req) => send({ t: 'rawSource', ...req }),
+    fidelity: (req) => send({ t: 'fidelity', ...req }),
     getTrail: (req) => send({ t: 'getTrail', ...req }),
     profile: (rootId) => send({ t: 'profile', rootId }),
     stats: (rootId) => send({ t: 'stats', rootId }),
