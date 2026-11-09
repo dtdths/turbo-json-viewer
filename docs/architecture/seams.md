@@ -74,7 +74,7 @@ export interface CoreTransport {
 |---|---|---|
 | `load` | `LoadedReply(rootId, docRevision, rowVersion, totalRows, profile, repair?)` | 首帧不等待保真扫描/概要采样（ADR-0004） |
 | `window` | `WindowReply(rootId, rowVersion, seq, start, rows, totalRows)` | 40 行 ≈3.1KB；p95 0.1ms |
-| `toggle` / `toggleSubtree` / `expandAll` / `collapseAll` / `replaceNode` / `undo·redo·reset` | `EditReply(rootId, docRevision, rowVersion, totalRows, changedRow?, changedPath?, history)` | 8 条命令走**根变更路径**（ADR-0002 修订 2026-11-09）：`view` 意图（前四条）只在 `changed` 时推 `rowVersion`，`value` 意图推 `docRevision` + `rowVersion`（reset 的 N 步各推一次）；`history` 恒定必填；不重解析；先 parse 后落值；空栈 no-op 不推版本 |
+| `toggle` / `toggleSubtree` / `expandAll` / `collapseAll` / `replaceNode` / `undo·redo·reset` | `EditReply(rootId, docRevision, rowVersion, totalRows, changedRow?, changedPath?, history)` | 8 条命令走**根变更路径**（ADR-0002 修订 2026-11-09）：`view` 意图（前四条）只在 `changed` 时推 `rowVersion`，`value` 意图推 `docRevision` + `rowVersion`（reset 的每步各推一次）；`history` 恒定必填；`replaceNode` 只 `JSON.parse` 编辑文本一次；`undo`/`redo` 空栈抛 `NO_HISTORY`、`reset` 空栈 no-op 不推版本 |
 | `toggleSubtree` | `EditReply(...)`（同上，`history` 恒定） | 子树批量展开/收起（#22 / ADR-0002 修订）：展开 = 子树内所有非空容器 open（与 expandAll 同口径）、收起 = 深度复位；**原子**（超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` 零部分修改）；根/空容器 no-op、标量 `BAD_COMMAND`；只有可见结果变化才推 `rowVersion` |
 | `expandTo` | `ExpandReply(rootId, rowVersion, row, totalRows)` | 只展开祖先链（不 toggle 目标自身）；`row` 为展开后行号，跳转用 |
 | `getNodeJson` / `getTrail` | `NodeJsonReply(text, bytes, nodes)` / `TrailReply(MapTrail)` | ≤5MB 否则 `TOO_LARGE`；O(depth)、兄弟 ±2（ADR-0007） |
@@ -257,6 +257,30 @@ export interface CodeEditor {
 | `TextareaEditor` | 自研补全/高亮降级（≈1.0KB gz） | 体积预算 <80KB 时的兜底 |
 
 **删除测试**：删掉 → 每个组件自己 `chrome.storage`/`textarea`，容量/配额/降级散落；CM6 与逻辑耦合、体积预算无人守。
+
+## 6.5 app · 回包落地（Reply Landing）
+
+**位置**：`src/app/doc-session.ts`（纯 TS、零 DOM）；副作用执行器 `applyLanding(plan)` 在 `main.ts`（app 仍是唯一装配点，§1 不变）。
+
+```ts
+export interface VersionedReply { rootId: string; rowVersion: number; totalRows: number;
+  docRevision?: number; changedRow?: number; changedPath?: string; history?: EditHistoryState }
+export type LandingIntent = {kind:'document'} | {kind:'toggle'} | {kind:'subtree'}
+  | {kind:'expandAll'} | {kind:'edit'} | {kind:'jump'; path:string; row:number}
+export class DocSession {
+  readonly rootId: string | null; readonly docRevision: number; readonly rowVersion: number; readonly totalRows: number;
+  land(reply: VersionedReply, intent: LandingIntent, ctx?: LandingContext): LandingPlan;
+}
+```
+
+**不变式**
+- 会话字段（`rootId` / `docRevision` / `rowVersion` / `totalRows`）只在 `land()` 里更新；handler 不再赋值。
+- `land()` 无副作用；`applyLanding(plan)` 是 app 唯一副作用点：换根/回顶/居中/锚点平移 → `requestWindow` → 重推命中 → 大纲刷新 → 搜索 stale → 选中/闪改 → 状态栏。
+- 意图矩阵固定：`document` 回顶 + 清选中；`toggle` / `subtree` 保持视口（subtree 重推命中）；`expandAll` 回顶 + 重推命中；`edit` 锚点换算 + 大纲刷新 + 搜索 stale + 闪改 + 历史同步；`jump` 居中 + 选中。
+- `plan.changed` = `rowVersion` 是否真的推进，是 no-op toast 的唯一判据（不再手抄 `rowVersionBefore`）。
+- 字段归属：只四个会话字段；`meta` / 选中 / 编辑目标 / 锚点仍归 app。`expandTo` 回包没有 `docRevision`/`history`，jump 不改文档版本。
+
+**删除测试**：删掉 → 6 个回包站点各自手抄「换版本 → `setRoot` → `requestWindow` →（附加动作）→ 状态栏」，漏一步只表现为窗口悄悄停在旧版本。
 
 ## 7. 删除测试汇总
 

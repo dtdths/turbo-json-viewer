@@ -81,3 +81,31 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
 5. **契约测试替两套**：一份共享用例打在 adapter interface 上、对 `RowWindowSource` / `RawWindowSource` 各跑一遍；旧的两套重复 describe（单飞 + 合并 / 过期回包 / 失败降级 / metrics）删除，adapter 专有行为（raw `open` / `ready` / `alignTruncated`；row 预取配置 / 锚点 / 闪帧回归）留在各自测试。
 6. **范围**：只收 row + raw。`OutlineState`（按容器分页的缓存与单飞）与 `SearchState`（无几何 / 滚动）状态形状不同，不并入；它们与 S2 只共享词汇。
 7. **被否决**：只抽共享策略函数、保留两个 class（interface 不变，重复只是搬家）；合并成一个 class + `mode` 分支（两套快照挤进一个 interface）；把 raw 也统一成 row 的几何 / 锚点（行为变化、无收益）。
+
+## 修订（2026-11-09）：app 的回包落地收成一个文档会话 + 单一执行器
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-09，候选 2）+ `grilling` 拍板（Q1–Q5）。
+> 术语见 `CONTEXT.md`「回包落地（Reply Landing）」。
+
+1. **一个新 module**：`src/app/doc-session.ts`（纯 TS、零 DOM）持有四个会话字段 `rootId` / `docRevision` /
+   `rowVersion` / `totalRows`（唯一真相源），`land(reply, intent, ctx)` 更新它们并返回纯数据 `LandingPlan`。
+   §1「app 是唯一装配点」不变——本修订只是把 app 内 6 个浅回包站点收成一个深 module + 一个执行器。
+2. **意图只有 6 种**：`document`（load）、`toggle`、`subtree`、`expandAll`、`edit`（replaceNode / undo / redo /
+   reset）、`jump`（expandTo）。handler 只回答「哪种落地」；重推命中、回顶、居中、锚点换算、大纲刷新、
+   搜索 stale、选中与闪改全部由意图决定（矩阵与旧实现逐条一致）。
+3. **纯 plan + 单一执行器**：`land()` 不做副作用；`main.ts` 的 `applyLanding(plan)` 是唯一副作用点
+   （`setRoot` / 回顶 / 居中 / `restoreAnchor` / `requestWindow` / 重推命中 / 大纲刷新 / 搜索 stale / 选中 /
+   闪改 / 状态栏）。否决「注入 8 个回调端口」：接口浅、测试要 mock 一片。
+4. **字段归属**：只搬四个版本 / 根字段；`meta` / 选中 / 编辑目标 / 滚动锚点留在 app——锚点作为 `ctx.anchor`
+   传入，plan 回算好的目标 px（`shift-anchor`）。
+5. **no-op 检测统一**：`plan.changed`（`rowVersion` 是否真的推进）取代 toggleSubtree / expandAll 两处手抄的
+   `rowVersionBefore`；toast 文案不变。
+6. **onLoaded 边界**：换文档只把「换版本 → `setRoot` → 回顶 → `requestWindow` → 清选中 → 状态栏」交给
+   landing；文档切换专属步骤（编辑态清空 / 保真重扫 / 原文索引丢弃 / 搜索重置 / 大纲开根 / 面板与焦点 /
+   恢复视图模式）留在 handler——那是导入管线，不是回包落地。
+7. **测试面**：`tests/unit/app/doc-session.test.ts`（6 意图矩阵 + no-op + 锚点换算 + 居中 + snapshot 副本），
+   会话可脱 DOM 测；`main.ts` 只剩一个执行器，不再是 6 份手抄仪式。
+8. **被否决**：(a) 放 `viewmodel/`（它是 app 编排与装配契约，不是 core→view 的派生状态）；(b) 继续留在
+   `main.ts` 私有（不可测，等于没抽）；(c) 把 `onLoaded` 整段搬进 module（导入管线是另一件事）。
+9. **净行为**：用户可见行为不变；唯一内部差异是 load 的回顶改走 `setRoot({ scrollTopPx: 0 })`（与
+   expandAll 同款，少一次在途请求），由 13 套冒烟验收。
