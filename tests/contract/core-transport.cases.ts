@@ -154,6 +154,32 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       expect(windowPaths(win)).toEqual(['$', '$.items', '$.items[0]']);
     });
 
+    it('toggleSubtree：子树展开 / 收起（changed 才推 rowVersion），标量 → BAD_COMMAND', async () => {
+      const loaded = await load(COLLAPSED_TEXT);
+      expect(loaded.totalRows).toBe(2);
+
+      const opened = await h.api.toggleSubtree({ rootId: loaded.rootId, path: '$.items', open: true });
+      expect(opened).toMatchObject({ docRevision: 1, rowVersion: 2, totalRows: 602, changedRow: 1 });
+
+      const win = await h.api.window({ rootId: loaded.rootId, rowVersion: 2, seq: 1, start: 0, count: 3 });
+      expect(windowPaths(win)).toEqual(['$', '$.items', '$.items[0]']);
+
+      // 已全展开：no-op 不推版本、无 changedRow
+      const again = await h.api.toggleSubtree({ rootId: loaded.rootId, path: '$.items', open: true });
+      expect(again.rowVersion).toBe(2);
+      expect(again.changedRow).toBeUndefined();
+
+      const collapsed = await h.api.toggleSubtree({ rootId: loaded.rootId, path: '$.items', open: false });
+      expect(collapsed).toMatchObject({ docRevision: 1, rowVersion: 3, totalRows: 2, changedRow: 1 });
+
+      // 标量不可作为子树目标；失败不推版本
+      const scalar = await errorOf(
+        h.api.toggleSubtree({ rootId: loaded.rootId, path: '$.items[0]', open: true }),
+      );
+      expect(scalar.code).toBe('BAD_COMMAND');
+      expect(await h.api.stats(loaded.rootId)).toMatchObject({ docRevision: 1, rowVersion: 3 });
+    });
+
     it('expandTo：展开祖先链并返回目标行号', async () => {
       const loaded = await load(JSON.stringify({ a: { b: { c: 1 } }, pad: new Array(600).fill(0) }));
       const reply = await h.api.expandTo({ rootId: loaded.rootId, path: '$.a.b.c' });

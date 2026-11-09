@@ -317,6 +317,86 @@ describe('DocService — expandAll / collapseAll 命令', () => {
   });
 });
 
+/* ================== #22 子树批量展开 / 收起（ADR-0002 修订） ================== */
+
+/** > 500 节点 → load 后默认折叠；items 是容器数组（可验证深度复位与惰性展开标记）。 */
+const SUBTREE_DOC = JSON.stringify({
+  items: Array.from({ length: 600 }, (_, i) => ({ id: i, even: i % 2 === 0 })),
+});
+
+describe('DocService — toggleSubtree 命令', () => {
+  it('展开 / 收起按 changed 推 rowVersion（已全开 / 已收起 no-op 不抖）', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, SUBTREE_DOC);
+    expect(loaded).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 2 });
+
+    const opened = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items', open: true });
+    expect(opened).toMatchObject({
+      rootId: DOC_ROOT,
+      docRevision: 1,
+      rowVersion: 2,
+      totalRows: 1802, // 1 根 + 1 items + 600×(1 元素 + 2 字段)：整棵子树全展开
+      changedRow: 1,
+    });
+
+    const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 2, seq: 1, start: 0, count: 4 });
+    expect(windowPaths(win)).toEqual(['$', '$.items', '$.items[0]', '$.items[0].id']);
+    const stale = await errorOf(
+      svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 1, seq: 2, start: 0, count: 3 }),
+    );
+    expect(stale.code).toBe('STALE_ROOT');
+
+    // 已全展开：可见结果没变 → 不推版本、无 changedRow
+    const again = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items', open: true });
+    expect(again).toMatchObject({ docRevision: 1, rowVersion: 2, totalRows: 1802 });
+    expect(again.changedRow).toBeUndefined();
+
+    const collapsed = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items', open: false });
+    expect(collapsed).toMatchObject({ docRevision: 1, rowVersion: 3, totalRows: 2, changedRow: 1 });
+
+    // 已收起：同样是 no-op
+    const againCollapsed = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items', open: false });
+    expect(againCollapsed).toMatchObject({ rowVersion: 3, totalRows: 2 });
+    expect(againCollapsed.changedRow).toBeUndefined();
+  });
+
+  it('收起 = 深度复位：不可见的惰性展开标记也清掉，但不推 rowVersion', async () => {
+    const svc = new DocService();
+    await load(svc, SUBTREE_DOC); // rowVersion 1
+
+    const deep = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items', open: true }); // 2
+    expect(deep.totalRows).toBe(1802);
+    const folded = await svc.dispatch({ t: 'toggle', rootId: DOC_ROOT, path: '$.items', open: false }); // 3
+    expect(folded.totalRows).toBe(2); // 折叠只释放自己的索引，后代 601 个容器的展开态保留
+
+    // 本节点已折叠、后代留有惰性展开标记（不可见）→ 复位但 changed:false
+    const reset = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items', open: false });
+    expect(reset).toMatchObject({ docRevision: 1, rowVersion: 3, totalRows: 2 });
+    expect(reset.changedRow).toBeUndefined();
+
+    // 复位生效：再次单层展开 items 只剩一层（items[0] 折叠，不是恢复上次现场）
+    const reopened = await svc.dispatch({ t: 'toggle', rootId: DOC_ROOT, path: '$.items', open: true });
+    expect(reopened).toMatchObject({ rowVersion: 4, totalRows: 602 });
+  });
+
+  it('边界：根 no-op 不推版本；标量 BAD_COMMAND；未知根 NO_ROOT', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, SUBTREE_DOC);
+
+    const root = await svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$', open: true });
+    expect(root).toMatchObject({ docRevision: 1, rowVersion: loaded.rowVersion, totalRows: 2 });
+
+    const scalar = await errorOf(
+      svc.dispatch({ t: 'toggleSubtree', rootId: DOC_ROOT, path: '$.items[0].id', open: true }),
+    );
+    expect(scalar.code).toBe('BAD_COMMAND');
+    expect((await svc.dispatch({ t: 'stats', rootId: DOC_ROOT })).rowVersion).toBe(loaded.rowVersion);
+
+    const noRoot = await errorOf(svc.dispatch({ t: 'toggleSubtree', rootId: 'nope', path: '$', open: true }));
+    expect(noRoot.code).toBe('NO_ROOT');
+  });
+});
+
 /* ============================= slice 5：子树编辑 ============================= */
 
 const EDIT_DOC = { n: 1, s: 'x', b: true, nul: null, arr: [1], obj: { k: 1 } };

@@ -115,6 +115,8 @@ export class DocService {
         return this.window(cmd);
       case 'toggle':
         return this.toggle(cmd);
+      case 'toggleSubtree':
+        return this.toggleSubtree(cmd);
       case 'expandTo':
         return this.expandTo(cmd);
       case 'expandAll':
@@ -271,6 +273,26 @@ export class DocService {
       totalRows: result.totalRows,
     };
     // 不可见路径（祖先折叠）时 result.row = -1，不塞进回包
+    if (result.changed && result.row >= 0) reply.changedRow = result.row;
+    return reply;
+  }
+
+  /**
+   * 子树批量展开 / 收起（#22 / ADR-0002 修订）：版本纪律与 `toggle` 完全一致——
+   * 只有可见结果真的变了（`changed`）才 `rowVersion++`（`docRevision` 不动；no-op 不制造 STALE_ROOT
+   * 抖动），`changed` 且目标行可见（row >= 0）才填 `changedRow`；不可见节点上的惰性状态变化不回包。
+   */
+  private toggleSubtree(cmd: Cmd<'toggleSubtree'>): EditReply {
+    const root = this.roots.require(cmd.rootId);
+    const result = root.rowModel.toggleSubtree(cmd.path, cmd.open);
+    if (result.changed) root.rowVersion += 1;
+    const reply: EditReply = {
+      rootId: root.rootId,
+      docRevision: root.docRevision,
+      rowVersion: root.rowVersion,
+      totalRows: result.totalRows,
+    };
+    // 不可见路径（祖先折叠）时 result.row = -1，不塞进回包（与 toggle 同款）
     if (result.changed && result.row >= 0) reply.changedRow = result.row;
     return reply;
   }

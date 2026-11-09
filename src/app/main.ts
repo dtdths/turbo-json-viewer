@@ -23,7 +23,7 @@ import { OutlinePanel } from '../view/panels/outline-panel';
 import { CoreError } from '../protocol/errors';
 import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
-import type { CopyFormat, DocumentMeta, FidelityReport, JsonKind, RawMeta } from '../protocol/types';
+import type { CopyFormat, DocumentMeta, FidelityReport, JsonKind, RawMeta, Row } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
@@ -138,9 +138,9 @@ const tree = new TreeView(treeHost, {
   onEdit: (path: string) => {
     void openEditor(path);
   },
-  onContextMenu: (path: string, x: number, y: number, kind: JsonKind) => {
+  onContextMenu: (path: string, x: number, y: number, row: Row) => {
     setSelection(path);
-    showContextMenu(path, x, y, kind);
+    showContextMenu(path, x, y, row);
   },
   // 行尾浮条（ADR-0010 修订）：鼠标快路径；复制格式跟随设置（ADR-0011 §1 defaultCopyFormat）
   onRowAction: (path: string, action: 'copy' | 'edit') => {
@@ -642,6 +642,15 @@ ctxMenu.addEventListener('click', (event: MouseEvent) => {
     void copyNodeToClipboard(path, format);
     return;
   }
+  // 子树批量展开 / 收起（#22 / ADR-0002 修订）：两个固定项，不按状态翻转文案
+  if (act === 'expand-subtree') {
+    void toggleSubtree(path, true);
+    return;
+  }
+  if (act === 'collapse-subtree') {
+    void toggleSubtree(path, false);
+    return;
+  }
   if (act === 'edit') void openEditor(path);
 });
 /** 菜单键盘（ADR-0010 §8）：↑/↓ 在可用项间循环、Home/End、Esc 关闭；Enter 由按钮原生触发。 */
@@ -683,6 +692,38 @@ async function toggleNode(path: string, open: boolean): Promise<void> {
     totalRows = reply.totalRows;
     rowSource.setRoot({ rootId, rowVersion, totalRows });
     rowSource.requestWindow();
+    updateStatus();
+  } catch (error) {
+    showError(error);
+  }
+}
+
+/**
+ * 子树批量展开 / 收起（#22 / ADR-0002 修订 / ADR-0010 修订）：
+ * core 负责语义与预算（`toggleSubtree`，超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` 且零部分修改）；
+ * app 只做「换版本 + 重取窗口 + 反馈」。
+ *
+ * 与 `applyExpandAll` 的关键差异：**不滚回顶部**——右键点的那一行就在视口里，
+ * 展开/收起只改变它下方的行，锚点（顶部行）内容不变，直接 `setRoot` 保持 scrollTop 即可。
+ * no-op（已全展开/已全收起）用 `rowVersion` 是否变化判定，给中性 info toast（与 #9 同口径）。
+ */
+async function toggleSubtree(path: string, open: boolean): Promise<void> {
+  if (!rootId) return;
+  // 树动作：原文视图下先切回树（与「全部展开 / 收起」一致）
+  if (isRawView()) await setViewMode('tree');
+  try {
+    const rowVersionBefore = rowVersion;
+    const reply = await core.toggleSubtree({ rootId, path, open });
+    if (reply.rowVersion === rowVersionBefore) {
+      showToast(open ? '其下所有子孙节点已经全部展开了' : '其下所有子孙节点已经全部收起了', 1800, 'info');
+      return;
+    }
+    rowVersion = reply.rowVersion;
+    totalRows = reply.totalRows;
+    rowSource.setRoot({ rootId, rowVersion, totalRows });
+    rowSource.requestWindow();
+    // 命中集按路径仍然有效（docRevision 未变），但新出现的行要重新带上命中标记
+    applySearchToTree();
     updateStatus();
   } catch (error) {
     showError(error);
@@ -1045,14 +1086,30 @@ document.addEventListener(
 );
 window.addEventListener('resize', () => closeExportMenu());
 
-function showContextMenu(path: string, x: number, y: number, kind: JsonKind): void {
+/**
+ * 弹树行右键菜单。`row` = 该行的窗口数据（kind / open / count / hasChildren），
+ * 菜单启用态一律以它为准（ADR-0010 修订 2026-11-09：#22 的子树项需要 count 判「有没有子孙」）。
+ */
+function showContextMenu(path: string, x: number, y: number, row: Row): void {
   ctxPath = path;
   ctxMenu.hidden = false;
-  // 启用规则（ADR-0010 §1）：容器没有原始值；根没有键名。其余项所有节点可用。
+  const kind = row.kind;
+  const isContainerKind = kind === 'object' || kind === 'array';
+  // 启用规则（ADR-0010 §1 / 修订 §启用规则）：容器没有原始值；根没有键名；子树项只在「有子孙的容器」上可用。
   setCtxItemDisabled(COPY_ACT.subtree, false);
   setCtxItemDisabled(COPY_ACT.path, false);
-  setCtxItemDisabled(COPY_ACT.value, kind === 'object' || kind === 'array', '容器没有原始值，请用「复制子树 JSON」');
+  setCtxItemDisabled(COPY_ACT.value, isContainerKind, '容器没有原始值，请用「复制子树 JSON」');
   setCtxItemDisabled(COPY_ACT.key, path === ROOT_PATH, '根节点没有键名');
+  const canSubtree = isContainerKind && row.count > 0 && path !== ROOT_PATH;
+  const subtreeWhy =
+    path === ROOT_PATH
+      ? '根节点请用工具栏「全部展开 / 全部收起」'
+      : isContainerKind
+        ? '该容器没有子节点'
+        : '只能展开容器节点';
+  const subtreeHint = '仅此子树（不含更上层）';
+  setCtxItemDisabled('expand-subtree', !canSubtree, subtreeWhy, subtreeHint);
+  setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('edit', false);
   const rect = ctxMenu.getBoundingClientRect();
   ctxMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
@@ -1110,7 +1167,11 @@ function enabledCtxItems(): HTMLButtonElement[] {
   return ctxItems().filter((item) => !item.disabled);
 }
 
-function setCtxItemDisabled(act: string, disabled: boolean, why?: string): void {
+/**
+ * 菜单项禁用态 + title：禁用时 `why` 说明原因；可用时 `hint` 说明作用域（如「仅此子树」），无 hint 则清空。
+ * 只碰树行菜单项，导出菜单的 `menuitemradio` 不走这里。
+ */
+function setCtxItemDisabled(act: string, disabled: boolean, why?: string, hint?: string): void {
   const item = ctxMenu.querySelector<HTMLButtonElement>(`[data-act="${act}"]`);
   if (!item) return;
   item.disabled = disabled;
@@ -1118,7 +1179,8 @@ function setCtxItemDisabled(act: string, disabled: boolean, why?: string): void 
     if (why) item.title = why;
     item.setAttribute('aria-disabled', 'true');
   } else {
-    item.removeAttribute('title');
+    if (hint) item.title = hint;
+    else item.removeAttribute('title');
     item.removeAttribute('aria-disabled');
   }
 }
@@ -2044,15 +2106,26 @@ if (!isExtension) {
     ctxOpen: (path: string, fallbackKind: JsonKind = 'object') => {
       const rowEl = treeHost.querySelector<HTMLElement>(`.row[data-path="${CSS.escape(path)}"]`);
       const rect = rowEl?.getBoundingClientRect();
-      // 与真实右键同源：优先取行 DOM 上的节点类型（row-renderer 写入），取不到才用调用方给的兜底
-      const kind = (rowEl?.dataset.kind as JsonKind | undefined) ?? fallbackKind;
-      showContextMenu(path, (rect?.left ?? 40) + 24, (rect?.top ?? 80) + 12, kind);
+      // 与真实右键同源：行数据来自 TreeView 的当前窗口缓存；不在窗口内才用行 DOM + 调用方兜底合成。
+      const info: Row = tree.rowInfo(path) ?? {
+        path,
+        depth: 0,
+        key: '',
+        idx: false,
+        kind: (rowEl?.dataset.kind as JsonKind | undefined) ?? fallbackKind,
+        preview: '',
+        count: 0,
+        open: false,
+        hasChildren: false,
+      };
+      showContextMenu(path, (rect?.left ?? 40) + 24, (rect?.top ?? 80) + 12, info);
       return {
         hidden: ctxMenu.hidden,
         items: ctxItems().map((item) => ({
           act: item.dataset.act ?? '',
           label: item.textContent ?? '',
           disabled: item.disabled,
+          title: item.title,
         })),
       };
     },

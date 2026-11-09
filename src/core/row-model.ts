@@ -363,6 +363,63 @@ export class RowModel {
     return { row: this.rowOfPath(path), changed: true, totalRows: this.totalRows };
   }
 
+  /**
+   * 子树批量展开 / 收起（#22 / ADR-0002 修订 2026-11-09）：作用域**只有**该容器子树。
+   *
+   * - open=true：本容器（若折叠）+ 子树内所有**非空**容器进 `expanded` 并建 Fenwick（与
+   *   `expandAll`/`rebuildAllOpen` 同口径，空容器不参与、手动开着的空容器复位）。子树外的展开态与
+   *   索引原样保留；祖先链只做**一次** delta 传播，不重建整模型、不逐节点 toggle。
+   * - open=false = 深度复位：子树内所有容器移出 `expanded`、释放索引，本节点折叠；
+   *   下次展开只剩一层（不恢复上次展开现场）。
+   * - 原子 + 预算：先 dry-run 数「子树全展开行数」，`totalRows + delta > rowBudget` 抛
+   *   `TOO_MANY_ROWS` 且**零部分修改**；dry-run 受 rowBudget 早停封顶。
+   * - changed 语义（可见结果口径，沿用 toggle/expandAll 纪律）：行数变了，或子树内有可见的空容器
+   *   open 标记被复位，才算 changed；已全展开 / 已全收起 / 根 / 空容器 / 不可见节点 → changed=false
+   *   （状态仍写入，只是无需推 rowVersion）。
+   */
+  toggleSubtree(path: Path, open: boolean): ToggleResult {
+    const chain = this.locateChain(path);
+    if (chain.length === 0) {
+      // 根永远 open；根子树操作与工具栏「全部展开/收起」重复 → no-op（与 toggle('$') 同款）
+      return { row: 0, changed: false, totalRows: this.totalRows };
+    }
+    const target = chain[chain.length - 1] as ChainEntry;
+    const node = target.node;
+    if (!isContainer(node)) {
+      throw new CoreError({ code: 'BAD_COMMAND', message: `toggleSubtree: not a container at ${path}` });
+    }
+    if (this.childCount(node) === 0) {
+      // 空容器：没有可展开内容，两个方向都按 no-op 处理（不制造行映射/版本抖动）
+      return { row: this.rowOfPath(path), changed: false, totalRows: this.totalRows };
+    }
+    const visible = this.rowOfPath(path) >= 0;
+
+    if (open) {
+      const currentSize = this.sizeOf(node);
+      // dry-run：目标「子树全展开」行数；limit = rowBudget 时返回值 > rowBudget 即「已超预算」
+      const subtreeRows = countAllExpandedRows(node, this.rowBudget);
+      const delta = subtreeRows - currentSize;
+      const next = this.totalRows + delta;
+      if (subtreeRows > this.rowBudget || next > this.rowBudget) throw this.tooManyRows(next);
+      // 预算内才写入：单趟迭代后序重建子树索引（不做逐节点 toggle）
+      const emptyReset = this.rebuildSubtreeOpen(node);
+      this.propagate(chain, chain.length - 1, delta);
+      return {
+        row: this.rowOfPath(path),
+        changed: visible && (delta !== 0 || emptyReset),
+        totalRows: this.totalRows,
+      };
+    }
+
+    // 深度复位：本节点 + 后代容器的展开态/索引/键缓存全部释放（本节点折叠）
+    const index = this.indexes.get(node);
+    const delta = index ? -index.total() : 0;
+    this.releaseSubtree(node);
+    this.propagate(chain, chain.length - 1, delta);
+    // 不可见节点 / 本节点本就折叠（只清了惰性标记）→ 可见结果没变
+    return { row: this.rowOfPath(path), changed: visible && delta !== 0, totalRows: this.totalRows };
+  }
+
   /** 展开 path 上所有祖先容器（不含自身）；预算不足则回滚并抛 TOO_MANY_ROWS。 */
   expandPath(path: Path): ExpandResult {
     const chain = this.locateChain(path);
@@ -566,6 +623,47 @@ export class RowModel {
         parent.sum += subtreeRows;
       }
     }
+  }
+
+  /**
+   * 只重建**子树内**的索引并置全展开（toggleSubtree(open=true) 的写入段；调用方已做预算检查）。
+   * 语义与 rebuildAllOpen 对齐：非空容器进 expanded 并按「子项可见行数」建 Fenwick；空容器不进
+   * expanded（曾被手动 toggle 开的空容器在这里复位，返回 true 让调用方判断 changed）。
+   * 单趟迭代后序：不用递归（深 JSON 不爆栈）；子树外的索引/展开态一概不碰。
+   */
+  private rebuildSubtreeOpen(subtree: Container): boolean {
+    let emptyReset = false;
+    const stack: BuildFrame[] = [buildFrameOf(subtree)];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1] as BuildFrame;
+      if (frame.slot < frame.count) {
+        const child = childAtSlot(frame);
+        frame.slot += 1;
+        if (isContainer(child)) {
+          const childCount = Array.isArray(child) ? child.length : Object.keys(child).length;
+          if (childCount > 0) {
+            this.expanded.add(child);
+            stack.push(buildFrameOf(child));
+            continue; // 父容器的该槽位在子帧结束时回填
+          }
+          // 空容器：1 行，且不进 expanded（没有可展开的内容，open=false 才符合语义）
+          if (this.expanded.delete(child)) emptyReset = true;
+        }
+        frame.sizes.push(1);
+        frame.sum += 1;
+        continue;
+      }
+      this.expanded.add(frame.container);
+      this.indexes.set(frame.container, new Fenwick(frame.sizes));
+      const subtreeRows = 1 + frame.sum;
+      stack.pop();
+      const parent = stack[stack.length - 1];
+      if (parent) {
+        parent.sizes.push(subtreeRows);
+        parent.sum += subtreeRows;
+      }
+    }
+    return emptyReset;
   }
 
   private tooManyRows(totalRows: number): CoreError {

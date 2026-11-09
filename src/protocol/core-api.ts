@@ -86,6 +86,8 @@ export interface CoreApi {
 
   window(req: WindowRequest): Promise<RowWindow>;
   toggle(req: ToggleRequest): Promise<EditReply>;
+  /** 子树批量展开/收起（#22 / ADR-0002 修订）：只作用于该容器子树，原子 + `ROW_BUDGET` 护栏 */
+  toggleSubtree(req: ToggleRequest): Promise<EditReply>;
   expandTo(req: { rootId: RootId; path: Path }): Promise<ExpandReply>;
   expandAll(rootId: RootId): Promise<EditReply>;
   collapseAll(rootId: RootId): Promise<EditReply>;
@@ -145,6 +147,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     cancelLoad: (loadId) => fire({ t: 'cancelLoad', loadId }),
     window: (req) => send({ t: 'window', ...req }),
     toggle: (req) => send({ t: 'toggle', ...req }),
+    toggleSubtree: (req) => send({ t: 'toggleSubtree', ...req }),
     expandTo: (req) => send({ t: 'expandTo', ...req }),
     expandAll: (rootId) => send({ t: 'expandAll', rootId }),
     collapseAll: (rootId) => send({ t: 'collapseAll', rootId }),

@@ -27,8 +27,8 @@ export interface TreeViewOptions {
   onSelect(path: string): void;
   /** 编辑意图（slice 5）：行双击 / F2。不提供时该入口静默不可用。 */
   onEdit?(path: string): void;
-  /** 行右键（slice 5 / ADR-0010）：app 负责弹菜单；上报路径、屏幕坐标与节点类型（菜单启用态用）。 */
-  onContextMenu?(path: string, x: number, y: number, kind: JsonKind): void;
+  /** 行右键（slice 5 / ADR-0010）：app 负责弹菜单；上报路径、屏幕坐标与**该行数据**（菜单启用态用）。 */
+  onContextMenu?(path: string, x: number, y: number, row: Row): void;
   /** 行尾浮条动作（ADR-0010 修订）：鼠标快路径 copy=子树 JSON / edit=弹层；未提供时按钮无动作。 */
   onRowAction?(path: string, action: 'copy' | 'edit'): void;
 }
@@ -182,10 +182,12 @@ export class TreeView {
     if (!rowEl) return;
     const path = rowEl.dataset.path;
     if (!path || !this.opts.onContextMenu) return;
+    // 只对当前窗口内的行开菜单：用行窗口数据（kind / open / count）判定启用态，
+    // 不再从行 DOM 反查（DOM 只有 data-kind，撑不起「有没有子节点 / 是否展开」）。
+    const row = this.findRow(path);
+    if (!row) return;
     event.preventDefault();
-    // 行 DOM 上带数据集里的节点类型（row-renderer 写入），避免 app 再查一遍行窗口
-    const kind = (rowEl.dataset.kind ?? 'null') as JsonKind;
-    this.opts.onContextMenu(path, event.clientX, event.clientY, kind);
+    this.opts.onContextMenu(path, event.clientX, event.clientY, row);
   };
 
   constructor(host: HTMLElement, opts: TreeViewOptions) {
@@ -341,6 +343,14 @@ export class TreeView {
   /** 用最近一帧快照重绘（搜索态/类型列等视图态变化，不重新请求窗口）。 */
   refresh(): void {
     if (this.lastSnapshot) this.render(this.lastSnapshot);
+  }
+
+  /**
+   * 当前窗口里某行的行数据（`kind`/`open`/`count`/`hasChildren`）；不在窗口内返回 null。
+   * 菜单启用态与 dev hook 都走这里，保证「菜单看到的行」与「右键的行」是同一份数据。
+   */
+  rowInfo(path: string): Row | null {
+    return this.findRow(path) ?? null;
   }
 
   /** 直接设置滚动容器的 scrollTop；浏览器随后触发 scroll 事件，由 app 层请求窗口。 */

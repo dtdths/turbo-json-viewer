@@ -128,6 +128,65 @@ try {
   Object.assign(report, phase1);
   await page.screenshot(path.join(SHOTS, 'expand-adaptive.png'));
 
+  // ---- phase 1.5：子树批量展开 / 收起（#22 / ADR-0002 修订 / ADR-0010 修订） ----
+  // 菜单驱动（真实 ctxOpen/ctxClick → 真实 core 命令）：语义 = 递归整棵子树；收起 = 深度复位。
+  const phase15 = await page.eval(`(async () => {
+    const out = {};
+    const { sleep, waitState } = window.__smoke;
+    const h = window.__tjv;
+    // 全展开 14 行：root + A,a1,x,y,a2,1,2,3,empty(9) + B,b1,z(3) + s(1)
+    const FIX = { A: { a1: { x: 1, y: 2 }, a2: [1, 2, 3], empty: {} }, B: { b1: { z: 9 } }, s: 'v' };
+    await h.loadText(JSON.stringify(FIX), 'subtree.json');
+    await sleep(500);
+    out.fixtureRows = h.state().totalRows;
+    await h.collapseAll();
+    out.collapsed = await waitState((s) => s.totalRows === 4, 5000);
+
+    const items = (menu) => (menu.items || []).map((i) => ({ act: i.act, disabled: i.disabled, title: i.title }));
+    out.menuRoot = items(await h.ctxOpen('$'));
+    out.menuScalar = items(await h.ctxOpen('$.s'));
+
+    // 展开 A 的整棵子树（A 已折叠的容器 + 所有非空子孙容器）
+    const rv0 = h.state().rowVersion;
+    out.menuA = items(await h.ctxOpen('$.A'));
+    out.expandClick = await h.ctxClick('expand-subtree');
+    out.expanded = await waitState((s) => s.totalRows === 12, 5000);
+    out.expandRvBumped = h.state().rowVersion > rv0;
+    out.nestedOpen = [...document.querySelectorAll('.row[data-path]')]
+      .filter((el) => ['$.A', '$.A.a1', '$.A.a2'].includes(el.dataset.path))
+      .map((el) => ({ path: el.dataset.path, expanded: el.getAttribute('aria-expanded') }));
+
+    // 已全展开 → 再点「展开所有子孙节点」= no-op（info toast + rowVersion 不变）
+    const rvNoop = h.state().rowVersion;
+    await h.ctxOpen('$.A');
+    out.noopClick = await h.ctxClick('expand-subtree');
+    await sleep(250);
+    out.noopRvKept = h.state().rowVersion === rvNoop;
+
+    // 收起 A 子树 = 深度复位（回 4 行）；再单层 toggle 展开只剩一层（7 行，不是 12 行）
+    await h.ctxOpen('$.A');
+    await h.ctxClick('collapse-subtree');
+    out.collapsedAgain = await waitState((s) => s.totalRows === 4, 5000);
+    await h.togglePath('$.A', true);
+    out.singleExpandRows = await waitState((s) => s.totalRows === 7, 5000);
+
+    // 子树外不受影响：展开 B 子树（6 行）→ 展开 A 子树（14 行）→ 收起 A 子树（6 行，B 仍展开）
+    await h.togglePath('$.A', false);
+    await waitState((s) => s.totalRows === 4, 5000);
+    await h.ctxOpen('$.B');
+    await h.ctxClick('expand-subtree');
+    out.bExpanded = await waitState((s) => s.totalRows === 6, 5000);
+    await h.ctxOpen('$.A');
+    await h.ctxClick('expand-subtree');
+    await waitState((s) => s.totalRows === 14, 5000);
+    await h.ctxOpen('$.A');
+    await h.ctxClick('collapse-subtree');
+    out.siblingKept = await waitState((s) => s.totalRows === 6, 5000);
+    return out;
+  })()`);
+  report.subtree = phase15;
+  await page.screenshot(path.join(SHOTS, 'expand-subtree.png'));
+
   // ---- phase 2：10MB 默认折叠 → 全展开（选中路径保留 + 滚回顶部） ----
   const phase2 = await page.eval(`(async () => {
     const out = {};
@@ -251,6 +310,14 @@ try {
     const toast = document.getElementById('toast');
     out.toastHidden = toast?.hidden ?? null;
     out.toastText = toast?.textContent ?? '';
+
+    // #22：50MB 的 $.data 子树同样走「总量 ≤ ROW_BUDGET」护栏 → 原子拒绝、零部分修改
+    out.subtreeMenu = await window.__tjv.ctxOpen('$.data');
+    out.subtreeBefore = window.__tjv.state();
+    out.subtreeClick = await window.__tjv.ctxClick('expand-subtree');
+    await sleep(1500);
+    out.subtreeAfter = window.__tjv.state();
+    out.subtreeToast = document.getElementById('toast')?.textContent ?? '';
     return out;
   })()`);
   report.budget = phase4;
@@ -329,6 +396,37 @@ const countBadgeOk =
   report.countAfterClick?.totalRows === 5 &&
   report.countAfterClick2?.totalRows === 4 &&
   report.countClickKeptSelection === true;
+// #22：子树批量展开 / 收起（菜单驱动；ADR-0002 修订 / ADR-0010 修订）
+const subtree = report.subtree ?? {};
+const ctxItemsOf = (menu) => (Array.isArray(menu) ? menu : (menu?.items ?? []));
+const findAct = (menu, act) => ctxItemsOf(menu).find((entry) => entry.act === act);
+const subtreeMenuOk =
+  findAct(subtree.menuA, 'expand-subtree')?.disabled === false &&
+  findAct(subtree.menuA, 'collapse-subtree')?.disabled === false &&
+  /仅此子树/.test(findAct(subtree.menuA, 'expand-subtree')?.title ?? '') &&
+  findAct(subtree.menuRoot, 'expand-subtree')?.disabled === true &&
+  findAct(subtree.menuRoot, 'collapse-subtree')?.disabled === true &&
+  findAct(subtree.menuScalar, 'expand-subtree')?.disabled === true &&
+  findAct(subtree.menuScalar, 'collapse-subtree')?.disabled === true;
+const subtreeExpandOk =
+  subtree.fixtureRows === 14 &&
+  subtree.collapsed?.totalRows === 4 &&
+  subtree.expanded?.totalRows === 12 &&
+  subtree.expandRvBumped === true &&
+  (subtree.nestedOpen ?? []).length === 3 &&
+  (subtree.nestedOpen ?? []).every((row) => row.expanded === 'true');
+const subtreeNoopOk =
+  /已经全部展开了/.test(subtree.noopClick?.toast ?? '') && subtree.noopRvKept === true;
+const subtreeDeepResetOk =
+  subtree.collapsedAgain?.totalRows === 4 && subtree.singleExpandRows?.totalRows === 7;
+const subtreeSiblingOk =
+  subtree.bExpanded?.totalRows === 6 && subtree.siblingKept?.totalRows === 6;
+const subtreeBudgetOk =
+  findAct(report.budget?.subtreeMenu, 'expand-subtree')?.disabled === false &&
+  /TOO_MANY_ROWS/.test(report.budget?.subtreeToast ?? '') &&
+  report.budget?.subtreeAfter?.totalRows === report.budget?.subtreeBefore?.totalRows &&
+  report.budget?.subtreeAfter?.rowVersion === report.budget?.subtreeBefore?.rowVersion;
+
 // #11 / ADR-0003 修订：>50MB 出现体积提示条（role=status、含「源文本」），关闭后隐藏；10MB 不出现
 const docWarnOk =
   report.docWarn10mbHidden === true &&
@@ -343,6 +441,11 @@ const checks = {
   'adaptive:collapse-expand-roundtrip': smallToggleOk,
   'expand-all:noop-toast': noopToastOk,
   'count-badge:click-expand-collapse': countBadgeOk,
+  'subtree:menu-contract': subtreeMenuOk,
+  'subtree:expand-all-descendants': subtreeExpandOk,
+  'subtree:noop-toast': subtreeNoopOk,
+  'subtree:collapse-deep-reset': subtreeDeepResetOk,
+  'subtree:sibling-untouched': subtreeSiblingOk,
   '10mb:collapsed-default': report.collapsed?.totalRows > 0 && report.collapsed?.totalRows < 500,
   '10mb:expand-all': expandOk,
   '10mb:selection-kept': selectionKept,
@@ -350,6 +453,7 @@ const checks = {
   '10mb:expand-no-flash-frame': expandNoFlashFrame,
   '10mb:collapse-no-flash-frame': collapseNoFlashFrame,
   '50mb:budget-reject': budgetRejectOk,
+  '50mb:subtree-budget-reject': subtreeBudgetOk,
   '50mb:doc-warn-bar': docWarnOk,
   'perf:no-long-task-no-console-error': perfOk,
 };

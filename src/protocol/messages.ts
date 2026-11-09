@@ -47,6 +47,8 @@ export type Command =
   | { t: 'cancelLoad'; loadId: number }
   | { t: 'window'; rootId: RootId; rowVersion: Rev; seq: number; start: number; count: number }
   | { t: 'toggle'; rootId: RootId; path: Path; open: boolean }
+  /* 子树批量展开/收起（#22 / ADR-0002 修订 2026-11-09）：作用域限定在该容器子树内，原子 + 预算护栏 */
+  | { t: 'toggleSubtree'; rootId: RootId; path: Path; open: boolean }
   | { t: 'expandTo'; rootId: RootId; path: Path }
   | { t: 'expandAll'; rootId: RootId }
   | { t: 'collapseAll'; rootId: RootId }
@@ -158,6 +160,7 @@ export interface ReplyByKind {
   cancelLoad: void;
   window: RowWindow;
   toggle: EditReply;
+  toggleSubtree: EditReply;
   expandTo: ExpandReply;
   expandAll: EditReply;
   collapseAll: EditReply;

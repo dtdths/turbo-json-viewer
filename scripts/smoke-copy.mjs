@@ -27,9 +27,25 @@ import { startStaticServer } from '../prototype/p1/lib/http.mjs';
 const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 await mkdir(SHOTS, { recursive: true });
 
-/** 固定菜单契约（ADR-0010 §1）：5 项、DOM 顺序即此顺序。 */
-const MENU_ACTS = ['copy-subtree', 'copy-path', 'copy-value', 'copy-key', 'edit'];
-const MENU_LABELS = ['复制子树 JSON', '复制路径', '复制原始值', '复制键名', '编辑此节点 JSON'];
+/** 固定菜单契约（ADR-0010 §1 / 修订 2026-11-09 #22）：7 项、DOM 顺序即此顺序。 */
+const MENU_ACTS = [
+  'copy-subtree',
+  'copy-path',
+  'copy-value',
+  'copy-key',
+  'expand-subtree',
+  'collapse-subtree',
+  'edit',
+];
+const MENU_LABELS = [
+  '复制子树 JSON',
+  '复制路径',
+  '复制原始值',
+  '复制键名',
+  '展开所有子孙节点',
+  '收起所有子孙节点',
+  '编辑此节点 JSON',
+];
 
 /**
  * 覆盖矩阵：标识符键 / 含点键 / 含撇号键 / 标量数组 + 对象数组元素 / 四种标量。
@@ -344,6 +360,31 @@ try {
     })()`,
   );
 
+  // ---- phase 6：#22 子树菜单项的启用态矩阵（空容器 / 标量 / 根）----
+  await runPhase(
+    'subtree-contract',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (typeof h?.ctxOpen !== 'function') return out;
+      // 小文档自适应展开：empty 空容器、obj 有子节点的容器、arr 数组容器、str 标量都可见
+      const doc = { empty: {}, obj: { k: 1 }, arr: [1, { n: 2 }], str: 'v' };
+      await h.loadText(JSON.stringify(doc), 'subtree-menu.json');
+      await sleep(600);
+      out.state = h.state();
+      const menu = async (path) => {
+        const res = await h.ctxOpen(path);
+        return { hidden: res.hidden, items: res.items };
+      };
+      out.menuObj = await menu('$.obj');
+      out.menuEmpty = await menu('$.empty');
+      out.menuScalar = await menu('$.str');
+      out.menuRoot = await menu('$');
+      return out;
+    })()`,
+  );
+
   // ---- 汇总：page 异常 / console error ----
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
@@ -409,6 +450,10 @@ const checks = {
     isEnabled(report.containerMenu, 'copy-key') &&
     isEnabled(report.containerMenu, 'copy-subtree') &&
     isEnabled(report.containerMenu, 'copy-path') &&
+    // #22：容器且有子节点 → 两个子树项可用，title 说明「仅此子树」
+    isEnabled(report.containerMenu, 'expand-subtree') &&
+    isEnabled(report.containerMenu, 'collapse-subtree') &&
+    /仅此子树/.test(item(report.containerMenu, 'expand-subtree')?.title ?? '') &&
     isEnabled(report.containerMenu, 'edit'),
 
   // 根也是对象容器：按 ADR-0010 §1「原始值仅标量」，复制原始值同样禁用
@@ -416,6 +461,9 @@ const checks = {
     report.rootMenu?.hidden === false &&
     isDisabled(report.rootMenu, 'copy-key') &&
     isDisabled(report.rootMenu, 'copy-value') &&
+    // #22：根上的子树项禁用（请用工具栏全部展开/收起）
+    isDisabled(report.rootMenu, 'expand-subtree') &&
+    isDisabled(report.rootMenu, 'collapse-subtree') &&
     isEnabled(report.rootMenu, 'copy-subtree') &&
     isEnabled(report.rootMenu, 'copy-path') &&
     isEnabled(report.rootMenu, 'edit'),
@@ -428,6 +476,9 @@ const checks = {
     isEnabled(report.arrayMenu, 'copy-key') &&
     isEnabled(report.arrayMenu, 'copy-subtree') &&
     isEnabled(report.arrayMenu, 'copy-path') &&
+    // #22：标量行没有可展开的子孙 → 两个子树项禁用
+    isDisabled(report.arrayMenu, 'expand-subtree') &&
+    isDisabled(report.arrayMenu, 'collapse-subtree') &&
     isEnabled(report.arrayMenu, 'edit'),
 
   'resolve:subtree-object':
@@ -439,6 +490,20 @@ const checks = {
     report.subtreeRoot?.text === SUBTREE_ROOT &&
     report.subtreeRoot?.bytes === bytesOf(SUBTREE_ROOT) &&
     report.subtreeRoot?.format === 'subtree',
+
+  // #22：子树两项的启用矩阵——有子节点的容器启用；空容器 / 标量 / 根禁用（title 说明原因）
+  'menu:subtree-enable-matrix':
+    isEnabled(report.menuObj, 'expand-subtree') &&
+    isEnabled(report.menuObj, 'collapse-subtree') &&
+    isDisabled(report.menuEmpty, 'expand-subtree') &&
+    isDisabled(report.menuEmpty, 'collapse-subtree') &&
+    /没有子节点/.test(item(report.menuEmpty, 'expand-subtree')?.title ?? '') &&
+    isDisabled(report.menuScalar, 'expand-subtree') &&
+    isDisabled(report.menuScalar, 'collapse-subtree') &&
+    /只能展开容器/.test(item(report.menuScalar, 'expand-subtree')?.title ?? '') &&
+    isDisabled(report.menuRoot, 'expand-subtree') &&
+    isDisabled(report.menuRoot, 'collapse-subtree') &&
+    /工具栏/.test(item(report.menuRoot, 'expand-subtree')?.title ?? ''),
 
   'resolve:path-canonical':
     report.pathDotKey?.text === PATHS.dotKey &&
