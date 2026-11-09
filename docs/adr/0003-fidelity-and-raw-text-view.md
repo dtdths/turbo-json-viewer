@@ -166,24 +166,27 @@
 
 - `load` 回包**完成后**，app 显式调新命令 **`fidelity { rootId }`**（不是事件、不是 `load` 内同步扫描）：
   首帧不等扫描，扫描失败/超时不影响已打开的文档。
-- Worker 内**单趟线性扫描源文本**（不重解析值图），每 **256 KB 让出一次事件循环**（`await`），
-  每段检查取消；换文档时 app 递增 `fidelitySeq` 丢弃迟到回包，Worker 侧按 `rootId` 校验。
+- Worker 内**单趟线性扫描源文本**（不重解析值图），每 **256K 字符让出一次事件循环**（宏任务，`MessageChannel`），
+  每段检查取消；换文档时 app 递增 `fidelitySeq` 丢弃迟到回包，Worker 侧按根对象身份校验。
 - **不显示「检查中」进度**（<300ms 量级）；扫描超时不额外处理（沿用 5s 命令超时兜底）。
-- 生命周期：报告只活在**当前文档会话内存**（`Root` 上，随文档替换丢弃），**不落盘**、不进 storage；
+- 生命周期：报告只活在**当前文档会话内存**（`DocService` 内 `WeakMap<Root, report>`，按根对象身份缓存；
+  根被替换/关闭即随对象回收），**不落盘**、不进 storage；
   编辑（临时修改）**不重扫**——失真针对源文本，源文本不变。
 
 ### 2. 检测范围（§2 的两级判定落地）
 
 | 类别 | 候选 | 精确判定 | 报告 `kind` |
 |---|---|---|---|
-| 大整数精度流失 | 整数字面量位数 > 15 | `BigInt(literal) !== BigInt(Number(literal))` | `number` / `reason:'precision'` |
+| 大整数精度流失 | 整数位数 > 15；**带指数**时看有效数字位数 > 15 | 整数：`BigInt(literal) !== BigInt(Number(literal))`；带指数：十进制规范化后与 `Number(lit).toExponential()` 的 `(digits, exp)` 比对（code review 收口：原实现漏了 `1234567890123456789e0`） | `number` / `reason:'precision'` |
 | 上溢 | 带指数且 `Number(lit)` 非有限 | `!isFinite(Number(lit))`（如 `1e400`） | `number` / `reason:'overflow'` |
 | 下溢 | 带指数且 `Number(lit)===0` 而有效数字非零 | 同上（如 `1e-400`） | `number` / `reason:'underflow'` |
-| 整数样式键重排 | 对象内出现数组下标样式的键（规范整数串且 < 2^32−1） | 去掉「整数键全部在前且升序」的无损情况；**键先按 JSON 转义解码**再判定 | `key-order` |
+| 整数样式键重排 | 对象内出现数组下标样式的键（规范整数串且 < 2^32−1） | 去掉「整数键全部在前且升序」的无损情况；**键先按 JSON 转义解码**；**重复下标键不参与顺序判定**（`{"1":a,"2":b,"1":c}` 的枚举顺序仍是 `1,2`，真损失是重复键吞并 → 不报 key-order） | `key-order` |
 
 - **不检测（v1 已知差距）**：高精度**小数**（`0.1234567890123456789`）——ADR §2 的 BigInt 精确法不适用，
   用字符串往返比较会引入格式误报；重复键 / `-0` / 孤立代理项仍只记录不标记（§4 不变）。
-- 命中顺序 = 源文本出现顺序；报告只留**前 100 条**片段（`FIDELITY_MAX_HITS`），`truncated` 标明截断。
+- 命中顺序 = **源文本顺序最靠前**的 `FIDELITY_MAX_HITS`（100）条；`counts` 全量、`truncated` 标明截断。
+  实现上按 offset 有序插入并淘汰最大 offset（code review 收口：原先「先按发现顺序截断、最后排序」会漏掉
+  「对象 `{` 靠前、但直到 `}` 才产出」的键序命中）。
 
 ### 3. 报告形状
 
@@ -195,9 +198,17 @@ interface FidelityHit {
   reason?: 'precision' | 'overflow' | 'underflow'; // kind==='number'
   literal?: string; parsed?: string;               // 「原文 vs 解析后」对照（截断）
 }
+interface FidelityCounts {
+  number: number;      // = precision + overflow + underflow
+  precision: number;   // 大整数精度流失
+  overflow: number;    // 1e400 → Infinity
+  underflow: number;   // 1e-400 → 0
+  keyOrder: number;    // 整数样式键重排（每对象最多 1 条）
+  total: number;       // = number + keyOrder
+}
 interface FidelityReport {
   status: 'none' | 'found' | 'skipped';
-  counts: { number: number; keyOrder: number; total: number };
+  counts: FidelityCounts;
   hits: FidelityHit[];                             // ≤100
   truncated: boolean;
   scanMs: number;
@@ -221,6 +232,24 @@ interface FidelityReport {
 - **性能**：合成 50MB **≈330ms / 199 次让出**（ADR 估 288ms，同量级）；10MB 在 Chrome Worker 内 **scanMs ≈48ms**。
 - **偏差 1（已采纳）**：`status:'skipped'` 只在类型里预留——取消语义是回包 `CANCELLED`（与 load/search 同口径），core 不会产出 `skipped`。
 - **偏差 2（已采纳）**：**超长纯整数**（如 400 位）按 `overflow` 报：`JSON.parse` 同样把它改写成 `Infinity`，不报会漏；ADR 表格里 overflow 的候选只写了「带指数」，实现按「结果非有限」判定。
-- **偏差 3（已采纳）**：重复的整数样式键（`{"1":a,"1":b}`）**不算**键序损失（比较用严格 `<`）：JSON.parse 在这种输入里键序其实没变，可见损失是重复键吞并（§4 另一类）。
+- **偏差 3（已采纳，2026-11-09 二次收口）**：**重复的整数样式键不参与键序判定**（`{"1":a,"2":b,"1":c}` 的枚举顺序仍是 `1,2`）。
+  首版只用了严格 `<`，仍会把 `1,2,1` 报成键序回退；code review 后改为「只让首次出现的下标键参与顺序判定」，
+  重复键吞并留给 §4 的「只记录不标记」类。单对象已见下标键集合上限 `FIDELITY_KEY_TRACK_MAX=4096`——
+  超过后放弃重复键追踪（超大数组样式对象的已知边界）。
 - **回归修复（重要）**：让出必须用**宏任务**。最初默认 `await Promise.resolve()`（微任务）不会让 Worker 处理排队的命令，整段扫描期间窗口/大纲/搜索被卡住——实测 10MB 时大纲 expand 从 **1ms 退化到 34ms**（`smoke-outline` 52/53 红）。改为共享 `MessageChannel` 宏任务让出（`macroYield()`，避开 `setTimeout(0)` 连续调用 5 次后的 ~4ms 钳制）后回到 1ms 级，`smoke-outline` 复绿。
-- **验收**：`smoke-fidelity` **24/24**（新增套件，`npm run smoke:fidelity`）；单测 **480/480**（+40：`core/fidelity` 32 / `doc-service` 8）。
+- **验收**：`smoke-fidelity` **24/24**（新增套件，`npm run smoke:fidelity`；截图检查改为真断言文件存在）；单测 **486/486**（`core/fidelity` 38 / `doc-service` 97）。
+
+### 6. code review 收口（2026-11-09，Standards / Spec 双轴）
+
+- **`DocumentMeta.fidelity` 是票的初估，未采纳**（显式登记为偏差）：报告改为 `fidelity {rootId}` 命令 + `DocService` 的
+  `WeakMap<Root, report>` 缓存 + app 会话变量，`LoadReply.meta` 形状不动——理由是扫描在首帧之后，`meta` 里装不下
+  「后到的报告」，而给 `load` 加事件/二次回包会把协议复杂化。§1 已按此写；本条是**与票内初估的显式偏离**。
+- **文案按类别拆开**（用户可见的正确性修复）：`counts` 新增 `precision`/`overflow`/`underflow`，保真条不再把上溢/下溢
+  标成「大整数精度」（原实现 `counts.number` 统一标「大整数精度 N 处」，与「精确数量」的本意冲突）。
+- **带指数的尾数精度**纳入检测（`1234567890123456789e0`、`1.23456789012345678e18`）：用十进制规范化比对，
+  仅对有效数字 >15 位的候选做，成本可忽略；**高精度小数仍不检测**（§2 差距不变）。
+- **截断改为「源顺序最靠前」**：按 offset 有序插入 + 淘汰最大 offset，内存恒为 100 条；修掉「键序命中晚产出被挤掉」。
+- **57→2 口径自动化**：新增单测「57 个 >15 位数字里 55 个可精确表示、2 个不可 → counts.number=2」（不依赖未跟踪的 `.mock` 样本）。
+- **文档/常量同步**：README §3 模块清单补 `fidelity`/`FidelityCounts`/`shared/timing`；`build-and-test` 目录树把
+  `fidelity.ts` 从 `import/` 挪出；`seams` 的 `CANCELLED` 行补 fidelity 来源；`FIDELITY_YIELD_CHARS` 改名（原 `_BYTES` 名不副实）；
+  `now`/`roundMs` 抽到 `shared/timing`。

@@ -76,7 +76,7 @@ export interface CoreTransport {
 | `expandTo` | `ExpandReply(rootId, rowVersion, row, totalRows)` | 只展开祖先链（不 toggle 目标自身）；`row` 为展开后行号，跳转用 |
 | `getNodeJson` / `getTrail` | `NodeJsonReply(text, bytes, nodes)` / `TrailReply(MapTrail)` | ≤5MB 否则 `TOO_LARGE`；O(depth)、兄弟 ±2（ADR-0007） |
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
-| `fidelity` | `FidelityReply(rootId, docRevision, report)` | **只读**、不推版本；扫描 worker 内保留的源文本（单趟线性、每 256KB 让出、可取消）；报告按根对象身份缓存（编辑不重扫）；文档替换 → `CANCELLED`；报告只留 ≤100 条片段（ADR-0003 修订 2026-11-09 / #23） |
+| `fidelity` | `FidelityReply(rootId, docRevision, report)` | **只读**、不推版本；扫描 worker 内保留的源文本（单趟线性、每 256K 字符让出（宏任务）、可取消）；报告按根对象身份缓存（编辑不重扫）；文档替换 → `CANCELLED`；报告只留 ≤100 条片段（ADR-0003 修订 2026-11-09 / #23） |
 | `stats` | `StatsReply(rootId, docRevision, rowVersion, totalRows)` | 只读版本/行数快照，不推进任何版本 |
 | `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | `RawMeta(mode,totalLines,chars,maxLineLength,buildMs?,damaged?)` / `RawWindow(seq,start,lines,totalLines,mode,truncated?)` / `RawLocateReply(line,totalLines)` / `RawSourceReply(text,bytes)` | 只读、不推版本；首调惰性建索引；行文本 ≤4096 字符；`rawSource` 超 `maxBytes` 抛 `TOO_LARGE`（ADR-0003 修订） |
 | `outline` | `OutlineReply(rootId, path, kind, total, start, children[OutlineChild])` | 只读、不推版本；按容器**按需分页**（`OUTLINE_PAGE=200` / 上限 500），不建树、不缓存、不依赖树展开态；scalar 路径回 `total:0`（ADR-0013） |
@@ -274,7 +274,7 @@ export interface CodeEditor {
 | `TOO_MANY_ROWS` | `core`（`toggle` 触及 1,000,000 行软预算） | reply error（携带 `totalRows`） | `view` 拒绝展开 + 护栏提示「仅展开前 10 万项 / 先在表达式里过滤」 |
 | `PARSE` | `core`（`load`/`replaceNode` 的 parse） | reply error（line/column/message） | 编辑器错误行 + Apply 禁用；`load` 时提示无法解析 |
 | `TIMEOUT` / `WORKER_CRASH` | `app`（S1 `CoreTransport`/`onerror`） | 单请求 reject / 全部 pending reject | 超时：`window`/`getTrail` → S2 降级 stale，其余 toast；崩溃：重建 worker 并提示「查看器已恢复，请重新导入」 |
-| `CANCELLED` | `core`/`app`（被新 `load` 抢占） | reply error | 按 `loadId` 静默丢弃，无 UI |
+| `CANCELLED` | `core`/`app`（被新 `load` 抢占；`fidelity` 扫描中根被替换/关闭） | reply error | load 按 `loadId`、fidelity 按 `fidelitySeq`+rootId 静默丢弃，无 UI |
 | `BAD_PATTERN` | `core`（`search` 的正则模式：语法错 / 超 `SEARCH_PATTERN_MAX` / 灾难性回溯筛查，ADR-0014） | reply error（`message` 已是面向用户的中文） | 搜索面板**内联错误行**（`role=alert` + 输入框 `aria-invalid`）+ 结果/树高亮清空；**不弹 toast**、不算「无命中」 |
 
 原则：**错误在离真相最近的一层产生、在离用户最近的一层展示**——`core` 只说哪条规则不满足，`viewmodel` 决定丢弃还是降级，`view` 决定文案与可操作项；`window`/`getTrail` 超时降级为 stale 等下一次滚动，其余重试一律由用户显式触发（重搜/重跑/重新导入）。

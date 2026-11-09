@@ -43,14 +43,16 @@ turbo-json-viewer/
 │   │   ├── root-store.ts     #   多根注册表（doc/expr:N/repaired，LRU 3）
 │   │   ├── row-model.ts      #   per-open Fenwick、窗口下潜、toggle、增量替换
 │   │   ├── identity.ts       #   懒 id + (parent, slot) 句柄；不建 parentMap
-│   │   ├── import/           #   pipeline / repair / fidelity（BigInt 精确判定）
+│   │   ├── import.ts         #   导入管线：decode → JSON.parse → 截断修复接入
+│   │   ├── repair.ts         #   截断闭合（只语法层，ADR-0004）
+│   │   ├── fidelity.ts       #   源文本保真扫描：BigInt 精确判定 + 整数键重排（#23）
 │   │   ├── search.ts         #   全文档扫描 → 命中集（不建根）
 │   │   ├── expr/             #   acorn + 白名单 walker + 预算
 │   │   ├── edit-history.ts   #   replaceNode 的 undo/redo/reset（深度 100）
 │   │   ├── trail.ts          #   选中 → MapTrail（O(depth)，兄弟 ±2）
 │   │   ├── copy.ts           #   子树 JSON / 路径 / 原值 / 键名
 │   │   └── profile.ts        #   Document Profile 采样（异步、不阻塞首帧）
-│   └── shared/               # 纯工具（零依赖）：path parse/format、i18n、assert
+│   └── shared/               # 纯工具（零依赖）：path、json-lex、window、num、timing
 ├── tests/
 │   ├── unit/                 # 按层镜像 src：core / viewmodel / protocol / shared
 │   ├── contract/             # CoreTransport 共享用例 + 两种适配器跑法
