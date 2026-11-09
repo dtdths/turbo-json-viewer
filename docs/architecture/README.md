@@ -48,7 +48,7 @@
 
 | module | 职责 | 接口（一句话） |
 |---|---|---|
-| `messages` | 主↔Worker 判别联合：`load/window/toggle/expandTo/replaceNode/getNodeJson/getTrail/search/cancelSearch/stats/eval/copy/rawOpen/rawWindow/rawLocate/rawSource/undo/redo/reset/profile/cancelLoad/expandAll/collapseAll/exportDoc/copyNode/outline` + 回包/事件 | `type Command` / `type Reply` / `type Event` |
+| `messages` | 主↔Worker 判别联合：`load/window/toggle/toggleSubtree/expandTo/replaceNode/getNodeJson/getTrail/search/cancelSearch/stats/eval/copy/rawOpen/rawWindow/rawLocate/rawSource/undo/redo/reset/profile/cancelLoad/expandAll/collapseAll/exportDoc/copyNode/outline`（26 条）+ 回包/事件 | `type Command` / `type Reply` / `type Event` |
 | `types` | `Row`、`RowWindow`、`RawMeta`、`RawWindow`、`OutlineChild`/`OutlineReply`、`MapTrail`、`NodeHandle`、`Path`、`DocumentProfile`、`RepairProvenance` | 纯类型 |
 | `versions` | `docRevision` / `rowVersion` / `seq` 的语义与校验谓词；`RAW_CP_EVERY` / `RAW_MAX_LINE_LENGTH` / `RAW_LINE_DISPLAY_MAX` / `OUTLINE_PAGE` / `OUTLINE_PAGE_MAX` | `isStaleRow(a,b): boolean` |
 | `errors` | 错误码：`STALE_ROW`/`STALE_ROOT`/`STALE_DOC`/`TOO_LARGE`/`TOO_MANY_ROWS`/`PARSE`/`TIMEOUT`/`WORKER_CRASH`/`CANCELLED` | 判别联合的 error variant |
@@ -61,7 +61,7 @@
 |---|---|---|---|
 | `DocService` | 唯一门面：持有 RootStore、路由命令、维护版本、广播事件 | `CoreApi`（见 seams S1） | 15+ 条协议、多根、LRU、编辑历史、取消语义都藏在门面后 |
 | `RootStore` | 多根注册表：`doc` / `expr:N` / `repaired`，`docRevision`/`rowVersion`、表达式根 LRU 3 | 已实现 `get/require/ids/values/put/touch/delete/clear`；**`release`/`markStale` 仍是草案**（多文档需补 `close`，见 §12、ADR-0009） | 根坐标与生命周期 |
-| `RowModel` | 可见行模型：per-open 容器 Fenwick、窗口下潜、toggle、replaceNode 增量更新、path↔行号 | `window/toggle/replaceNode/rowOfPath/totalRows` | 固定行高坐标、O(depth·log n) |
+| `RowModel` | 可见行模型：per-open 容器 Fenwick、窗口下潜、toggle、**子树批量 toggle（#22）**、replaceNode 增量更新、path↔行号 | `window/toggle/toggleSubtree/replaceNode/rowOfPath/totalRows` | 固定行高坐标、O(depth·log n)；子树操作单趟后序重建、原子预算 |
 | `identity` | 懒 id（容器）+ `(parent, slot)` 标量句柄；路径⇄句柄；不建全局 parentMap | `idOf/handleAt/pathOf` | 双格式（路径持久化、id 运行期） |
 | `ImportPipeline` | `arrayBuffer`→`TextDecoder`→`JSON.parse`；截断闭合+provenance；**源文本保留**（ADR-0003 修订） | `load(input): LoadResult { value, meta, text }` | 源文本留给原文视图/复制原文 |
 | `RawText` | 原文行索引三模式（source/pretty/plain）+ 检查点 + `locate`；惰性构建、不物化全文 | `buildRawIndex(text,{damaged})` / `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | 每 2048 行一个检查点（50MB 19.5KiB）；窗口 p95 0.084ms |
@@ -215,7 +215,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件 + 保真提示）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件 + 保真提示 + 技术债 T2 + 子树批量展开/收起）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -233,9 +233,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.4 大纲面板（ADR-0013 / #24，2026-11-03） | ✅ | `core/outline.ts`（`outlinePage` 纯函数：容器子项**按需分页**、clamp、标量回空、`appendKey/appendIndex` 路径；不建树/不缓存）+ `DocService.outline`（只读、不推版本，`rowModel.valueAt` 解析路径 → `BAD_COMMAND`）；`viewmodel/outline-state.ts`（每容器页缓存 + 展开集合 + 脏标记扁平化 + epoch 丢弃迟到回包 + 单飞 + `computeOutlineWindow`）；`view/panels/outline-panel.{ts,css}`（行池虚拟列表、行高跟随设置、overscan 6、caret/行点击/键盘 ↑↓←→/Enter/Home/End、`role=tree`/`treeitem`、分页哨兵、`#outlineEmpty`/`#outlineFoot`）；活动栏第 3 模式 + `UiState.panel` 持久化；`jumpToPath` 从 `gotoHit` 抽出（搜索/大纲共用跳转链路）；编辑（`docRevision` 变化）→ 回根展开；**单测 410**（+56：outline core 12 / doc-service 12 / outline-state 32）；冒烟 `smoke-outline` **53/53**（含 10MB 性能、键盘翻页、大文档 expandTo/居中、行高跟随、关闭重开、0 长任务） |
 | 6.5 搜索选项 `Aa`/正则 + 导入体积提示 + `#9` 两小件（ADR-0014 / #10 #11 #9，2026-11-09） | ✅ | `core/search.ts`：`opts.regex` 模式（`new RegExp`、`Aa` → `i` flag）、`SEARCH_PATTERN_MAX=256` 长度守卫、灾难性回溯静态筛查（只拒**外层无界重复量词**，`(a+)+` 拒 / `(foo|bar)+` 放行）、`BAD_PATTERN` 错误码；子串路径零改动。`viewmodel/search-state.ts`：`begin(query, opts)` 快照 + `markPatternError(message)`（置错清结果回 idle）。`view/panels/search-panel.{ts,css}`：`#searchCase`/`#searchRegex` 两个 `aria-pressed` 切换（Tab 顺序在查询框后）、`#searchPatternError` 内联错误行（`role=alert`、输入框 `aria-invalid`）。`app/main.ts`：`searchOpts` 为唯一会话态（切换即重跑、**不持久化**）、`BAD_PATTERN` → 内联错误（不弹 toast）。**导入体积提示**：`LARGE_DOC_WARN_BYTES=50_000_000` + `#docWarnBar`（32px warn 条、`role=status`、可关闭只关条、换文档按新 `meta.bytes` 重新判定、十进制 MB 文案；**不阻断导入、不加协议字段**）。**#9 两小件**：树行项数标 `.row__count.is-clickable`（点击 = toggle、不改选中、不进 Tab 序列、双击不误触编辑）+ 「全部展开/收起」no-op → info toast 且不换版本。**单测 440**（+30：search core 32 / search-state 48）；冒烟 `smoke-search` **94/94**（+12）、`smoke-expand` **14/14**（+3） |
 | 6.6 保真提示（#23 / ADR-0003 修订 2026-11-09） | ✅ | `core/fidelity.ts`（**新建**：单趟 charCode 扫描源文本，无递归/无逐字符正则；字符串整段跳过；对象键**先解 JSON 转义**再判下标样式；整数 >15 位用 `BigInt(lit) !== BigInt(Number(lit))` 精确判定，另报 `1e400` 上溢 / `1e-400` 下溢；每 256K 字符让出事件循环（宏任务）、可取消；只留前 100 条片段 + 全量 `counts`）+ `DocService.fidelity`（**只读**、不推版本；`WeakMap<Root, report>` 按根身份缓存 = 编辑不重扫；文档替换 → `CANCELLED`）+ 协议 `fidelity {rootId}` / `FidelityReply` / `FidelityHit|FidelityReport`；app 侧 `requestIdleCallback`（2s 兜底）首帧后拉取 + `fidelitySeq`+rootId 丢弃迟到回包 + 第三条 32px 保真条 `#fidelityBar`（精确数量文案、「查看原文」= 切原文 + `rawLocate(hits[0].offset)` + 行 flash，与修复 `at` 同一链路；`×` 只关条）；dev hooks `fidelityState/fidelityJump/fidelityClose`；**code review 收口（2026-11-09）**：`counts` 按类别拆 `precision/overflow/underflow`（文案不再把上溢/下溢标成「大整数精度」）、带指数尾数精度纳入检测（十进制规范化比对）、重复下标键不参与键序判定、截断改为「源顺序最靠前 100 条」（有序插入 + 淘汰最大 offset）、`now/roundMs` 抽 `shared/timing`、`FIDELITY_YIELD_CHARS` 改名、冒烟截图检查改为真断言；**第二轮技术债清理**：两条提示条抽 `view/panels/notice-bar.ts` + `.noticebar*` CSS、`Frame` 改判别联合、删掉永不产出的 `skipped` 字段、去掉 Middle Man；**单测 486**（fidelity 38 / doc-service 8 追加）；冒烟 `smoke-fidelity` **24/24**（新增；含与修复条并存层序、10MB 首帧/0 长任务） |
+| 6.7 子树批量展开/收起（#22 / ADR-0002 修订 + ADR-0010 修订 2026-11-09） | ✅ | `RowModel.toggleSubtree`（**新建**：展开 = 本节点 + 子树内所有**非空**容器进 `expanded` 并建 Fenwick（与 `expandAll` 同口径），**单趟迭代后序只重建子树索引**、祖先链一次 `propagate`，子树外状态不动；收起 = **深度复位**（子树容器全出 `expanded`、释放索引，下次展开只剩一层）；dry-run `countAllExpandedRows(子树, rowBudget)` → 超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` **零部分修改**；根/空容器 no-op、标量 `BAD_COMMAND`；只有可见结果变化才 `changed`（不可见惰性复位不推版本）；2000 层不爆栈）+ `DocService.toggleSubtree`（changed 才推 `rowVersion`、`docRevision` 不变）+ 协议 `toggleSubtree {rootId,path,open}`（**26 条命令**）；右键菜单 5 → **7 项**（复制组 / ── / 展开所有子孙节点 / 收起所有子孙节点 / ── / 编辑），启用态按行窗口数据（`TreeView.onContextMenu` 改传整行 `Row`、新增 `rowInfo(path)` 给 dev hook 共用，不再从 DOM 反查 `data-kind`），`title` 写「仅此子树」/禁用原因；app 接线 `toggleSubtree()`：**不滚回顶部**（保持锚点与选中，与「全部展开」的 Q7 回顶不同）、no-op 给 info toast、原文视图下先切回树；**单测 581**（row-model +17 / doc-service +3 / 契约 +1×2 适配器）；冒烟 `smoke-expand` **20/20**（新增 6 项：菜单契约 / 递归展开 / no-op / 深度复位 / 兄弟子树不受影响 / 50MB 子树预算原子拒绝）、`smoke-copy` **28/28**（菜单 7 项顺序 + 空容器·标量·根启用矩阵） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **30.8KB gz**（预算 45；slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取）、T2 技术债清理 +0.4（`view/highlight` 共用写入器 + `focusTree`/拖放区接线））、`worker.js` **14.9KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数）/ T2 `core/measure` 下界预扫 +0.3）、`page.css` **7.3KB gz**（T2 +0.0）；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **31.1KB gz**（预算 45；slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取）、T2 技术债清理 +0.4（`view/highlight` 共用写入器 + `focusTree`/拖放区接线）、slice 6.7 子树菜单 +0.3）、`worker.js` **15.2KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数）/ T2 `core/measure` 下界预扫 +0.3 / slice 6.7 `toggleSubtree` +0.3）、`page.css` **7.3KB gz**（T2 +0.0、6.7 +0.0）；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -352,12 +353,24 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **回归 / 收口**：新增的保真扫描改变了 Worker 的让出语义 → 发现并修复「微任务让出把 Worker 卡住」的回归（10MB 时大纲 expand 1ms → **34ms**；改宏任务让出后回 1ms 级，`smoke-outline` 53/53 复绿）；另按双轴 code review 收口（见上）→ 单测 **486/486**。
 - **体积**：`page.js` 29.6→**30.2KB gz**（+0.6：第三条提示条 + app 接线）、`worker.js` 12.4→**13.9KB gz**（+1.5：扫描器）、`page.css` 7.3（+0.0）；无新增依赖。
 
-**复跑**：`npm run check`（tsc + vitest + build）+ 13 套冒烟：`npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs && node scripts/smoke-fidelity.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。当前口径：**23 个测试文件 / 559 单测**（含 `tests/contract` 契约套件）+ 13 套冒烟。
+**slice 6.7 验收**（2026-11-09，CfT headless 1440×900；`smoke-expand` **20/20**、`smoke-copy` **28/28**）：
+
+- **菜单契约**：7 项固定顺序（复制 4 / 分隔 / 展开所有子孙节点 / 收起所有子孙节点 / 分隔 / 编辑）；启用矩阵 = 有子节点的非根容器可用、标量 / 空容器 `{}` / 根禁用（`title` 分别写「只能展开容器节点」/「该容器没有子节点」/「根节点请用工具栏『全部展开 / 全部收起』」）；可用项的 `title` = 「仅此子树（不含更上层）」。
+- **递归展开**（fixture 全展开 14 行）：折叠到 4 行 → 右键 `$.A` →「展开所有子孙节点」→ **12 行**、`rowVersion` +1、`$.A`/`$.A.a1`/`$.A.a2` 的 `aria-expanded` 全 `true`（空容器 `$.A.empty` 不参与）。
+- **no-op**：已全展开再点 → info toast「其下所有子孙节点已经全部展开了」、`rowVersion` 不变（不制造无意义换版本）。
+- **深度复位**：收起子树 → 回 4 行；再**单层** toggle `$.A` → **7 行**（不是 12 行，证明没有恢复上次展开现场）。
+- **子树外不受影响**：展开 `$.B` 子树（6 行）→ 展开 `$.A`（14 行）→ 收起 `$.A` → **6 行**且 B 子树仍展开。
+- **预算原子拒绝**：50MB 的 `$.data` 菜单可用 → 点击「展开所有子孙节点」→ `TOO_MANY_ROWS` toast；`totalRows`/`rowVersion` 与点击前一致（零部分修改）。
+- **视口 / 选中**：不滚回顶部（与「全部展开」的 Q7 不同）；选中路径保留；0 长任务、0 console error。
+- **体积**：`page.js` 30.8→**31.1KB gz**（+0.3）、`worker.js` 14.9→**15.2**（+0.3）、`page.css` 7.3（+0.0）；无新增依赖。
+
+**复跑**：`npm run check`（tsc + vitest + build）+ 13 套冒烟：`npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs && node scripts/smoke-fidelity.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。当前口径：**23 个测试文件 / 581 单测**（含 `tests/contract` 契约套件 37 条）+ 13 套冒烟（`smoke-expand` 20、`smoke-copy` 28）。
 
 **技术债清理 T2（2026-11-09 第二批，纯 refactor/无新功能）**：① 搜索高亮两份实现合一 + Unicode 大小写折叠修正（`shared/highlight` + `view/highlight`）；② 删死 API `RowRenderer.setHit`、`DomRowPool` 单一构造；③ `CoreTransport` 契约测试落地（InProcessCore vs WorkerTransport+FakeWorker 共用一份用例）+ `WORKER_CRASH`/`CLOSED` 崩溃收口 + 修掉「事件 ctrl+win 双投递 ×2」（`worker.ts` 事件只走 ctrl）；④ `getNodeJson` 5MB 守卫改「下界预扫早停 → 再精确判据」（`core/measure`）；⑤ CM6 EOF 诊断非空范围；⑥ a11y 骨架清理（`#tree`/`#dropzone` 去掉假语义，`role=tree` 单一真相在内层 `.tjv-tree`，焦点路径统一走 `main.ts` 的 `focusTree()`）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现 + 2026-11-09 T2 清账，均非 slice 4 回归，按优先级进 backlog）：
 
+- 子树批量展开/收起（slice 6.7 / #22）：入口**只有右键菜单**（无快捷键、无行尾浮条入口 —— Q3/Q14 拍板）；展开是**全深度**语义（与单层 `toggle` 不同，别在别处按「一层」复用）；`changed` 只看**可见结果**——祖先折叠时写入的内部状态不推 `rowVersion`（UI 不可达）；菜单新项与分隔线的观感并入 **#21** 统一走查（本 slice 只加最小必要样式）；50MB 的子树预算拒绝已验，但未做「50MB 全深度展开」的耗时基准（预算护栏使其不可达）。
 - ~~行高真值仍是常量 / `RowMetricsSource` 未实现~~ → **已实现**（ADR-0011 §6：`TreeView.setRowHeight` + `--row-h` + `RowWindowSource.setMetrics`，设置面板可选 20/22/24/26）。
 - ~~`ThemeState` / `PanelState` / `ViewStateStore` 未接线~~ → **已接线**（ADR-0011：`SettingsState` 承担主题 + 8 项设置 + 布局态，经 `ViewStateStore` 持久化）；未单独建 `ThemeState`/`PanelState` 类。
 - ~~`RowRenderer.setHit` 与 seams §4 接口漂移（TreeView 实际走 `RowContext.hit`）；`DomRowPool` 双构造重载无第二个调用点~~ → **已清**（2026-11-09 T2：删死 API `setHit`，`DomRowPool` 收敛为 `(host, opts?)` 单一构造）。

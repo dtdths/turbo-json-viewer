@@ -28,6 +28,7 @@
 export interface CoreApi {
   load(i: LoadInput): Promise<LoadedReply>;        cancelLoad(loadId: number): void;   // 新 load 抢占旧 load
   window(r: WindowRequest): Promise<WindowReply>;  toggle(r: ToggleRequest): Promise<EditReply>;  // rowVersion++
+  toggleSubtree(r: ToggleRequest): Promise<EditReply>;  // 子树批量展开/收起（#22）：原子 + ROW_BUDGET
   expandTo(r: { rootId: RootId; path: Path }): Promise<ExpandReply>;  // 展开祖先链、返回行号（跳转）
   replaceNode(r: ReplaceRequest): Promise<EditReply>;  getNodeJson(r: NodeRef): Promise<NodeJsonReply>;  // ≤5MB
   getTrail(r: NodeRef): Promise<TrailReply>;       search(r: SearchRequest): Promise<SearchReply>;     // O(depth) / 不建 root
@@ -48,6 +49,7 @@ export type Command =
   | { t:'cancelLoad'; loadId:number }
   | { t:'window'; rootId:RootId; rowVersion:Rev; seq:number; start:number; count:number }
   | { t:'toggle'; rootId:RootId; path:Path; open:boolean }
+  | { t:'toggleSubtree'; rootId:RootId; path:Path; open:boolean }   // 子树内所有非空容器批量 open / 深度复位
   | { t:'expandTo'; rootId:RootId; path:Path }
   | { t:'replaceNode'; rootId:RootId; path:Path; docRevision:Rev; jsonText:string }
   | { t:'getNodeJson'|'getTrail'; rootId:RootId; path:Path|null }
@@ -73,6 +75,7 @@ export interface CoreTransport {
 | `load` | `LoadedReply(rootId, docRevision, rowVersion, totalRows, profile, repair?)` | 首帧不等待保真扫描/概要采样（ADR-0004） |
 | `window` | `WindowReply(rootId, rowVersion, seq, start, rows, totalRows)` | 40 行 ≈3.1KB；p95 0.1ms |
 | `toggle` / `replaceNode` / `undo·redo·reset` | `EditReply(totalRows, changedRow, rowVersion, docRevision?, changed)` | 不重解析；先 parse 后落值；空栈 no-op 不推版本 |
+| `toggleSubtree` | `EditReply(...)`（同上） | 子树批量展开/收起（#22 / ADR-0002 修订）：展开 = 子树内所有非空容器 open（与 expandAll 同口径）、收起 = 深度复位；**原子**（超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` 零部分修改）；根/空容器 no-op、标量 `BAD_COMMAND`；只有可见结果变化才推 `rowVersion` |
 | `expandTo` | `ExpandReply(rootId, rowVersion, row, totalRows)` | 只展开祖先链（不 toggle 目标自身）；`row` 为展开后行号，跳转用 |
 | `getNodeJson` / `getTrail` | `NodeJsonReply(text, bytes, nodes)` / `TrailReply(MapTrail)` | ≤5MB 否则 `TOO_LARGE`；O(depth)、兄弟 ±2（ADR-0007） |
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
