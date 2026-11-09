@@ -208,7 +208,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件）
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件 + 保真提示）
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -225,9 +225,10 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.3 原始文本视图（#11 / ADR-0003 修订 2026-11-03） | ✅ | `core/raw-text.ts`（`probeText` + `RawTextIndex`：**source/pretty/plain** 三模式、检查点 `Int32Array` 每 2048 行、惰性 build、`windowText` 单行 ≤4096 截断、`locate` 偏移→1-based 行）+ `import.ts` 返回源文本、`Root.source` 保留（文档替换即释放）；`DocService` 新增 **rawOpen/rawWindow/rawLocate/rawSource**（只读、不推版本，`rawSource` >maxBytes 抛 `TOO_LARGE`）；`viewmodel/raw-window-source.ts`（单飞/合并/seq 丢弃/epoch；无 rowVersion）+ `view/raw/raw-view.ts`（固定行高虚拟化 + 行号 gutter + 横向滚动 + `lexLine` 屏内高亮 + flash）；工具栏 `[树|原文]` 分段切换（`UiState.viewMode` 持久化）、视图内提示（plain/minified/不含临时修改）、修复摘要 `at` 可点击跳行、复制原文（20MB 守卫）；`shared/json-lex.ts` 一份 lexer 供 core 行走器与 view 高亮共用；**单测 354**（新增 73：raw-text 35 / raw-window-source 18 / doc-service 10 / json-lex 10）；冒烟 `smoke-raw` **25/25** |
 | 6.4 大纲面板（ADR-0013 / #24，2026-11-03） | ✅ | `core/outline.ts`（`outlinePage` 纯函数：容器子项**按需分页**、clamp、标量回空、`appendKey/appendIndex` 路径；不建树/不缓存）+ `DocService.outline`（只读、不推版本，`rowModel.valueAt` 解析路径 → `BAD_COMMAND`）；`viewmodel/outline-state.ts`（每容器页缓存 + 展开集合 + 脏标记扁平化 + epoch 丢弃迟到回包 + 单飞 + `computeOutlineWindow`）；`view/panels/outline-panel.{ts,css}`（行池虚拟列表、行高跟随设置、overscan 6、caret/行点击/键盘 ↑↓←→/Enter/Home/End、`role=tree`/`treeitem`、分页哨兵、`#outlineEmpty`/`#outlineFoot`）；活动栏第 3 模式 + `UiState.panel` 持久化；`jumpToPath` 从 `gotoHit` 抽出（搜索/大纲共用跳转链路）；编辑（`docRevision` 变化）→ 回根展开；**单测 410**（+56：outline core 12 / doc-service 12 / outline-state 32）；冒烟 `smoke-outline` **53/53**（含 10MB 性能、键盘翻页、大文档 expandTo/居中、行高跟随、关闭重开、0 长任务） |
 | 6.5 搜索选项 `Aa`/正则 + 导入体积提示 + `#9` 两小件（ADR-0014 / #10 #11 #9，2026-11-09） | ✅ | `core/search.ts`：`opts.regex` 模式（`new RegExp`、`Aa` → `i` flag）、`SEARCH_PATTERN_MAX=256` 长度守卫、灾难性回溯静态筛查（只拒**外层无界重复量词**，`(a+)+` 拒 / `(foo|bar)+` 放行）、`BAD_PATTERN` 错误码；子串路径零改动。`viewmodel/search-state.ts`：`begin(query, opts)` 快照 + `markPatternError(message)`（置错清结果回 idle）。`view/panels/search-panel.{ts,css}`：`#searchCase`/`#searchRegex` 两个 `aria-pressed` 切换（Tab 顺序在查询框后）、`#searchPatternError` 内联错误行（`role=alert`、输入框 `aria-invalid`）。`app/main.ts`：`searchOpts` 为唯一会话态（切换即重跑、**不持久化**）、`BAD_PATTERN` → 内联错误（不弹 toast）。**导入体积提示**：`LARGE_DOC_WARN_BYTES=50_000_000` + `#docWarnBar`（32px warn 条、`role=status`、可关闭只关条、换文档按新 `meta.bytes` 重新判定、十进制 MB 文案；**不阻断导入、不加协议字段**）。**#9 两小件**：树行项数标 `.row__count.is-clickable`（点击 = toggle、不改选中、不进 Tab 序列、双击不误触编辑）+ 「全部展开/收起」no-op → info toast 且不换版本。**单测 440**（+30：search core 32 / search-state 48）；冒烟 `smoke-search` **94/94**（+12）、`smoke-expand` **14/14**（+3） |
+| 6.6 保真提示（#23 / ADR-0003 修订 2026-11-09） | ✅ | `core/fidelity.ts`（**新建**：单趟 charCode 扫描源文本，无递归/无逐字符正则；字符串整段跳过；对象键**先解 JSON 转义**再判下标样式；整数 >15 位用 `BigInt(lit) !== BigInt(Number(lit))` 精确判定，另报 `1e400` 上溢 / `1e-400` 下溢；每 256KB 让出事件循环、可取消；只留前 100 条片段 + 全量 `counts`）+ `DocService.fidelity`（**只读**、不推版本；`WeakMap<Root, report>` 按根身份缓存 = 编辑不重扫；文档替换 → `CANCELLED`）+ 协议 `fidelity {rootId}` / `FidelityReply` / `FidelityHit|FidelityReport`；app 侧 `requestIdleCallback`（2s 兜底）首帧后拉取 + `fidelitySeq`+rootId 丢弃迟到回包 + 第三条 32px 保真条 `#fidelityBar`（精确数量文案、「查看原文」= 切原文 + `rawLocate(hits[0].offset)` + 行 flash，与修复 `at` 同一链路；`×` 只关条）；dev hooks `fidelityState/fidelityJump/fidelityClose`；**单测 480**（+40：fidelity 32 / doc-service 8）；冒烟 `smoke-fidelity` **24/24**（新增；含与修复条并存层序、10MB 首帧/0 长任务） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **29.6KB gz**（预算 45，slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9）、`worker.js` **12.4KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5）、`page.css` **7.3KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **30.2KB gz**（预算 45，slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.6）、`worker.js` **13.9KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +1.5）、`page.css` **7.3KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -333,7 +334,18 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **性能 / 零异常**：两个阶段 **0 长任务**、0 console error；单测 **440/440**。
 - **体积**：`page.js` 28.7→**29.6KB gz**（+0.9，ADR-0014 目标 **≤ +1.5 达标**）、`worker.js` 11.9→12.4（正则 +0.5）、`page.css` 7.2→7.3。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
+**slice 6.6 验收**（2026-11-09，CfT headless 1440×900；`smoke-fidelity` **24/24**）：
+
+- **精确数量**：失真 fixture（`big` 19 位、`exact` 19 位但精确、`1e400`、`1e-400`、字符串里的 19 位数字、高精度小数、整数键乱序对象、无损整数键对象）→ `status:'found'`、`counts{number:3,keyOrder:1,total:4}`、条可见、文案「检测到 4 处失真：大整数精度 3 处 · 整数键顺序 1 处」；**`exact` / 字符串内数字 / 高精度小数都未被计入**（可证伪）；`hits[0]` = `precision`、`literal=1234567890123456789`、`parsed=1234567890123456800`。
+- **跳原文**：点「查看原文」→ `mode:'raw'`、`flash` 行 = `rawLocate(hits[0].offset).line` = **2**（fixture 中 `big` 所在行），该行文本含 `1234567890123456789`；跳转后保真条仍在。
+- **无失真**：`{"a":1,"b":[1,2,3],"c":{"d":true}}` → `status:'none'`、条不出现、jump 隐藏。
+- **关闭只关条**：`×` 后 `barVisible=false`，但 `status:'found'`、`counts.total=4` 仍在（报告不丢）。
+- **与修复条并存**：截断 + 大整数失真 → 两条都可见，几何 `repairTop=48 < fidelityTop=80`、两条高各 **32px**（修复在上）。
+- **首帧不回归**：10MB 导入首行 **0ms 内出现**（load 81ms）、扫描在首帧后完成（`status:'none'`、scanMs ≈48ms）、**0 长任务**、0 console error。
+- **回归 / 收口**：新增的保真扫描改变了 Worker 的让出语义 → 发现并修复「微任务让出把 Worker 卡住」的回归（10MB 时大纲 expand 1ms → **34ms**；改宏任务让出后回 1ms 级，`smoke-outline` 53/53 复绿）。单测 **480/480**。
+- **体积**：`page.js` 29.6→**30.2KB gz**（+0.6：第三条提示条 + app 接线）、`worker.js` 12.4→**13.9KB gz**（+1.5：扫描器）、`page.css` 7.3（+0.0）；无新增依赖。
+
+**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs && node scripts/smoke-fidelity.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
 
 **已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
 
@@ -368,7 +380,12 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
   - 每个容器页请求都重新枚举该容器子项（`Object.keys` / 数组切片）；单容器页 200 项 <1ms，但**不做容器级缓存**（避免大纲持有「全文档形状」，ADR-0013 背景）。
   - 虚拟窗口 `spacer` 与树同源受 `MAX_SCROLL_PX` 封顶（>1.4M 行底部不可达，与 ADR-0001 §4 缩放映射一起未实现）；`childInfo` 判定展开行是 O(已加载子项) 扫描（大数组翻页后点 caret 有毫秒级成本）。
   - 非根容器的页请求失败**无内联错误提示**（`setOpen`/`loadMore` 返回 false、折叠再展开会重试；「加载失败，重试」哨兵留 v1.1）；虚拟窗口计算与搜索共用 `shared/window.computeVirtualWindow`（code review 收口，不再各写一份）。
-- **保真提示（#23）**：ADR-0003 §1–4 已定（导入后 BigInt 精确判定 >15 位整数 / 整数键混排，提示条给**精确数量**，点击跳原文对应行），但**实现从未做**——`import.ts` 只有 parse + 截断修复。它是原文视图产品复评的触发条件（#11 评论 6603943029）。候选/精确两级判定与「57 候选 → 2 失真」实测口径见 ADR-0003 §2。
+- ~~**保真提示（#23）**：实现从未做~~ → **已实现**（2026-11-09 slice 6.6 / ADR-0003 修订）。落地形态：`core/fidelity.ts` 单趟线性扫描 + `fidelity {rootId}` 只读命令（首帧后 app 主动拉取、每 256KB 让出、可取消、报告按根对象身份缓存）+ 第三条 32px 保真条（精确数量 +「查看原文」跳第一个失真行）。`.mock/1.json` 上**与原型逐条对拍一致**：>15 位候选 57 → 精确后真失真 **2**（`offset 14871 / 339094`），key-order 0。剩余差距：
+  - **高精度小数不检测**（`0.1234567890123456789`）：ADR §2 的 BigInt 精确法不适用于小数，字符串往返比较会引入格式误报 → v1 不报，记差距。
+  - **重复键 / `-0` / 孤立代理项**仍只记录不标记（ADR §4 不变）；重复的整数样式键**不算**键序损失（用严格 `<` 判定，避免误归类）。
+  - 报告只留**前 100 条**片段（`counts` 是全量），逐条列表跳转留 v1.1；不做逐节点标记。
+  - 50MB 扫描实测：Node 同 V8 合成 50MB **≈330ms / 199 次让出**（ADR 估 288ms，同量级）；**Chrome Worker 内 50MB 端到端未跑**（10MB 实测 scanMs ≈48ms）。
+  - `status:'skipped'` 只在类型里预留，core 取消语义是回包 `CANCELLED`（app 静默丢弃），不会产出 `skipped`。
 - **严格 JSON only**（边界，非 bug）：完整 JSON 只是多了尾逗号（`{"a":{"b":1,}}`）或用了单引号/裸键/注释时仍报 `PARSE`——截断修复只处理 EOF 形态、不擅自删原文符号；是否支持 JSON5 子集/尾逗号容错见 **#20**（待拍板）。
 
 ## 12. 未实现设计（多文档工作区标签，#18）

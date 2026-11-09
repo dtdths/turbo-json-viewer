@@ -214,3 +214,13 @@ interface FidelityReport {
   完全同一条链路 `revealRepairOffset`）；逐条列表跳转留 v1.1（Q4）。
 - 无失真（`status:'none'`）→ 条不出现；`status:'skipped'`（被取消）→ 不出现、不留痕。
 - 视觉细节归 **#21**，本 slice 只做最小可用形态（Q7）。
+
+### 5. 实现结果与偏差（2026-11-09）
+
+- **实测对拍**：`.mock/1.json`（879,330 字符）上 >15 位候选 **57** → 精确判定后真失真 **2**（`offset 14871 / 339094`，均为 `precision`），key-order **0**；与 `prototype` 原型脚本逐条一致。另用 5,860 组混合键排列与真实 `Object.keys(JSON.parse(src))` 对拍，**0 不一致**（含 `\u0031` 转义键、`4294967294/4294967295` 边界、前导零 `01`）。
+- **性能**：合成 50MB **≈330ms / 199 次让出**（ADR 估 288ms，同量级）；10MB 在 Chrome Worker 内 **scanMs ≈48ms**。
+- **偏差 1（已采纳）**：`status:'skipped'` 只在类型里预留——取消语义是回包 `CANCELLED`（与 load/search 同口径），core 不会产出 `skipped`。
+- **偏差 2（已采纳）**：**超长纯整数**（如 400 位）按 `overflow` 报：`JSON.parse` 同样把它改写成 `Infinity`，不报会漏；ADR 表格里 overflow 的候选只写了「带指数」，实现按「结果非有限」判定。
+- **偏差 3（已采纳）**：重复的整数样式键（`{"1":a,"1":b}`）**不算**键序损失（比较用严格 `<`）：JSON.parse 在这种输入里键序其实没变，可见损失是重复键吞并（§4 另一类）。
+- **回归修复（重要）**：让出必须用**宏任务**。最初默认 `await Promise.resolve()`（微任务）不会让 Worker 处理排队的命令，整段扫描期间窗口/大纲/搜索被卡住——实测 10MB 时大纲 expand 从 **1ms 退化到 34ms**（`smoke-outline` 52/53 红）。改为共享 `MessageChannel` 宏任务让出（`macroYield()`，避开 `setTimeout(0)` 连续调用 5 次后的 ~4ms 钳制）后回到 1ms 级，`smoke-outline` 复绿。
+- **验收**：`smoke-fidelity` **24/24**（新增套件，`npm run smoke:fidelity`）；单测 **480/480**（+40：`core/fidelity` 32 / `doc-service` 8）。

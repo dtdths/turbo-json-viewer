@@ -38,6 +38,7 @@ export interface CoreApi {
   rawLocate(r: { rootId: RootId; offset: number }): Promise<RawLocateReply>;  // 源偏移 → 1-based 行
   rawSource(r: { rootId: RootId; maxBytes?: number }): Promise<RawSourceReply>; // 整份原文（20MB 守卫）
   outline(r: OutlineRequest): Promise<OutlineReply>;                    // 大纲页：按容器分页取子项（只读，ADR-0013）
+  fidelity(r: { rootId: RootId }): Promise<FidelityReply>;             // 保真扫描：源文本线性扫描（只读，ADR-0003 修订）
   redo(rootId: RootId): Promise<EditReply>;        reset(rootId: RootId): Promise<EditReply>;          // 回到导入值
   profile(rootId: RootId): Promise<ProfileReply>;  stats(rootId: RootId): Promise<StatsReply>;         // 版本/行数只读快照
 }
@@ -56,6 +57,7 @@ export type Command =
   | { t:'rawOpen'; rootId:RootId } | { t:'rawWindow'; rootId:RootId; seq:number; start:number; count:number }
   | { t:'rawLocate'; rootId:RootId; offset:number } | { t:'rawSource'; rootId:RootId; maxBytes?:number }
   | { t:'outline'; rootId:RootId; path:Path; start:number; count:number }
+  | { t:'fidelity'; rootId:RootId }
   | { t:'stats'; rootId:RootId };
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];
 // src/app/transport/worker-transport.ts —— 3 个方法；替换传输不改调用方
@@ -74,6 +76,7 @@ export interface CoreTransport {
 | `expandTo` | `ExpandReply(rootId, rowVersion, row, totalRows)` | 只展开祖先链（不 toggle 目标自身）；`row` 为展开后行号，跳转用 |
 | `getNodeJson` / `getTrail` | `NodeJsonReply(text, bytes, nodes)` / `TrailReply(MapTrail)` | ≤5MB 否则 `TOO_LARGE`；O(depth)、兄弟 ±2（ADR-0007） |
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
+| `fidelity` | `FidelityReply(rootId, docRevision, report)` | **只读**、不推版本；扫描 worker 内保留的源文本（单趟线性、每 256KB 让出、可取消）；报告按根对象身份缓存（编辑不重扫）；文档替换 → `CANCELLED`；报告只留 ≤100 条片段（ADR-0003 修订 2026-11-09 / #23） |
 | `stats` | `StatsReply(rootId, docRevision, rowVersion, totalRows)` | 只读版本/行数快照，不推进任何版本 |
 | `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | `RawMeta(mode,totalLines,chars,maxLineLength,buildMs?,damaged?)` / `RawWindow(seq,start,lines,totalLines,mode,truncated?)` / `RawLocateReply(line,totalLines)` / `RawSourceReply(text,bytes)` | 只读、不推版本；首调惰性建索引；行文本 ≤4096 字符；`rawSource` 超 `maxBytes` 抛 `TOO_LARGE`（ADR-0003 修订） |
 | `outline` | `OutlineReply(rootId, path, kind, total, start, children[OutlineChild])` | 只读、不推版本；按容器**按需分页**（`OUTLINE_PAGE=200` / 上限 500），不建树、不缓存、不依赖树展开态；scalar 路径回 `total:0`（ADR-0013） |
