@@ -155,14 +155,23 @@ function buildHighlight(cm: Cm6) {
   return syntaxHighlighting(highlight);
 }
 
+/**
+ * 把 `(line, column)` 诊断换算成 CM6 的 `Diagnostic`。
+ *
+ * CM6 只在 `from < to` 时画行内波浪线；位置落在文档末尾（EOF）时 `from === to` 会退化成
+ * 只有 gutter 标记、没有下划线（README §11 已知差距）。因此 EOF 时把范围左移一个码元：
+ * `[doc.length-1, doc.length)`；空文档没有码元可标，只能退化为 `[0,0)`。
+ */
 function diagAt(cm: Cm6, view: CmEditorView, d: CodeEditorDiagnostic): CmDiagnostic {
   const doc = view.state.doc;
   const lineNo = Math.min(Math.max(1, d.line ?? 1), doc.lines);
   const line = doc.line(lineNo);
   const offset = Math.min(Math.max(0, (d.column ?? 1) - 1), line.length);
-  const pos = line.from + offset;
+  const pos = Math.min(line.from + offset, doc.length);
+  const from = pos < doc.length ? pos : Math.max(0, doc.length - 1);
+  const to = pos < doc.length ? pos + 1 : doc.length;
   void cm;
-  return { from: pos, to: Math.min(doc.length, pos + 1), severity: 'error', message: d.message };
+  return { from, to, severity: 'error', message: d.message };
 }
 
 /* -------------------------------------------------------------------------- */
