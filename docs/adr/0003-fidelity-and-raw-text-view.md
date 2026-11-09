@@ -155,3 +155,62 @@
 - 冒烟：`[树|原文]` 切换与持久化、`source`/`pretty` 两种模式行文本逐字、滚动虚拟化行数 ≤ 屏行+overscan、
   修复摘要 `at` 跳行、复制原文逐字、0 长任务 / 0 console error。
 - 体积：`page.js` gz 预算 45 不变；原文索引与源文本都在 Worker（不进 page.js）。
+
+## 修订（2026-11-09）：保真提示落地（#23）——扫描形态、报告形状、提示条与跳转
+
+- 状态：**Accepted**（实现记录；§1–§4 的保真决策不变，本节只定「怎么落地」）
+- 票：**#23**（本修订是其 Q1–Q7 的拍板落点，逐条按票内推荐执行）
+- 触发：#11 原文视图复评的**触发条件**就是本条落地（#11 评论 6603943029）
+
+### 1. 扫描时机与 seam（Q2 / Q5 / Q6）
+
+- `load` 回包**完成后**，app 显式调新命令 **`fidelity { rootId }`**（不是事件、不是 `load` 内同步扫描）：
+  首帧不等扫描，扫描失败/超时不影响已打开的文档。
+- Worker 内**单趟线性扫描源文本**（不重解析值图），每 **256 KB 让出一次事件循环**（`await`），
+  每段检查取消；换文档时 app 递增 `fidelitySeq` 丢弃迟到回包，Worker 侧按 `rootId` 校验。
+- **不显示「检查中」进度**（<300ms 量级）；扫描超时不额外处理（沿用 5s 命令超时兜底）。
+- 生命周期：报告只活在**当前文档会话内存**（`Root` 上，随文档替换丢弃），**不落盘**、不进 storage；
+  编辑（临时修改）**不重扫**——失真针对源文本，源文本不变。
+
+### 2. 检测范围（§2 的两级判定落地）
+
+| 类别 | 候选 | 精确判定 | 报告 `kind` |
+|---|---|---|---|
+| 大整数精度流失 | 整数字面量位数 > 15 | `BigInt(literal) !== BigInt(Number(literal))` | `number` / `reason:'precision'` |
+| 上溢 | 带指数且 `Number(lit)` 非有限 | `!isFinite(Number(lit))`（如 `1e400`） | `number` / `reason:'overflow'` |
+| 下溢 | 带指数且 `Number(lit)===0` 而有效数字非零 | 同上（如 `1e-400`） | `number` / `reason:'underflow'` |
+| 整数样式键重排 | 对象内出现数组下标样式的键（规范整数串且 < 2^32−1） | 去掉「整数键全部在前且升序」的无损情况；**键先按 JSON 转义解码**再判定 | `key-order` |
+
+- **不检测（v1 已知差距）**：高精度**小数**（`0.1234567890123456789`）——ADR §2 的 BigInt 精确法不适用，
+  用字符串往返比较会引入格式误报；重复键 / `-0` / 孤立代理项仍只记录不标记（§4 不变）。
+- 命中顺序 = 源文本出现顺序；报告只留**前 100 条**片段（`FIDELITY_MAX_HITS`），`truncated` 标明截断。
+
+### 3. 报告形状
+
+```ts
+interface FidelityHit {
+  kind: 'number' | 'key-order';
+  offset: number;                                  // 源文本 UTF-16 偏移（rawLocate 直接可用）
+  snippet: string;                                 // ≤48 字符的异常片段
+  reason?: 'precision' | 'overflow' | 'underflow'; // kind==='number'
+  literal?: string; parsed?: string;               // 「原文 vs 解析后」对照（截断）
+}
+interface FidelityReport {
+  status: 'none' | 'found' | 'skipped';
+  counts: { number: number; keyOrder: number; total: number };
+  hits: FidelityHit[];                             // ≤100
+  truncated: boolean;
+  scanMs: number;
+  skippedReason?: 'cancelled';
+}
+```
+
+### 4. 提示条与跳转（Q1 / Q4 / Q7）
+
+- **第三条 32px 常驻提示条** `#fidelityBar`（与修复条同款视觉、`role="status"`/`aria-live="polite"`、`×` 可关）。
+  DOM 顺序：**修复条 → 导入体积提示条 → 保真条**（Q1：修复在前、保真在后；三条各自独立可关）。
+- 文案给**精确数量**：「检测到 N 处失真（大整数 M 处 / 整数键顺序 K 处）—— 查看原文」。
+- 主点击 / 「查看原文」按钮 = **切原文视图 + `rawLocate(第一个命中的 offset)` + 行 flash**（与修复摘要 `at`
+  完全同一条链路 `revealRepairOffset`）；逐条列表跳转留 v1.1（Q4）。
+- 无失真（`status:'none'`）→ 条不出现；`status:'skipped'`（被取消）→ 不出现、不留痕。
+- 视觉细节归 **#21**，本 slice 只做最小可用形态（Q7）。
