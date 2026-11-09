@@ -715,7 +715,7 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
     const rowVersionBefore = rowVersion;
     const reply = await core.toggleSubtree({ rootId, path, open });
     if (reply.rowVersion === rowVersionBefore) {
-      showToast(open ? '其下所有子孙节点已经全部展开了' : '其下所有子孙节点已经全部收起了', 1800, 'info');
+      showToast(open ? '整棵子树已经全部展开了' : '整棵子树已经全部收起了', 1800, 'info');
       return;
     }
     rowVersion = reply.rowVersion;
@@ -1107,7 +1107,8 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
       : isContainerKind
         ? '该容器没有子节点'
         : '只能展开容器节点';
-  const subtreeHint = '仅此子树（不含更上层）';
+  // 文案「整棵子树」= 含该节点自身（收起时也会折叠它）+ 所有深度的子孙容器；不含更上层
+  const subtreeHint = '含该节点自身；不含更上层';
   setCtxItemDisabled('expand-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('edit', false);
@@ -1168,7 +1169,7 @@ function enabledCtxItems(): HTMLButtonElement[] {
 }
 
 /**
- * 菜单项禁用态 + title：禁用时 `why` 说明原因；可用时 `hint` 说明作用域（如「仅此子树」），无 hint 则清空。
+ * 菜单项禁用态 + title：禁用时 `why` 说明原因；可用时 `hint` 说明作用域（如「含该节点自身；不含更上层」），无 hint 则清空。
  * 只碰树行菜单项，导出菜单的 `menuitemradio` 不走这里。
  */
 function setCtxItemDisabled(act: string, disabled: boolean, why?: string, hint?: string): void {

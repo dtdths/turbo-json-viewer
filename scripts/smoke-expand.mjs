@@ -156,7 +156,7 @@ try {
       .filter((el) => ['$.A', '$.A.a1', '$.A.a2'].includes(el.dataset.path))
       .map((el) => ({ path: el.dataset.path, expanded: el.getAttribute('aria-expanded') }));
 
-    // 已全展开 → 再点「展开所有子孙节点」= no-op（info toast + rowVersion 不变）
+    // 已全展开 → 再点「展开整棵子树」= no-op（info toast + rowVersion 不变）
     const rvNoop = h.state().rowVersion;
     await h.ctxOpen('$.A');
     out.noopClick = await h.ctxClick('expand-subtree');
@@ -403,7 +403,7 @@ const findAct = (menu, act) => ctxItemsOf(menu).find((entry) => entry.act === ac
 const subtreeMenuOk =
   findAct(subtree.menuA, 'expand-subtree')?.disabled === false &&
   findAct(subtree.menuA, 'collapse-subtree')?.disabled === false &&
-  /仅此子树/.test(findAct(subtree.menuA, 'expand-subtree')?.title ?? '') &&
+  /含该节点自身/.test(findAct(subtree.menuA, 'expand-subtree')?.title ?? '') &&
   findAct(subtree.menuRoot, 'expand-subtree')?.disabled === true &&
   findAct(subtree.menuRoot, 'collapse-subtree')?.disabled === true &&
   findAct(subtree.menuScalar, 'expand-subtree')?.disabled === true &&

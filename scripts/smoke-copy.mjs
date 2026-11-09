@@ -42,8 +42,8 @@ const MENU_LABELS = [
   '复制路径',
   '复制原始值',
   '复制键名',
-  '展开所有子孙节点',
-  '收起所有子孙节点',
+  '展开整棵子树',
+  '收起整棵子树',
   '编辑此节点 JSON',
 ];
 
@@ -450,10 +450,10 @@ const checks = {
     isEnabled(report.containerMenu, 'copy-key') &&
     isEnabled(report.containerMenu, 'copy-subtree') &&
     isEnabled(report.containerMenu, 'copy-path') &&
-    // #22：容器且有子节点 → 两个子树项可用，title 说明「仅此子树」
+    // #22：容器且有子节点 → 两个子树项可用，title 说明「含该节点自身；不含更上层」
     isEnabled(report.containerMenu, 'expand-subtree') &&
     isEnabled(report.containerMenu, 'collapse-subtree') &&
-    /仅此子树/.test(item(report.containerMenu, 'expand-subtree')?.title ?? '') &&
+    /含该节点自身/.test(item(report.containerMenu, 'expand-subtree')?.title ?? '') &&
     isEnabled(report.containerMenu, 'edit'),
 
   // 根也是对象容器：按 ADR-0010 §1「原始值仅标量」，复制原始值同样禁用
