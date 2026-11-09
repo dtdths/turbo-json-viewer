@@ -27,7 +27,9 @@ turbo-json-viewer/
 │   │   ├── editor/           #   ExprDrawer、SubtreeEditor、CodeEditor（CM6 懒加载）
 │   │   └── styles/           #   tokens.css（从 prototype/visual/c 迁移）+ 组件样式
 │   ├── viewmodel/            # 主线程状态（无 DOM、可纯单测）
-│   │   ├── row-window-source.ts   # 单飞/合并/seq/版本/overscan/锚点
+│   │   ├── window-machine.ts      # 窗口状态机：几何/单飞/合并/epoch/seq/stale/锚点/过期重试（S2 唯一实现，2026-11-09）
+│   │   ├── row-window-source.ts    # 树侧 adapter：CoreApi.window + rowVersion + 预取/锚点
+│   │   ├── raw-window-source.ts    # 原文侧 adapter：CoreApi.rawWindow + 两拍 open（ready 门）
 │   │   ├── selection.ts      #   选中句柄 + 键盘意图
 │   │   ├── search-state.ts   #   命中集、当前命中、docRevision 过期
 │   │   ├── panel-state.ts    #   C 布局：活动栏 / 左面板 / 右工作区
