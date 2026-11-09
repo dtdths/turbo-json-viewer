@@ -97,7 +97,12 @@ export interface EditReply {
   totalRows: number;
   changedRow?: number;
   changedPath?: Path;
-  history?: EditHistoryState;
+  /**
+   * 编辑历史状态：**恒定必填**（ADR-0002 修订 2026-11-09）。
+   * 展开态命令（toggle/toggleSubtree/expandAll/collapseAll）也带——回包形状恒定，
+   * 消费方无需按命令判空（否则展开回包会把「已修改 N 处」清零）。
+   */
+  history: EditHistoryState;
 }
 
 /** 导出当前值图的 JSON 文本（`-edited` 下载用；不受编辑器 5MB 限制） */

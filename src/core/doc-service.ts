@@ -7,6 +7,12 @@
  *   - window 校验 rowVersion，不符抛 STALE_ROOT；seq 由主线程用于丢弃迟到回包（core 只回显）
  *   - load 以 loadId 抢占：旧 load 以 CANCELLED 结束，结果不采纳
  *
+ * 根变更路径（ADR-0002 修订 2026-11-09）：八条 EditReply 命令（toggle / toggleSubtree /
+ * expandAll / collapseAll / replaceNode / undo / redo / reset）共用一条私有路径 `mutateRoot`：
+ * 应用变更 → 按意图（view / value）推版本 → 组装形状恒定的 EditReply（`history` 恒定）。
+ * 命令体只描述「改什么、意图是什么」；报字段（changedRow / changedPath）规则也只在此收口。
+ * `expandTo` 是跳转查询（独立回包 ExpandReply），不属于这条路径。
+ *
  * 原文视图（ADR-0003 修订 2026-11-03 §4）：rawOpen/rawWindow/rawLocate/rawSource 全部**只读**，
  * 不推进 docRevision / rowVersion；doc 根生命周期即原文版本（原文不随展开/临时编辑变化）。
  *
@@ -48,11 +54,11 @@ import type {
 import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
-import { EditHistory, type EditEntry } from './edit-history';
+import { EditHistory } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { scanFidelity } from './fidelity';
 import { jsonSizeLowerBoundChars } from './measure';
-import { jsonKind, RowModel } from './row-model';
+import { jsonKind, RowModel, type ReplaceResult } from './row-model';
 import { outlinePage } from './outline';
 import { DOC_ROOT_ID, RootStore, type Root, type RootSource } from './root-store';
 import { buildRawIndex, type RawTextIndex } from './raw-text';
@@ -61,6 +67,29 @@ import { searchDocument } from './search';
 type Cmd<K extends Command['t']> = Extract<Command, { t: K }>;
 
 const NOT_IMPLEMENTED = 'not implemented in skeleton slice';
+
+/* ---------------------------- 根变更路径的类型 ---------------------------- */
+
+/** 根变更单步结果：`changed` 决定 view 意图是否推 rowVersion；`row` 用于报 changedRow。 */
+interface MutationStep {
+  changed: boolean;
+  /** 变更后该行的行号；-1 / 缺省 = 不可见或不报 changedRow。 */
+  row?: number;
+}
+
+/** 根变更意图：决定推进哪些版本（见 `mutateRoot`）。 */
+type MutationIntent = 'view' | 'value';
+
+/** 一次根变更计划：命令体只描述「改什么、意图是什么」。 */
+interface RootMutation {
+  intent: MutationIntent;
+  /** 执行变更：单步返回一步；reset 返回 N 步（每步都推两版本）。 */
+  run(): MutationStep | MutationStep[];
+  /** 回包附带 changedPath（只有值图变更才有）。 */
+  path?: Path;
+  /** 历史记账：仅在 run() 成功后调用。 */
+  record?(): void;
+}
 
 /** 把 start/count/offset 夹到 [min, max] 的整数（非有限值 → min）。 */
 export class DocService {
@@ -261,40 +290,57 @@ export class DocService {
 
   /* --------------------------- toggle/expand --------------------------- */
 
+  /**
+   * 唯一根变更路径（ADR-0002 修订 2026-11-09）：应用变更 → 按意图推版本 → 组装恒定 EditReply。
+   *
+   * - `view`（展开态）：可见行真的变了（step.changed）才 `rowVersion++`；`docRevision` 不动
+   *   （no-op 不制造 STALE_ROOT 抖动）。
+   * - `value`（值图）：每一步都推 `docRevision++` + `rowVersion++`——reset 的 N 步即 N 次，
+   *   迟到的行窗口回包因此全部 stale。
+   * - 回包形状恒定：`history` 永远在（展开态命令不再另成方言）。
+   * - 报字段：`changedRow` 取最后一步（要求 changed 且行可见）；`changedPath` 只由值图变更给。
+   *
+   * `run()` 抛错时不得留下部分修改（命令体负责原子性）。reset 的多步是「全部替换成功后统一
+   * 推版本」：中间版本号对迟到回包不可观测（worker 按序处理命令），成功路径上的终值与逐条推进
+   * 完全一致。
+   */
+  private mutateRoot(root: Root, mutation: RootMutation): EditReply {
+    const raw = mutation.run();
+    const steps = Array.isArray(raw) ? raw : [raw];
+    for (const step of steps) {
+      if (mutation.intent === 'view' && !step.changed) continue;
+      if (mutation.intent === 'value') root.docRevision += 1;
+      root.rowVersion += 1;
+    }
+    mutation.record?.();
+
+    const last = steps[steps.length - 1];
+    const changed: { row?: number; path?: Path } = {};
+    if (last !== undefined && last.changed && last.row !== undefined && last.row >= 0) changed.row = last.row;
+    if (mutation.path !== undefined) changed.path = mutation.path;
+    return this.editReply(root, changed);
+  }
+
   private toggle(cmd: Cmd<'toggle'>): EditReply {
     const root = this.roots.require(cmd.rootId);
-    const result = root.rowModel.toggle(cmd.path, cmd.open);
-    // 只有行映射真的变了才推进 rowVersion（no-op 不制造 STALE_ROOT 抖动）
-    if (result.changed) root.rowVersion += 1;
-    const reply: EditReply = {
-      rootId: root.rootId,
-      docRevision: root.docRevision,
-      rowVersion: root.rowVersion,
-      totalRows: result.totalRows,
-    };
-    // 不可见路径（祖先折叠）时 result.row = -1，不塞进回包
-    if (result.changed && result.row >= 0) reply.changedRow = result.row;
-    return reply;
+    return this.mutateRoot(root, {
+      intent: 'view',
+      run: () => root.rowModel.toggle(cmd.path, cmd.open),
+    });
   }
 
   /**
-   * 子树批量展开 / 收起（#22 / ADR-0002 修订）：版本纪律与 `toggle` 完全一致——
-   * 只有可见结果真的变了（`changed`）才 `rowVersion++`（`docRevision` 不动；no-op 不制造 STALE_ROOT
-   * 抖动），`changed` 且目标行可见（row >= 0）才填 `changedRow`；不可见节点上的惰性状态变化不回包。
+   * 子树批量展开 / 收起（#22 / ADR-0002 修订）：意图 = view，版本纪律与 `toggle` 完全一致——
+   * 只有可见结果真的变了（`changed`）才 `rowVersion++`（`docRevision` 不动；no-op 不制造
+   * STALE_ROOT 抖动），`changed` 且目标行可见（row >= 0）才填 `changedRow`；不可见节点上的
+   * 惰性状态变化不回包。
    */
   private toggleSubtree(cmd: Cmd<'toggleSubtree'>): EditReply {
     const root = this.roots.require(cmd.rootId);
-    const result = root.rowModel.toggleSubtree(cmd.path, cmd.open);
-    if (result.changed) root.rowVersion += 1;
-    const reply: EditReply = {
-      rootId: root.rootId,
-      docRevision: root.docRevision,
-      rowVersion: root.rowVersion,
-      totalRows: result.totalRows,
-    };
-    // 不可见路径（祖先折叠）时 result.row = -1，不塞进回包（与 toggle 同款）
-    if (result.changed && result.row >= 0) reply.changedRow = result.row;
-    return reply;
+    return this.mutateRoot(root, {
+      intent: 'view',
+      run: () => root.rowModel.toggleSubtree(cmd.path, cmd.open),
+    });
   }
 
   private expandTo(cmd: Cmd<'expandTo'>): ExpandReply {
@@ -313,26 +359,12 @@ export class DocService {
 
   private expandAll(cmd: Cmd<'expandAll'>): EditReply {
     const root = this.roots.require(cmd.rootId);
-    const result = root.rowModel.expandAll();
-    if (result.changed) root.rowVersion += 1;
-    return {
-      rootId: root.rootId,
-      docRevision: root.docRevision,
-      rowVersion: root.rowVersion,
-      totalRows: result.totalRows,
-    };
+    return this.mutateRoot(root, { intent: 'view', run: () => root.rowModel.expandAll() });
   }
 
   private collapseAll(cmd: Cmd<'collapseAll'>): EditReply {
     const root = this.roots.require(cmd.rootId);
-    const result = root.rowModel.collapseAll();
-    if (result.changed) root.rowVersion += 1;
-    return {
-      rootId: root.rootId,
-      docRevision: root.docRevision,
-      rowVersion: root.rowVersion,
-      totalRows: result.totalRows,
-    };
+    return this.mutateRoot(root, { intent: 'view', run: () => root.rowModel.collapseAll() });
   }
 
   /* ------------------------------- search ------------------------------- */
@@ -450,11 +482,12 @@ export class DocService {
       return this.editReply(root);
     }
 
-    const row = this.applyReplace(root, cmd.path, parsed);
-    root.docRevision += 1;
-    root.rowVersion += 1;
-    this.historyOf(root.rootId).apply({ path: cmd.path, oldValue, newValue: parsed });
-    return this.editReply(root, { row, path: cmd.path });
+    return this.mutateRoot(root, {
+      intent: 'value',
+      path: cmd.path,
+      run: () => this.applyReplace(root, cmd.path, parsed),
+      record: () => this.historyOf(root.rootId).apply({ path: cmd.path, oldValue, newValue: parsed }),
+    });
   }
 
   /** JSON.parse 编辑文本；失败 → PARSE（尽力还原 line/column，见 import.ts）。 */
@@ -472,11 +505,11 @@ export class DocService {
     }
   }
 
-  /** 行模型替换 + `Root.value` 同步（根替换后 search/profile 仍读新值图）。返回目标行号。 */
-  private applyReplace(root: Root, path: Path, value: unknown): number {
+  /** 行模型替换 + `Root.value` 同步（根替换后 search/profile 仍读新值图）。返回行模型结果。 */
+  private applyReplace(root: Root, path: Path, value: unknown): ReplaceResult {
     const result = root.rowModel.replaceNode(path, value);
     if (path === ROOT_PATH) root.value = value;
-    return result.row;
+    return result;
   }
 
   /**
@@ -488,16 +521,18 @@ export class DocService {
     const history = this.historyOf(root.rootId);
     const entry = history.undo();
     if (!entry) throw new CoreError({ code: 'NO_HISTORY', message: 'nothing to undo' });
-    let row: number;
-    try {
-      row = this.applyReplace(root, entry.path, entry.oldValue);
-    } catch (err) {
-      history.redo();
-      throw err;
-    }
-    root.docRevision += 1;
-    root.rowVersion += 1;
-    return this.editReply(root, { row, path: entry.path });
+    return this.mutateRoot(root, {
+      intent: 'value',
+      path: entry.path,
+      run: () => {
+        try {
+          return this.applyReplace(root, entry.path, entry.oldValue);
+        } catch (err) {
+          history.redo();
+          throw err;
+        }
+      },
+    });
   }
 
   /** 重做一步：取历史条目后用 newValue 正向替换（失败时指针退回，理由同 undo）。 */
@@ -506,22 +541,24 @@ export class DocService {
     const history = this.historyOf(root.rootId);
     const entry = history.redo();
     if (!entry) throw new CoreError({ code: 'NO_HISTORY', message: 'nothing to redo' });
-    let row: number;
-    try {
-      row = this.applyReplace(root, entry.path, entry.newValue);
-    } catch (err) {
-      history.undo();
-      throw err;
-    }
-    root.docRevision += 1;
-    root.rowVersion += 1;
-    return this.editReply(root, { row, path: entry.path });
+    return this.mutateRoot(root, {
+      intent: 'value',
+      path: entry.path,
+      run: () => {
+        try {
+          return this.applyReplace(root, entry.path, entry.newValue);
+        } catch (err) {
+          history.undo();
+          throw err;
+        }
+      },
+    });
   }
 
   /**
    * 丢弃全部编辑：按 LIFO 反向应用每个已生效条目的 oldValue（edit-spec §5）。
-   * 每步都推进 docRevision/rowVersion：reset 期间的任何迟到窗口回包都 stale，
-   * 避免主线程把「半重置」的状态当成最新。反向序列经过的都是曾经被接受的合法状态，
+   * 意图 = value 的 N 步：每步都推进 docRevision/rowVersion——reset 期间的任何迟到窗口回包都
+   * stale，避免主线程把「半重置」的状态当成最新。反向序列经过的都是曾经被接受的合法状态，
    * 因此不会触发 TOO_MANY_ROWS；无编辑时按 no-op 回包（UI 不弹错）。
    */
   private reset(cmd: Cmd<'reset'>): EditReply {
@@ -529,13 +566,15 @@ export class DocService {
     const history = this.historyOf(root.rootId);
     const applied = history.reset();
     if (applied.length === 0) return this.editReply(root);
-    for (let i = applied.length - 1; i >= 0; i--) {
-      const entry = applied[i] as EditEntry;
-      this.applyReplace(root, entry.path, entry.oldValue);
-      root.docRevision += 1;
-      root.rowVersion += 1;
-    }
-    return this.editReply(root);
+    return this.mutateRoot(root, {
+      intent: 'value',
+      run: () =>
+        [...applied].reverse().map((entry) => {
+          this.applyReplace(root, entry.path, entry.oldValue);
+          // 不报 changedRow：reset 的回包只表达「已回到打开时状态」（与既有行为一致）
+          return { changed: true };
+        }),
+    });
   }
 
   /**
