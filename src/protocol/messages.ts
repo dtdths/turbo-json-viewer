@@ -143,8 +143,9 @@ export interface SearchReply extends SearchResult {
 }
 
 /**
- * 保真回包（#23）：`report` 只描述**源文本**（临时修改不重扫），
- * `docRevision` 供 app 判定回包是否已过期（换文档/重载后丢弃迟到回包）。
+ * 保真回包（#23）：`report` 只描述**源文本**（临时修改不重扫）。
+ * `docRevision` 只作诊断/兜底用途——**不要**用它判回包过期：编辑会推进 `docRevision`，
+ * 但源文本不变、报告仍有效；app 用 `fidelitySeq` + `rootId` 丢弃迟到回包（见 `main.ts`）。
  */
 export interface FidelityReply {
   rootId: RootId;

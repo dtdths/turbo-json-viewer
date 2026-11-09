@@ -1333,7 +1333,7 @@ describe('DocService — fidelity（保真扫描 / #23）', () => {
 
     expect(reply).toMatchObject({ rootId: DOC_ROOT, docRevision: 1 });
     expect(reply.report.status).toBe('found');
-    expect(reply.report.counts).toEqual({ number: 1, keyOrder: 1, total: 2 });
+    expect(reply.report.counts).toMatchObject({ number: 1, precision: 1, overflow: 0, underflow: 0, keyOrder: 1, total: 2 });
     expect(reply.report.hits.map((hit) => hit.kind)).toEqual(['key-order', 'number']);
     expect(reply.report.truncated).toBe(false);
     expect(typeof reply.report.scanMs).toBe('number');
@@ -1346,7 +1346,7 @@ describe('DocService — fidelity（保真扫描 / #23）', () => {
     const svc = new DocService();
     await load(svc, '{"a":1,"b":[true,null]}');
     const reply = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
-    expect(reply.report).toMatchObject({ status: 'none', counts: { number: 0, keyOrder: 0, total: 0 }, hits: [] });
+    expect(reply.report).toMatchObject({ status: 'none', counts: { number: 0, precision: 0, overflow: 0, underflow: 0, keyOrder: 0, total: 0 }, hits: [] });
     expect(reply.report.truncated).toBe(false);
   });
 
@@ -1396,7 +1396,7 @@ describe('DocService — fidelity（保真扫描 / #23）', () => {
     const fresh = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
     expect(fresh.docRevision).toBe(reloaded.docRevision);
     expect(fresh.report).not.toBe(old.report);
-    expect(fresh.report.counts).toEqual({ number: 0, keyOrder: 0, total: 0 });
+    expect(fresh.report.counts).toMatchObject({ number: 0, keyOrder: 0, total: 0 });
   });
 
   it('扫描中途换文档 → CANCELLED（分段让出 + 根身份校验；app 静默丢弃）', async () => {

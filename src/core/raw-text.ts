@@ -21,6 +21,7 @@
  */
 import type { RawMeta, RawMode } from '../protocol/types';
 import { RAW_CP_EVERY, RAW_LINE_DISPLAY_MAX, RAW_MAX_LINE_LENGTH } from '../protocol/versions';
+import { now, roundMs } from '../shared/timing';
 import { CH, JsonLexer, TOK } from '../shared/json-lex';
 import { clampInt } from '../shared/num';
 
@@ -218,17 +219,6 @@ function renderPrettyLine(lex: JsonLexer, text: string, rec: LineRec): string {
   const p = lex.skipWs(text, rec.end);
   const comma = text.charCodeAt(p) === CH.COMMA;
   return indent + body + (comma && rec.kind !== KIND.OPEN ? ',' : '');
-}
-
-function now(): number {
-  return typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? performance.now()
-    : Date.now();
-}
-
-/** 毫秒保留 3 位小数（与原型 / RawMeta.buildMs 口径一致） */
-function roundMs(ms: number): number {
-  return Math.round(ms * 1000) / 1000;
 }
 
 /**

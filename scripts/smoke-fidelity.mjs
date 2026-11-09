@@ -15,6 +15,7 @@
  * 截图落 .spike/smoke/fidelity-*.png。走 HTTP + `window.__tjv`，与 scripts/smoke-expand.mjs 同一 harness。
  */
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { launchChrome, REPO_ROOT } from '../prototype/p1/lib/chrome.mjs';
 import { startStaticServer } from '../prototype/p1/lib/http.mjs';
@@ -25,11 +26,17 @@ await mkdir(SHOTS, { recursive: true });
 /** 失真 fixture：pretty 打印，行号固定，便于断言 flash 行。 */
 const DIRTY = `{
   "big": 1234567890123456789,
+  "exp": 1234567890123456789e0,
   "exact": 1000000000000000000,
   "over": 1e400,
   "under": 1e-400,
   "str": "1234567890123456789",
   "dec": 0.1234567890123456789,
+  "dupKeys": {
+    "1": "a",
+    "2": "b",
+    "1": "c"
+  },
   "reorder": {
     "2": "a",
     "b": "c",
@@ -122,28 +129,41 @@ try {
   const d = phase1.dirty || {};
   check(
     'dirty:exact-counts',
-    d.status === 'found' && d.counts?.total === 4 && d.counts?.number === 3 && d.counts?.keyOrder === 1,
+    d.status === 'found' &&
+      d.counts?.total === 5 &&
+      d.counts?.number === 4 &&
+      d.counts?.precision === 2 &&
+      d.counts?.overflow === 1 &&
+      d.counts?.underflow === 1 &&
+      d.counts?.keyOrder === 1,
     {
       status: d.status,
       counts: d.counts,
-      expect: { total: 4, number: 3, keyOrder: 1 },
-      note: 'big=precision / over=overflow / under=underflow；exact、dec、str 内的数字不报',
+      expect: { total: 5, number: 4, precision: 2, overflow: 1, underflow: 1, keyOrder: 1 },
+      note: 'big+exp=precision / over=overflow / under=underflow；exact、dec、str 内数字、重复整数键 dupKeys 都不报',
     },
   );
   check(
     'dirty:bar-and-text',
-    d.barVisible === true && d.jumpVisible === true && String(d.barText || '').includes('4 处失真') && String(d.barText || '').includes('大整数精度 3 处') && String(d.barText || '').includes('整数键顺序 1 处'),
+    d.barVisible === true &&
+      d.jumpVisible === true &&
+      String(d.barText || '').includes('5 处失真') &&
+      String(d.barText || '').includes('大整数精度 2 处') &&
+      String(d.barText || '').includes('数字上溢 1 处') &&
+      String(d.barText || '').includes('数字下溢 1 处') &&
+      String(d.barText || '').includes('整数键顺序 1 处'),
     { barVisible: d.barVisible, jumpVisible: d.jumpVisible, barText: d.barText },
   );
   check(
     'dirty:hits-order-and-fields',
     Array.isArray(d.hits) &&
-      d.hits.length === 4 &&
+      d.hits.length === 5 &&
       d.hits[0]?.kind === 'number' &&
       d.hits[0]?.reason === 'precision' &&
-      d.hits[1]?.reason === 'overflow' &&
-      d.hits[2]?.reason === 'underflow' &&
-      d.hits[3]?.kind === 'key-order' &&
+      d.hits[1]?.reason === 'precision' &&
+      d.hits[2]?.reason === 'overflow' &&
+      d.hits[3]?.reason === 'underflow' &&
+      d.hits[4]?.kind === 'key-order' &&
       d.hits.every((h) => typeof h.offset === 'number' && h.snippet.length <= 48) &&
       d.hits[0].literal === '1234567890123456789' &&
       d.hits[0].parsed === '1234567890123456800',
@@ -206,7 +226,7 @@ try {
   report.close = phase4;
   check(
     'close:hides-bar-keeps-report',
-    phase4.before?.barVisible === true && phase4.closed === true && phase4.after?.barVisible === false && phase4.after?.status === 'found' && phase4.after?.counts?.total === 4,
+    phase4.before?.barVisible === true && phase4.closed === true && phase4.after?.barVisible === false && phase4.after?.status === 'found' && phase4.after?.counts?.total === 5,
     { closed: phase4.closed, barVisible: phase4.after?.barVisible, status: phase4.after?.status },
   );
 
@@ -274,7 +294,8 @@ try {
   check('page:no-console-error', consoleErrors.length === 0, { consoleErrors });
 
   for (const shot of ['fidelity-bar.png', 'fidelity-jump.png', 'fidelity-clean.png', 'fidelity-coexist.png', 'fidelity-10mb.png']) {
-    check('screenshot:' + shot, true, { path: path.join(SHOTS, shot) });
+    const file = path.join(SHOTS, shot);
+    check('screenshot:' + shot, existsSync(file), { path: file });
   }
 } catch (error) {
   report.fatal = String((error && error.stack) || error);

@@ -253,7 +253,26 @@ export interface FidelityHit {
 }
 
 /**
- * 保真报告（ADR-0003 修订 §3）：`hit` 只留前 `FIDELITY_MAX_HITS` 条片段，
+ * 保真统计（code review 收口）：`number` 是数字类总量，但**必须能按类别分别展示**——
+ * 把上溢/下溢也标成「大整数精度」会让「精确数量」这句话失真（ADR-0003 §4）。
+ */
+export interface FidelityCounts {
+  /** 数字类失真总量 = precision + overflow + underflow */
+  number: number;
+  /** 大整数精度流失（>15 位整数被 double 圆整，含带指数的整数尾数） */
+  precision: number;
+  /** 数字上溢（如 `1e400` → `Infinity`） */
+  overflow: number;
+  /** 数字下溢（如 `1e-400` → `0`） */
+  underflow: number;
+  /** 整数样式键重排（每对象最多 1 处） */
+  keyOrder: number;
+  /** = number + keyOrder */
+  total: number;
+}
+
+/**
+ * 保真报告（ADR-0003 修订 §3）：`hits` 只留**源文本顺序最靠前**的 `FIDELITY_MAX_HITS` 条片段，
  * `counts` 始终是**全量**统计（提示文案用精确数量，不能被截断误导）。
  */
 export interface FidelityReport {
@@ -263,8 +282,8 @@ export interface FidelityReport {
    * 不会产出 `skipped`；app 侧按「丢弃回包 / 条不出现」处理即可。
    */
   status: 'none' | 'found' | 'skipped';
-  counts: { number: number; keyOrder: number; total: number };
-  /** 前 `FIDELITY_MAX_HITS` 条（≤100），按源文本顺序 */
+  counts: FidelityCounts;
+  /** 源文本顺序最靠前的 ≤`FIDELITY_MAX_HITS` 条（截断时 `truncated=true`） */
   hits: FidelityHit[];
   /** true = 命中数超过 hits 长度（被截断） */
   truncated: boolean;

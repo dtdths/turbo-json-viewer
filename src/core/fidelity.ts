@@ -22,30 +22,37 @@
  * 实现纪律：
  *   - **一遍 charCode 扫描**（不逐字符正则）：字符串整段跳过（含 `\` 转义），只在结构层判断
  *     数字字面量与对象键；递归/容器状态全部用显式栈。
- *   - 每 `yieldEvery` 字符（默认 `FIDELITY_YIELD_BYTES` = 256 KB）`await onYield()` 并检查
+ *   - 每 `yieldEvery` 字符（默认 `FIDELITY_YIELD_CHARS` = 256K 字符）`await onYield()` 并检查
  *     `shouldCancel()`；让出按字符块做，`i` 单调前进 → 状态机可恢复。取消返回 `null`（不抛错）。
  *     默认让出是**宏任务**（`macroYield()`，共享 MessageChannel）——微任务让出不会让 Worker
  *     处理排队的命令，会整段卡住窗口/大纲/搜索（实测 10MB 大纲 expand 1ms → 34ms）。
  *   - 源文本可能是**截断修复前的非法 JSON**（ADR 修订 2026-11-03 §2）：扫描器对非法文本
  *     只做宽松跳过，绝不抛错——保真报告不能拖垮已打开的文档。
- *   - 命中顺序 = 源文本出现顺序（数字命中边扫边出，键序命中在对象 `}` 处出，
- *     故最后按 `offset` 排一次；只排保留的 ≤100 条，成本可忽略）。
+ *   - 命中顺序 = **源文本顺序最靠前的 ≤maxHits 条**：数字边扫边出（offset 递增，走 O(1) 快路径），
+ *     键序命中在对象 `}` 处才产出（offset 是 `{`，可能比已收数字更早），故按 offset **有序插入**并
+ *     淘汰最大 offset，内存恒为 maxHits 条（code review 收口：原先「先截断再排序」会漏掉晚产出但更早的键序命中）。
  */
 import type { FidelityHit, FidelityReport } from '../protocol/types';
+import { now, roundMs } from '../shared/timing';
 
 /** `hits` 片段上限（counts 不受限） */
 export const FIDELITY_MAX_HITS = 100;
 /** 单条片段最大字符数（UTF-16 code unit） */
 export const FIDELITY_SNIPPET_MAX = 48;
-/** 扫描让出事件循环的字符块大小（字符数即 UTF-16 计数；50MB ≈ 200 次让出） */
-export const FIDELITY_YIELD_BYTES = 256 * 1024;
+/** 扫描让出事件循环的字符块大小（UTF-16 code unit 数，不是字节；50MB ≈ 200 次让出） */
+export const FIDELITY_YIELD_CHARS = 256 * 1024;
+/**
+ * 单对象「已见下标键」集合的上限：超过后放弃重复键追踪（超大数组样式对象），
+ * 此时重复键可能被误判成键序回退——已知边界，记 ADR 修订 §5。
+ */
+export const FIDELITY_KEY_TRACK_MAX = 4096;
 
 export interface FidelityScanOptions {
   /** `hits` 上限；缺省 `FIDELITY_MAX_HITS`（counts 始终全量） */
   maxHits?: number;
   /** 每让出一次检查；true → 立即返回 null */
   shouldCancel?: () => boolean;
-  /** 让出间隔（字符）；缺省 `FIDELITY_YIELD_BYTES` */
+  /** 让出间隔（字符）；缺省 `FIDELITY_YIELD_CHARS` */
   yieldEvery?: number;
   /** 每让出一次调用（默认 `macroYield()`：宏任务让出）；测试可注入计数 */
   onYield?: () => Promise<void>;
@@ -103,6 +110,7 @@ const CH_CR = 13;
 const CH_SPACE = 32;
 const CH_QUOTE = 34;
 const CH_COMMA = 44;
+const CH_PLUS = 43;
 const CH_MINUS = 45;
 const CH_DOT = 46;
 const CH_COLON = 58;
@@ -123,11 +131,6 @@ function isDigit(c: number): boolean {
 
 function isSpace(c: number): boolean {
   return c === CH_SPACE || c === CH_LF || c === CH_CR || c === CH_TAB;
-}
-
-/** 毫秒保留 3 位小数（与 raw-text 的 buildMs 同口径） */
-function roundMs(ms: number): number {
-  return Math.round(ms * 1000) / 1000;
 }
 
 /** ≤ FIDELITY_SNIPPET_MAX 字符；超出时留 47 字符 + `…`（总长恰好 48） */
@@ -283,6 +286,57 @@ function scanNumberEnd(text: string, start: number): number {
 }
 
 /**
+ * 把十进制字面量规范成 `{digits, exp}`（值 = digits × 10^exp；digits 去前导/尾随零，零 → `''`）。
+ * 只用于「带指数的数字是否被 double 圆整」的精确比对：同一数值的不同写法会得到同一结果
+ * （`0.5` / `5e-1` → `(5,-1)`；`1000` / `1e3` → `(1,3)`），因此可以直接判等。
+ * 解析失败（非法文本）返回 null——调用方按「宽松跳过」处理。
+ */
+function normalizeDecimal(lit: string): { digits: string; exp: number } | null {
+  let i = 0;
+  if (lit.charCodeAt(i) === CH_MINUS || lit.charCodeAt(i) === CH_PLUS) i += 1;
+  let intPart = '';
+  while (i < lit.length && isDigit(lit.charCodeAt(i))) {
+    intPart += lit[i];
+    i += 1;
+  }
+  let fracPart = '';
+  if (lit.charCodeAt(i) === CH_DOT) {
+    i += 1;
+    while (i < lit.length && isDigit(lit.charCodeAt(i))) {
+      fracPart += lit[i];
+      i += 1;
+    }
+  }
+  let exp = 0;
+  const e = lit.charCodeAt(i);
+  if (e === CH_E_UPPER || e === CH_E_LOWER) {
+    i += 1;
+    let expSign = 1;
+    if (lit.charCodeAt(i) === CH_PLUS) i += 1;
+    else if (lit.charCodeAt(i) === CH_MINUS) {
+      expSign = -1;
+      i += 1;
+    }
+    let raw = 0;
+    let digitsCount = 0;
+    while (i < lit.length && isDigit(lit.charCodeAt(i))) {
+      raw = raw * 10 + (lit.charCodeAt(i) - 48);
+      i += 1;
+      digitsCount += 1;
+    }
+    if (digitsCount === 0) return null;
+    exp = expSign * raw;
+  }
+  if (i !== lit.length || (intPart === '' && fracPart === '')) return null;
+  let digits = (intPart + fracPart).replace(/^0+/, '');
+  let power = exp - fracPart.length;
+  let end = digits.length;
+  while (end > 0 && digits.charCodeAt(end - 1) === 48) end -= 1;
+  power += digits.length - end;
+  return { digits: digits.slice(0, end), exp: power };
+}
+
+/**
  * 数字字面量 → 失真类别 + 「解析后」对照（不失真返回 null）。
  * 高精度小数（含 `.` 且无指数）v1 不报（ADR 修订 §2）。
  * 只返回判定结果、不构造 `FidelityHit`：海量命中时只为保留的 ≤100 条分配片段。
@@ -313,6 +367,19 @@ function classifyNumber(
   if (hasExp) {
     if (!Number.isFinite(value)) return { reason: 'overflow', parsed: String(value) };
     if (value === 0 && mantissaNonZero) return { reason: 'underflow', parsed: String(value) };
+    // 带指数的数字同样会被圆整（`1234567890123456789e0`、`1.234567890123456789e18`）：
+    // 用十进制规范化做精确比对（只对有效数字 >15 位的候选做，成本可忽略）。
+    const literalForm = normalizeDecimal(lit);
+    if (literalForm !== null && literalForm.digits.length > 15) {
+      const numberForm = normalizeDecimal(value.toExponential());
+      if (
+        numberForm === null ||
+        numberForm.digits !== literalForm.digits ||
+        numberForm.exp !== literalForm.exp
+      ) {
+        return { reason: 'precision', parsed: String(value) };
+      }
+    }
     return null;
   }
   // 高精度小数：v1 已知差距（ADR 修订 §2），不做字符串往返比较
@@ -345,8 +412,10 @@ interface Frame {
   expectKey: boolean;
   /** 已经出现过非下标键（之后再出现下标键 = 重排） */
   sawNonIndex: boolean;
-  /** 上一个下标键数值（-1 = 尚无） */
+  /** 上一个**新**下标键数值（-1 = 尚无；重复键不更新它） */
   lastIndex: number;
+  /** 已见过的下标键（判断重复键；JSON.parse 会吞并重复键，键序不因此改变） */
+  seenIndex: Set<number> | null;
   /** 已判定为重排（每对象最多 1 条） */
   broken: boolean;
   /** 键片段（追加到 ≤48 字符即停，只用于报告） */
@@ -360,6 +429,7 @@ function newFrame(kind: 'object' | 'array', open: number): Frame {
     expectKey: kind === 'object',
     sawNonIndex: false,
     lastIndex: -1,
+    seenIndex: null,
     broken: false,
     snippet: '',
   };
@@ -369,11 +439,16 @@ function newFrame(kind: 'object' | 'array', open: number): Frame {
 function recordKey(frame: Frame, text: string, keyFrom: number, keyTo: number): void {
   const index = keyIndexValue(text, keyFrom, keyTo);
   if (index >= 0) {
-    // 非下标键之后又出现下标键，或下标键**降序** → 该对象重排。
-    // 重复下标键（`{"1":a,"1":b}`）不算顺序损失：可见损失是重复键吞并（ADR §4 只记录不标记），
-    // 且 JSON.parse 的键序在这种输入里并没有变（只有 "1" 一个键），所以用严格 `<`。
-    if (frame.sawNonIndex || (frame.lastIndex >= 0 && index < frame.lastIndex)) frame.broken = true;
-    frame.lastIndex = index;
+    // 只让**首次出现**的下标键参与顺序判定：JSON.parse 会吞并重复键（后者覆盖前者），
+    // 键的枚举顺序只由「不同键的首现顺序」决定。例：`{"1":a,"2":b,"1":c}` → 键序 `1,2` 未变，
+    // 真损失是重复键吞并（ADR §4 只记录类），不能报成 key-order。
+    const seen = frame.seenIndex ?? (frame.seenIndex = new Set<number>());
+    if (!seen.has(index)) {
+      if (seen.size < FIDELITY_KEY_TRACK_MAX) seen.add(index);
+      // 非下标键之后又出现下标键，或不同下标键**降序** → 该对象重排
+      if (frame.sawNonIndex || (frame.lastIndex >= 0 && index < frame.lastIndex)) frame.broken = true;
+      frame.lastIndex = index;
+    }
   } else {
     frame.sawNonIndex = true;
   }
@@ -381,12 +456,6 @@ function recordKey(frame: Frame, text: string, keyFrom: number, keyTo: number): 
     const raw = text.slice(keyFrom, keyTo);
     frame.snippet += (frame.snippet === '' ? '' : ',') + raw.slice(0, FIDELITY_SNIPPET_MAX + 1);
   }
-}
-
-function now(): number {
-  return typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? performance.now()
-    : Date.now();
 }
 
 /**
@@ -407,7 +476,7 @@ export async function scanFidelity(
   const rawYieldEvery = opts.yieldEvery;
   const yieldEvery =
     rawYieldEvery === undefined || !Number.isFinite(rawYieldEvery) || rawYieldEvery < 1
-      ? FIDELITY_YIELD_BYTES
+      ? FIDELITY_YIELD_CHARS
       : Math.floor(rawYieldEvery);
   const onYield = opts.onYield;
   const shouldCancel = opts.shouldCancel;
@@ -417,21 +486,52 @@ export async function scanFidelity(
 
   const n = text.length;
   const stack: Frame[] = [];
+  /** 保留的命中片段：**始终按 offset 升序**、长度 ≤ maxHits（见 pushHit） */
   const hits: FidelityHit[] = [];
-  let numberCount = 0;
+  let precisionCount = 0;
+  let overflowCount = 0;
+  let underflowCount = 0;
   let keyOrderCount = 0;
   let nextYieldAt = yieldEvery;
 
-  /** 计一条数字命中；只有前 maxHits 条才构造片段（counts 永远全量） */
+  /**
+   * 按 offset 有序收下一条片段，只保留**源文本最靠前**的 maxHits 条：
+   * 数字的 offset 递增 → 常见路径 O(1) 追加/丢弃；键序命中在对象 `}` 处才产出（offset 是 `{`，
+   * 可能比已收数字更早）→ 二分插入并淘汰最大 offset。内存恒为 maxHits 条。
+   * （code review 收口：原先「先按发现顺序截断、最后再排序」会漏掉晚产出但源位置更早的键序命中。）
+   */
+  const pushHit = (hit: FidelityHit): void => {
+    if (maxHits === 0) return;
+    const size = hits.length;
+    if (size >= maxHits) {
+      if (hit.offset >= hits[size - 1].offset) return; // 满额且新的更晚 → 丢弃
+    } else if (size === 0 || hit.offset > hits[size - 1].offset) {
+      hits.push(hit);
+      return;
+    }
+    let lo = 0;
+    let hi = hits.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (hits[mid].offset <= hit.offset) lo = mid + 1;
+      else hi = mid;
+    }
+    hits.splice(lo, 0, hit);
+    if (hits.length > maxHits) hits.pop();
+  };
+
+  /** 计一条数字命中（按 reason 分别计数；片段只在进入保留集时才构造） */
   const addNumberHit = (
     start: number,
     end: number,
     cls: NonNullable<ReturnType<typeof classifyNumber>>,
   ): void => {
-    numberCount += 1;
-    if (hits.length >= maxHits) return;
+    if (cls.reason === 'precision') precisionCount += 1;
+    else if (cls.reason === 'overflow') overflowCount += 1;
+    else underflowCount += 1;
+    if (maxHits === 0) return;
     const literal = clip(text.slice(start, end));
-    hits.push({
+    pushHit({
       kind: 'number',
       reason: cls.reason,
       offset: start,
@@ -444,9 +544,8 @@ export async function scanFidelity(
   /** 计一条键序命中（同一对象最多 1 条，offset = 对象 `{`） */
   const addKeyOrderHit = (frame: Frame): void => {
     keyOrderCount += 1;
-    if (hits.length < maxHits) {
-      hits.push({ kind: 'key-order', offset: frame.open, snippet: clip(frame.snippet) });
-    }
+    if (maxHits === 0) return;
+    pushHit({ kind: 'key-order', offset: frame.open, snippet: clip(frame.snippet) });
   };
 
   /** 让出一拍；返回 true = 已被取消 */
@@ -550,13 +649,19 @@ export async function scanFidelity(
     i += 1;
   }
 
-  // 键序命中在对象 `}` 处才产出（offset 是 `{`），与数字命中混排后需按源顺序排一次
-  hits.sort((a, b) => a.offset - b.offset);
-
+  // hits 由 pushHit 维护为「offset 升序 + 只留最靠前 maxHits 条」，这里无需再排序
+  const numberCount = precisionCount + overflowCount + underflowCount;
   const total = numberCount + keyOrderCount;
   const report: FidelityReport = {
     status: total > 0 ? 'found' : 'none',
-    counts: { number: numberCount, keyOrder: keyOrderCount, total },
+    counts: {
+      number: numberCount,
+      precision: precisionCount,
+      overflow: overflowCount,
+      underflow: underflowCount,
+      keyOrder: keyOrderCount,
+      total,
+    },
     hits,
     truncated: total > hits.length,
     scanMs: roundMs(now() - t0),

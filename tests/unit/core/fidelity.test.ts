@@ -27,7 +27,7 @@ describe('scanFidelity — 大整数精度流失（precision）', () => {
     const text = '{"a":1234567890123456789}';
     const report = await scan(text);
     expect(report.status).toBe('found');
-    expect(report.counts).toEqual({ number: 1, keyOrder: 0, total: 1 });
+    expect(report.counts).toMatchObject({ number: 1, precision: 1, overflow: 0, underflow: 0, keyOrder: 0, total: 1 });
     expect(report.truncated).toBe(false);
     expect(report.hits).toHaveLength(1);
     expect(report.hits[0]).toMatchObject({
@@ -42,7 +42,7 @@ describe('scanFidelity — 大整数精度流失（precision）', () => {
   it('19 位但可精确表示（2^18 的十进制幂）→ 0 条', async () => {
     const report = await scan('1000000000000000000');
     expect(report.status).toBe('none');
-    expect(report.counts).toEqual({ number: 0, keyOrder: 0, total: 0 });
+    expect(report.counts).toMatchObject({ number: 0, precision: 0, overflow: 0, underflow: 0, keyOrder: 0, total: 0 });
     expect(report.hits).toEqual([]);
     expect(report.truncated).toBe(false);
   });
@@ -76,7 +76,7 @@ describe('scanFidelity — 上溢 / 下溢（带指数）', () => {
   it('1e400 → overflow；1e-400 → underflow（各 1 条，按源顺序）', async () => {
     const text = '[1e400,1e-400]';
     const report = await scan(text);
-    expect(report.counts).toEqual({ number: 2, keyOrder: 0, total: 2 });
+    expect(report.counts).toMatchObject({ number: 2, precision: 0, overflow: 1, underflow: 1, keyOrder: 0, total: 2 });
     expect(digest(report)).toEqual([
       ['number', 'overflow'],
       ['number', 'underflow'],
@@ -141,7 +141,7 @@ describe('scanFidelity — 整数样式键重排（key-order）', () => {
     const text = '{"2":1,"b":2,"1":3}';
     const report = await scan(text);
     expect(report.status).toBe('found');
-    expect(report.counts).toEqual({ number: 0, keyOrder: 1, total: 1 });
+    expect(report.counts).toMatchObject({ number: 0, keyOrder: 1, total: 1 });
     expect(report.hits[0]?.kind).toBe('key-order');
     expect(report.hits[0]?.offset).toBe(0);
     expect(report.hits[0]?.reason).toBeUndefined();
@@ -153,19 +153,22 @@ describe('scanFidelity — 整数样式键重排（key-order）', () => {
     expect((await scan('{"0":1,"1":2,"3":4,"b":5}')).status).toBe('none');
   });
 
-  it('下标键降序（"1","2","1"）→ 1 条（1 出现在 2 之后）', async () => {
-    const report = await scan('{"1":1,"2":2,"1":3}');
-    expect(report.counts.keyOrder).toBe(1);
+  it('不同下标键降序（"1","0"）→ 1 条', async () => {
+    expect((await scan('{"1":1,"0":2}')).counts.keyOrder).toBe(1);
   });
 
-  it('重复的下标键（"1","1"）不算键序损失（重复键吞并属 ADR §4 另一类）', async () => {
+  it('重复的下标键不算键序损失（重复键吞并属 ADR §4 另一类）', async () => {
     expect((await scan('{"1":1,"1":2}')).counts.keyOrder).toBe(0);
     expect((await scan('{"0":1,"0":2,"1":3}')).counts.keyOrder).toBe(0);
+    // code review 收口：`1,2,1` 的枚举顺序仍是 `1,2`（后者覆盖前者），键序未变 → 不能报
+    expect((await scan('{"1":1,"2":2,"1":3}')).counts.keyOrder).toBe(0);
+    // 但「重复键 + 真降序」仍要报：1,3,2
+    expect((await scan('{"1":1,"3":2,"2":3}')).counts.keyOrder).toBe(1);
   });
 
   it('非下标键在前、下标键倒序（"10","9"）→ 1 条', async () => {
     const report = await scan('{"b":1,"10":2,"9":3}');
-    expect(report.counts).toEqual({ number: 0, keyOrder: 1, total: 1 });
+    expect(report.counts).toMatchObject({ number: 0, keyOrder: 1, total: 1 });
   });
 
   it('键按 JSON 转义解码后判定：{"\\u0031":1,"0":2} → "1","0" 不升序 → 1 条', async () => {
@@ -203,12 +206,65 @@ describe('scanFidelity — 整数样式键重排（key-order）', () => {
   });
 });
 
+describe('scanFidelity — 带指数数字的尾数精度（code review 收口）', () => {
+  it('1234567890123456789e0 被圆整 → 1 条 precision', async () => {
+    const report = await scan('[1234567890123456789e0]');
+    expect(report.counts).toMatchObject({ number: 1, precision: 1, total: 1 });
+  });
+
+  it('1.23456789012345678e18 → precision（尾数 18 位、双精度只保留 17 位）', async () => {
+    const report = await scan('[1.23456789012345678e18]');
+    expect(report.counts.precision).toBe(1);
+  });
+
+  it('可精确表示的指数写法不误报：1e3 / 1000e0 / 1000000000000000000e0 / 1.5e2', async () => {
+    expect((await scan('[1e3,1000e0,1000000000000000000e0,1.5e2]')).counts.total).toBe(0);
+  });
+});
+
+describe('scanFidelity — 截断保留的是「源顺序最靠前」（code review 收口）', () => {
+  it('键序命中（对象 `{` 靠前、关闭靠后）不会被后发现的数字挤掉', async () => {
+    // 对象 `{` 在 offset 6；其中 big 数字 offset 更晚但先被扫到 → maxHits=1 时必须保留键序命中
+    const text = '{"ob":{"2":0,"b":1,"1":2,"big":1234567890123456789}}';
+    const report = await scan(text, { maxHits: 1 });
+    expect(report.hits).toHaveLength(1);
+    expect(report.hits[0]?.kind).toBe('key-order');
+    expect(report.hits[0]?.offset).toBe(6);
+    expect(report.counts.total).toBe(2);
+    expect(report.truncated).toBe(true);
+  });
+});
+
+describe('scanFidelity — counts 按类别拆分（精确数量不能被类别污染）', () => {
+  it('precision / overflow / underflow 分别计数，number 为三者之和', async () => {
+    const report = await scan('[1234567890123456789,1e400,1e-400,1234567890123456788]');
+    expect(report.counts).toMatchObject({
+      number: 4,
+      precision: 2,
+      overflow: 1,
+      underflow: 1,
+      keyOrder: 0,
+      total: 4,
+    });
+  });
+});
+
+describe('scanFidelity — 57 候选 → 2 失真的口径可回归（不依赖未跟踪的 .mock 样本）', () => {
+  it('57 个 >15 位数字里 55 个可精确表示、2 个不可 → counts.number = 2', async () => {
+    const exact = Array.from({ length: 55 }, () => '1000000000000000000');
+    const distorted = ['1234567890123456789', '9876543210987654321'];
+    const text = '[' + [...exact, ...distorted].join(',') + ']';
+    const report = await scan(text);
+    expect(report.counts).toMatchObject({ number: 2, precision: 2, total: 2 });
+  });
+});
+
 describe('scanFidelity — 混合文档 / 截断 / 顺序', () => {
   const text = '{"2":1,"b":2,"1":3,"n":1234567890123456789,"e":1e400}';
 
   it('命中按源文本顺序、counts 分类正确', async () => {
     const report = await scan(text);
-    expect(report.counts).toEqual({ number: 2, keyOrder: 1, total: 3 });
+    expect(report.counts).toMatchObject({ number: 2, precision: 1, overflow: 1, underflow: 0, keyOrder: 1, total: 3 });
     expect(digest(report)).toEqual([
       ['key-order', undefined],
       ['number', 'precision'],
@@ -296,7 +352,7 @@ describe('scanFidelity — 边界', () => {
     for (const text of ['', '   ', 'null', '{"a":1}', '[]', '{}']) {
       const report = await scan(text);
       expect(report.status, `text: ${JSON.stringify(text)}`).toBe('none');
-      expect(report.counts).toEqual({ number: 0, keyOrder: 0, total: 0 });
+      expect(report.counts).toMatchObject({ number: 0, precision: 0, overflow: 0, underflow: 0, keyOrder: 0, total: 0 });
       expect(report.hits).toEqual([]);
       expect(report.truncated).toBe(false);
       expect(typeof report.scanMs).toBe('number');

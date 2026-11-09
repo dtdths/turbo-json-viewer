@@ -1569,8 +1569,11 @@ function renderFidelity(): void {
     fidelityText.removeAttribute('title');
     return;
   }
+  // 精确数量必须**按类别**说：上溢/下溢不能算进「大整数精度」（code review 收口）
   const parts: string[] = [];
-  if (report.counts.number > 0) parts.push(`大整数精度 ${report.counts.number} 处`);
+  if (report.counts.precision > 0) parts.push(`大整数精度 ${report.counts.precision} 处`);
+  if (report.counts.overflow > 0) parts.push(`数字上溢 ${report.counts.overflow} 处`);
+  if (report.counts.underflow > 0) parts.push(`数字下溢 ${report.counts.underflow} 处`);
   if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
   const tail = report.truncated ? `（仅列前 ${report.hits.length} 条）` : '';
   const text = `检测到 ${total} 处失真：${parts.join(' · ')}${tail}`;
