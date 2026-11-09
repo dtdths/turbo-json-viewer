@@ -51,6 +51,7 @@ import { copyNodeText } from './copy';
 import { EditHistory, type EditEntry } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { scanFidelity } from './fidelity';
+import { jsonSizeLowerBoundChars } from './measure';
 import { jsonKind, RowModel } from './row-model';
 import { outlinePage } from './outline';
 import { DOC_ROOT_ID, RootStore, type Root, type RootSource } from './root-store';
@@ -347,9 +348,28 @@ export class DocService {
 
   /* ------------------------------ 子树编辑 ------------------------------ */
 
+  /**
+   * 取子树的规范 pretty JSON（编辑弹层数据源；edit-spec §7 / ADR-0006 §5），两段判据：
+   *
+   *   1. **预扫描（分配无关）**：`jsonSizeLowerBoundChars` 用显式栈累加字符**下界**，
+   *      跨过 `EDIT_MAX_BYTES` 立即早停 → 直接 TOO_LARGE。下界 ≤ 真实 UTF-8 字节数（论证见 core/measure.ts），
+   *      所以这里的拒绝**零误拒**；同时避免「先 stringify 整棵超大树、再被拒」的分配峰值（README §11 已知差距）。
+   *   2. **精确判据（达标路径）**：下界没超预算才 stringify，再用 `byteLengthOf` 判真实字节数——口径与旧实现一致。
+   *
+   * 注意：预扫描拒绝时**没有**精确 bytes，错误里的 `bytes` 是**字符下界**（≤ 真实字节数），
+   * 仅供 UI 展示量级（`formatBytes`）与「超 5MB」判定，不承诺等于真实字节数。
+   */
   private getNodeJson(cmd: Cmd<'getNodeJson'>): NodeJsonReply {
     const root = this.roots.require(cmd.rootId);
     const value = root.rowModel.valueAt(cmd.path);
+    const lowerBoundChars = jsonSizeLowerBoundChars(value, EDIT_MAX_BYTES);
+    if (lowerBoundChars > EDIT_MAX_BYTES) {
+      throw new CoreError({
+        code: 'TOO_LARGE',
+        message: `node JSON char lower bound is ${lowerBoundChars} (> ${EDIT_MAX_BYTES} bytes); pick a smaller subtree`,
+        bytes: lowerBoundChars,
+      });
+    }
     const text = JSON.stringify(value, null, 2);
     const bytes = byteLengthOf(text);
     if (bytes > EDIT_MAX_BYTES) {

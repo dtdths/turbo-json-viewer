@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CoreError } from '../../../src/protocol/errors';
 import { DocService } from '../../../src/core/doc-service';
 import type { Command, CoreEvent, LoadReply } from '../../../src/protocol/messages';
-import { OUTLINE_PAGE_MAX } from '../../../src/protocol/versions';
+import { EDIT_MAX_BYTES, OUTLINE_PAGE_MAX } from '../../../src/protocol/versions';
 
 const DOC = { a: 1, b: { c: 2 } };
 const JSON_TEXT = JSON.stringify(DOC);
@@ -363,6 +363,49 @@ describe('DocService — getNodeJson', () => {
     const err = await errorOf(svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.big' }));
     expect(err.code).toBe('TOO_LARGE');
     expect(err.bytes).toBeGreaterThan(5 * 1024 * 1024);
+  });
+
+  it('超大子树在 stringify 之前预扫描即拒：不产出 text，bytes 是字符下界量级', async () => {
+    const svc = new DocService();
+    await load(svc, JSON.stringify({ big: 'x'.repeat(6 * 1024 * 1024) }));
+
+    // 计数探针：守卫必须在 `JSON.stringify` 整棵子树之前给出 TOO_LARGE（README §11 已知差距的收口）
+    const stringifySpy = vi.spyOn(JSON, 'stringify');
+    try {
+      const err = await errorOf(svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.big' }));
+      expect(err.code).toBe('TOO_LARGE');
+      expect(stringifySpy).not.toHaveBeenCalled();
+      // 预扫描拒绝时没有精确 bytes：`bytes` 是字符下界（≤ 真实 UTF-8 字节数），
+      // 仍需 > 5MB 以便 toast 显示「子树过大（N MB）」的量级（≠ 等值承诺）。
+      expect(err.bytes).toBeGreaterThan(5 * 1024 * 1024);
+      expect('text' in err).toBe(false);
+    } finally {
+      stringifySpy.mockRestore();
+    }
+  });
+
+  it('5MB 边界：恰好等于预算放行（精确 bytes），超 1 个字符即 TOO_LARGE（预扫描零误拒）', async () => {
+    const svc = new DocService();
+    // 字符串标量的 pretty 文本 = 2 个引号 + 原文；ASCII 下字节数 = 字符数，可精确卡在预算上
+    const exact = 'x'.repeat(EDIT_MAX_BYTES - 2);
+    await load(svc, JSON.stringify({ exact, over: `${exact}x` }));
+
+    const ok = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.exact' });
+    expect(ok.text).toBe(`"${exact}"`);
+    expect(ok.bytes).toBe(EDIT_MAX_BYTES); // 达标路径仍是精确 UTF-8 字节数
+
+    const err = await errorOf(svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.over' }));
+    expect(err.code).toBe('TOO_LARGE');
+    expect(err.bytes).toBeGreaterThan(EDIT_MAX_BYTES);
+  });
+
+  it('达标路径的多字节子树：bytes 按 UTF-8 字节精确计（不是字符数）', async () => {
+    const svc = new DocService();
+    await load(svc, JSON.stringify({ s: '中文😀' }));
+    const reply = await svc.dispatch({ t: 'getNodeJson', rootId: DOC_ROOT, path: '$.s' });
+    expect(reply.text).toBe('"中文😀"');
+    expect(reply.bytes).toBe(new TextEncoder().encode(reply.text).byteLength);
+    expect(reply.bytes).toBeGreaterThan(reply.text.length);
   });
 });
 
