@@ -207,12 +207,11 @@ interface FidelityCounts {
   total: number;       // = number + keyOrder
 }
 interface FidelityReport {
-  status: 'none' | 'found' | 'skipped';
+  status: 'none' | 'found';   // 取消 = 命令回 CANCELLED，没有第三种状态
   counts: FidelityCounts;
-  hits: FidelityHit[];                             // ≤100
+  hits: FidelityHit[];                             // 源文本顺序最靠前的 ≤100 条
   truncated: boolean;
   scanMs: number;
-  skippedReason?: 'cancelled';
 }
 ```
 
@@ -230,7 +229,7 @@ interface FidelityReport {
 
 - **实测对拍**：`.mock/1.json`（879,330 字符）上 >15 位候选 **57** → 精确判定后真失真 **2**（`offset 14871 / 339094`，均为 `precision`），key-order **0**；与 `prototype` 原型脚本逐条一致。另用 5,860 组混合键排列与真实 `Object.keys(JSON.parse(src))` 对拍，**0 不一致**（含 `\u0031` 转义键、`4294967294/4294967295` 边界、前导零 `01`）。
 - **性能**：合成 50MB **≈330ms / 199 次让出**（ADR 估 288ms，同量级）；10MB 在 Chrome Worker 内 **scanMs ≈48ms**。
-- **偏差 1（已采纳）**：`status:'skipped'` 只在类型里预留——取消语义是回包 `CANCELLED`（与 load/search 同口径），core 不会产出 `skipped`。
+- **偏差 1（已收口）**：`status:'skipped'` 不再预留——取消语义是回包 `CANCELLED`（与 load/search 同口径），第二种状态从未产出；code review 后**删掉** `'skipped'` 与 `skippedReason`，避免读代码的人以为存在第三条路径。
 - **偏差 2（已采纳）**：**超长纯整数**（如 400 位）按 `overflow` 报：`JSON.parse` 同样把它改写成 `Infinity`，不报会漏；ADR 表格里 overflow 的候选只写了「带指数」，实现按「结果非有限」判定。
 - **偏差 3（已采纳，2026-11-09 二次收口）**：**重复的整数样式键不参与键序判定**（`{"1":a,"2":b,"1":c}` 的枚举顺序仍是 `1,2`）。
   首版只用了严格 `<`，仍会把 `1,2,1` 报成键序回退；code review 后改为「只让首次出现的下标键参与顺序判定」，
@@ -253,3 +252,8 @@ interface FidelityReport {
 - **文档/常量同步**：README §3 模块清单补 `fidelity`/`FidelityCounts`/`shared/timing`；`build-and-test` 目录树把
   `fidelity.ts` 从 `import/` 挪出；`seams` 的 `CANCELLED` 行补 fidelity 来源；`FIDELITY_YIELD_CHARS` 改名（原 `_BYTES` 名不副实）；
   `now`/`roundMs` 抽到 `shared/timing`。
+- **技术债清理（第二轮）**：体积提示条与保真提示条的「显隐 + 文案 + 关闭」抽成 `view/panels/notice-bar.ts`
+  （标记约定 `[data-notice-text]`/`[data-notice-close]`/`[data-notice-action]`，CSS 统一 `.noticebar*`，两条各留 id 供测试）；
+  `Frame` 改判别联合（数组帧不再分配对象专属字段）；删掉永不产出的 `'skipped'`/`skippedReason`；
+  去掉 `revealFirstFidelityHit` 这层 Middle Man；`indexKeyValue`/`keyIndexValue` 注明是「规范实现 + 零分配快速路径」，
+  不是待合并的重复代码。
