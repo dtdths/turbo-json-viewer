@@ -10,6 +10,7 @@
  *   - 全部文本写入走 textContent / replaceChildren，**禁用 innerHTML**（XSS 面 + 性能）。
  *   - 行节点池复用：update() 拿 null 分配空闲槽位，否则原地更新。
  */
+import { writeMarkedText } from '../highlight';
 import type { JsonKind, Row } from '../../protocol/types';
 
 export interface RowHandle {
@@ -34,7 +35,6 @@ export interface RowRenderer {
   create(): void;
   update(handle: RowHandle | null, row: Row, ctx: RowContext): RowHandle;
   setSelected(handle: RowHandle | null): void;
-  setHit(handle: RowHandle, hit: boolean): void;
   destroy(): void;
 
   /**
@@ -104,38 +104,12 @@ function createAction(action: 'copy' | 'edit'): HTMLButtonElement {
   return el;
 }
 
-/** 写入文本；有搜索词时把命中片段包进 <mark>（全部走 textContent，不用 innerHTML）。 */
+/**
+ * 写入文本；有搜索词时把命中片段包进 `<mark class="row__hit">`。
+ * 匹配由 shared/highlight 计算、DOM 写入由 view/highlight 统一承担（下标基于原串，全部走 textContent）。
+ */
 function setText(el: HTMLElement, text: string, term?: string): void {
-  if (!term) {
-    el.textContent = text;
-    return;
-  }
-  const haystack = text.toLowerCase();
-  const needle = term.toLowerCase();
-  if (!needle) {
-    el.textContent = text;
-    return;
-  }
-  const first = haystack.indexOf(needle);
-  if (first < 0) {
-    el.textContent = text;
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  let cursor = 0;
-  for (;;) {
-    const hit = haystack.indexOf(needle, cursor);
-    if (hit < 0) break;
-    if (hit > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, hit)));
-    const mark = document.createElement('mark');
-    mark.className = 'row__hit';
-    mark.textContent = text.slice(hit, hit + term.length);
-    fragment.appendChild(mark);
-    cursor = hit + term.length;
-  }
-  if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
-  el.replaceChildren(fragment);
+  writeMarkedText(el, text, term, 'row__hit');
 }
 
 interface RowSlot {
@@ -157,35 +131,21 @@ interface RowSlot {
 export class DomRowPool implements RowRenderer {
   readonly rowHeight: number;
 
-  private host: HTMLElement | null = null;
+  private readonly host: HTMLElement;
   private readonly slots: RowSlot[] = [];
   private readonly initialPoolSize: number;
   private selectedKey: number | null = null;
   private created = false;
 
-  /** 兼容两种装配方式：`new DomRowPool(24)`（host 交给 TreeView）或 `new DomRowPool(host, opts)`。 */
-  constructor(host: HTMLElement, opts?: DomRowPoolOptions);
-  constructor(options?: number | DomRowPoolOptions);
-  constructor(hostOrOptions: HTMLElement | number | DomRowPoolOptions = {}, opts?: DomRowPoolOptions) {
-    let options: number | DomRowPoolOptions;
-    if (hostOrOptions instanceof HTMLElement) {
-      this.host = hostOrOptions;
-      options = opts ?? {};
-    } else {
-      options = hostOrOptions;
-    }
-    if (typeof options === 'number') {
-      this.rowHeight = options;
-      this.initialPoolSize = 64;
-    } else {
-      this.rowHeight = options.rowHeight ?? 24;
-      this.initialPoolSize = Math.max(0, Math.floor(options.poolSize ?? 64));
-    }
+  /** host 由 factory 在构造时注入（main.ts：`new DomRowPool(host, { rowHeight })`）。 */
+  constructor(host: HTMLElement, opts: DomRowPoolOptions = {}) {
+    this.host = host;
+    this.rowHeight = opts.rowHeight ?? 24;
+    this.initialPoolSize = Math.max(0, Math.floor(opts.poolSize ?? 64));
   }
 
   create(): void {
     if (this.created) return;
-    if (!this.host) throw new Error('DomRowPool.create(): missing host element');
     this.created = true;
     for (let i = 0; i < this.initialPoolSize; i++) this.allocSlot();
   }
@@ -203,10 +163,6 @@ export class DomRowPool implements RowRenderer {
     }
     this.selectedKey = handle ? handle.key : null;
     if (handle) this.slots[handle.key]?.el.classList.add('is-selected');
-  }
-
-  setHit(handle: RowHandle, hit: boolean): void {
-    this.slots[handle.key]?.el.classList.toggle('is-hit', hit);
   }
 
   setTop(handle: RowHandle, topPx: number): void {
@@ -252,7 +208,6 @@ export class DomRowPool implements RowRenderer {
 
   private allocSlot(): RowSlot {
     const host = this.host;
-    if (!host) throw new Error('DomRowPool: row pool has no host element');
     const el = document.createElement('div');
     el.className = 'row';
     el.setAttribute('role', 'treeitem');

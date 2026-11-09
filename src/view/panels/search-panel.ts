@@ -15,6 +15,7 @@
  * 硬约束：全部文本走 textContent / createElement / replaceChildren，**禁 innerHTML**。
  * DOM 契约（§3.1）的 class / id 由 app 与 smoke 脚本依赖，不要改名。
  */
+import { writeMarkedText } from '../highlight';
 import type { SearchFilter, SearchPanelView } from '../../viewmodel/search-state';
 import {
   SEARCH_RESULT_OVERSCAN,
@@ -122,36 +123,11 @@ function createChevronIcon(up: boolean): SVGSVGElement {
 
 /**
  * 把 text 写入 el，命中片段包进 `<mark class="result__hit">`。
- * 大小写不敏感、允许同一片段多次命中；全部走 textContent / createElement。
+ * 匹配由 shared/highlight 计算、DOM 写入由 view/highlight 统一承担（下标基于原串，全部走 textContent）。
  * 路径（key）与值预览共用本函数。
  */
 function writeHighlighted(el: HTMLElement, text: string, term: string): void {
-  const needle = term.toLowerCase();
-  if (needle.length === 0) {
-    el.textContent = text;
-    return;
-  }
-
-  const haystack = text.toLowerCase();
-  let cursor = 0;
-  let hit = haystack.indexOf(needle, cursor);
-  if (hit < 0) {
-    el.textContent = text;
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  while (hit >= 0) {
-    if (hit > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, hit)));
-    const mark = document.createElement('mark');
-    mark.className = 'result__hit';
-    mark.textContent = text.slice(hit, hit + needle.length);
-    fragment.appendChild(mark);
-    cursor = hit + needle.length;
-    hit = haystack.indexOf(needle, cursor);
-  }
-  if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
-  el.replaceChildren(fragment);
+  writeMarkedText(el, text, term, 'result__hit');
 }
 
 interface ResultSlot {
