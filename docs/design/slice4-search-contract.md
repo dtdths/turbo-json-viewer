@@ -21,6 +21,7 @@
 - 边界：空查询清空；无命中态；`truncated` 提示；`seq` 过期丢弃；`docRevision` 不匹配 → 清空并提示重搜。
 - 全部文本走 `textContent` / `createElement` / `replaceChildren`，**禁 `innerHTML`**。
 - 范围裁定：本 slice **不做** Aa / `.*` 开关（大小写走 core 默认不敏感；正则不在 v1），`direction.md` §6 的三开关已注记延后；键名/值过滤由 all/key/value 承担。
+  - **后续（2026-11-09）**：该裁定已被 **ADR-0014** 解禁——`Aa`（区分大小写）与 `.*`（正则）落地，语义矩阵 / `BAD_PATTERN` / ReDoS 安全边界 / 不持久化见 ADR-0014。本文件其余契约（`SearchState` / 面板 / 跳转 / 过滤 / 50k 截断）不变。
 
 ## 2. `src/viewmodel/search-state.ts`（owner: search-vm-dev）
 
