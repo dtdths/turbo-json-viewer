@@ -509,7 +509,8 @@ async function extClearPhase() {
 async function extImportLayerGuardPhase() {
   const out = {};
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-  const tree = document.getElementById('tree');
+  // 焦点回树：a11y 单一真相是内层 .tjv-tree 滚动容器（#tree 只是骨架容器，不再可聚焦）
+  const tree = document.querySelector('#tree [role="tree"]') || document.getElementById('tree');
   if (tree && tree.focus) tree.focus();
   await window.__extSmoke.settle(150);
   out.before = window.__extSmoke.docState();

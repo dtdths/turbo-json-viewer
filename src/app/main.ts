@@ -81,6 +81,7 @@ const emptyBusy = el('emptyBusy');
 const emptyClose = el<HTMLButtonElement>('emptyClose');
 const importBtn = el<HTMLButtonElement>('importBtn');
 const pickBtn = el<HTMLButtonElement>('pickBtn');
+const dropzone = el('dropzone');
 const toast = el('toast');
 const searchHost = el('searchPanel');
 const panelTitle = el('panelTitle');
@@ -148,6 +149,14 @@ const tree = new TreeView(treeHost, {
   },
 });
 tree.mount();
+
+/**
+ * 把焦点交给树（a11y 单一真相）：`#tree` 只是骨架容器，`role=tree` / `tabindex` 挂在内层 `.tjv-tree`
+ * 滚动容器上（TreeView.mount）。所有「焦点回树」的路径都走这里，避免一半聚焦外层、一半聚焦内层。
+ */
+function focusTree(): void {
+  treeHost.querySelector<HTMLElement>('.tjv-tree')?.focus();
+}
 
 /* ---------------- 原始文本视图（#11 / ADR-0003 修订 2026-11-03） ---------------- */
 
@@ -482,7 +491,7 @@ function onLoaded(reply: LoadReply): void {
   void outlineState.open(rid);
   setPanel('doc');
   updateStatus();
-  treeHost.focus();
+  focusTree();
   void setViewMode(settings.uiState().viewMode === 'raw' ? 'raw' : 'tree', { persist: false });
 }
 
@@ -545,6 +554,13 @@ importBtn.addEventListener('click', () => {
   else fileInput.click();
 });
 pickBtn.addEventListener('click', () => fileInput.click());
+// 拖放区空白处点击 = 「选择文件」（鼠标便利路径；键盘入口仍是内层 #pickBtn，
+// 容器自身不声明 button 语义）。点在 #pickBtn 上时由它自己处理，避免弹两次选择框。
+dropzone.addEventListener('click', (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button')) return;
+  if (!pickBtn.disabled) fileInput.click();
+});
 fileChip.addEventListener('click', () => {
   if (rootId) openImportLayer();
   else fileInput.click();
@@ -1051,7 +1067,7 @@ function hideContextMenu(): void {
   ctxMenu.hidden = true;
   ctxPath = null;
   // a11y：键盘关闭（Esc/激活项）后焦点还给树，避免掉到 body（opener 即树滚动容器）
-  if (hadFocus) treeHost.querySelector<HTMLElement>('.tjv-tree')?.focus();
+  if (hadFocus) focusTree();
 }
 
 /* ---------------- 复制四格式（ADR-0010） ---------------- */
@@ -1613,7 +1629,7 @@ async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {
 
   if (mode === 'tree') {
     updateStatus();
-    if (changed) treeHost.querySelector<HTMLElement>('.tjv-tree')?.focus();
+    if (changed) focusTree();
     return;
   }
 

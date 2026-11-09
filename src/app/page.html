@@ -119,7 +119,8 @@
       </aside>
 
       <div class="tree-wrap">
-        <div class="tree" id="tree" role="tree" tabindex="0" aria-label="JSON 树视图"></div>
+        <!-- 骨架容器：role=tree / tabindex / aria-label 由 TreeView 挂到内层 .tjv-tree 滚动容器（a11y 单一真相） -->
+        <div class="tree" id="tree"></div>
       </div>
 
       <!-- 原始文本视图（#11 / ADR-0003 修订）：只读、行虚拟化、语法高亮只对屏幕内行 -->
@@ -188,7 +189,8 @@
       <button class="btn" type="button" id="emptyPendingReplace">替换当前文档</button>
     </div>
     <div class="empty__busy" id="emptyBusy" hidden>正在解析…</div>
-    <div class="dropzone" id="dropzone" role="button" tabindex="0">
+    <!-- 拖放区只是放置目标：键盘入口是内层 #pickBtn（容器不再声明 button 语义，避免嵌套交互元素） -->
+    <div class="dropzone" id="dropzone">
       <strong>拖放 JSON 文件到这里</strong>
       <span class="dropzone__hint">或 <button class="linkbtn" type="button" id="pickBtn">选择文件</button> · <kbd>⌘V</kbd> 粘贴剪贴板</span>
     </div>
