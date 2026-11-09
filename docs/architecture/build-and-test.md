@@ -16,7 +16,7 @@ turbo-json-viewer/
 │   │   ├── sw.ts             #   最小 SW：action.onClicked → 打开 page.html
 │   │   ├── page.html         #   扩展页（非 popup），显式 <link page.css>
 │   │   ├── manifest.json     #   MV3 清单（见 §2）
-│   │   ├── transport/        #   CoreTransport：worker-transport / in-process-transport
+│   │   ├── transport/        #   CoreTransport：worker-transport（生产）/ in-process-core（ModelInProcess，测试/bench）
 │   │   ├── storage/          #   ViewStateStore：chrome.storage.local 实现
 │   │   └── import/           #   粘贴 / 拖放 / 文件选择 → arrayBuffer transfer
 │   ├── view/                 # DOM 视图层（只认 RowWindowSource 的快照）
@@ -51,11 +51,12 @@ turbo-json-viewer/
 │   │   ├── edit-history.ts   #   replaceNode 的 undo/redo/reset（深度 100）
 │   │   ├── trail.ts          #   选中 → MapTrail（O(depth)，兄弟 ±2）
 │   │   ├── copy.ts           #   子树 JSON / 路径 / 原值 / 键名
+│   │   ├── measure.ts        #   子树 JSON 体积字符下界预扫（分配无关、早停；getNodeJson 5MB 守卫）
 │   │   └── profile.ts        #   Document Profile 采样（异步、不阻塞首帧）
-│   └── shared/               # 纯工具（零依赖）：path、json-lex、window、num、timing
+│   └── shared/               # 纯工具（零依赖）：path、json-lex、highlight、window、num、timing
 ├── tests/
 │   ├── unit/                 # 按层镜像 src：core / viewmodel / protocol / shared
-│   ├── contract/             # CoreTransport 共享用例 + 两种适配器跑法
+│   ├── contract/             # CoreTransport 共享用例（core-transport.cases.ts）+ 两种适配器跑法（in-process / worker + FakeWorker）
 │   └── fixtures/             # 截断 JSON fixture、合成行数据、memory 替身
 ├── bench/                    # 性能基准（Node 驱动 CfT），结果落 .spike/，不进 CI
 ├── build.mjs                 # esbuild 配置 + 静态拷贝 + 体积门禁

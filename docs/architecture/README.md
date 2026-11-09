@@ -53,6 +53,7 @@
 | `versions` | `docRevision` / `rowVersion` / `seq` 的语义与校验谓词；`RAW_CP_EVERY` / `RAW_MAX_LINE_LENGTH` / `RAW_LINE_DISPLAY_MAX` / `OUTLINE_PAGE` / `OUTLINE_PAGE_MAX` | `isStaleRow(a,b): boolean` |
 | `errors` | 错误码：`STALE_ROW`/`STALE_ROOT`/`STALE_DOC`/`TOO_LARGE`/`TOO_MANY_ROWS`/`PARSE`/`TIMEOUT`/`WORKER_CRASH`/`CANCELLED` | 判别联合的 error variant |
 | `shared/json-lex` | 零依赖单趟 JSON lexer 原语（`lexToken`/`skipWs`/`lexLine`）；core 的 pretty 行走器与 view 的行高亮共用 | `lexLine(line): Run[]`（0.2µs/行） |
+| `shared/highlight` | 搜索命中**区间**计算（纯函数、无 DOM）：大小写不敏感、下标基于原串（ASCII 快路径 / 非 ASCII 走 `giu` 正则避免 `İ` 折叠长度漂移）；DOM 写入在 `view/highlight` | `hitRanges(text, term): HitRange[]` |
 
 ### 3.2 core（Worker 内，框架无关、纯 TS 可单测）
 
@@ -71,6 +72,7 @@
 | `EditHistory` | `replaceNode` 的 undo/redo/reset（深度 100，old/new 快照） | `apply/undo/redo/reset` | 与行模型增量更新同事务 |
 | `Trail` | 选中节点 → `MapTrail`（O(depth)，兄弟 ±2） | `trail(root, path)` | 不遍历全文档 |
 | `Copy` | 子树 JSON / 路径 / 原值 / 键名 | `copy(root, handle, fmt)` | 大子树预算 |
+| `Measure` | 子树 JSON 体积的**字符数下界**预扫描（显式栈、分配无关、跨预算早停） | `jsonSizeLowerBoundChars(value, limit): number` | `getNodeJson` 5MB 守卫在 stringify 前拒绝超大子树（下界 ≤ 真实字节数 ⇒ 零误拒） |
 | `Profile` | Document Profile 采样（键/路径样本、类型计数） | `profile(root)` | 异步、不阻塞首帧 |
 
 ### 3.3 viewmodel（主线程，无 DOM）
@@ -92,7 +94,8 @@
 |---|---|---|
 | `TreeView` | 树容器：行池、滚动、选中、命中、a11y activedescendant、锚定 | `render(snapshot)` + `events(TreeIntent)` |
 | `RawView` | 原文视图容器（ADR-0003 修订）：固定行高虚拟化 + 行号 gutter + 横向滚动 + 屏内行高亮 | `render(rawSnapshot)` + `flashLine(line)` + `onScroll(px)` |
-| `RowRenderer` | 单行渲染适配器（v1 = DOM 节点池 + textContent） | `create/update/setSelected/setHit/destroy` |
+| `RowRenderer` | 单行渲染适配器（v1 = DOM 节点池 + textContent）；命中态走 `RowContext.hit` | `create/update/setSelected/destroy` |
+| `highlight` | `<mark class="row__hit|result__hit">` 写入器（全走 textContent/createElement，禁 innerHTML）；树行与搜索结果**共用一份** | `writeMarkedText(el, text, term, markClass)` |
 | `ActivityBar` / `Toolbar` / `StatusBar` | 外壳：模式切换、文档动作、只读信息 | 事件上抛给 app/viewmodel |
 | `SearchPanel` / `OutlinePanel` / `SettingsPanel` | 左面板（C） | `setModel(model)` + 意图 |
 | `SelectionPanel` / `ProfilePanel` / `EditsPanel` | 右工作区模块（C） | 同上 |
@@ -106,7 +109,9 @@
 | module | 职责 |
 |---|---|
 | `page` | 创建 worker、实例化 `WorkerTransport`、`ChromeViewStateStore`、装配 viewmodel + view |
-| `worker` | Worker 入口：实例化 `DocService` + 传输适配器（`onmessage` → `dispatch`） |
+| `worker` | Worker 入口：实例化 `DocService` + 传输适配器（`onmessage` → `dispatch`）；事件只从 ctrl 通道单次派发 |
+| `transport/worker-transport` | `CoreTransport` 生产适配器：ctrl/win 双通道、超时、`WORKER_CRASH`（`onerror`/`onmessageerror`）、`CLOSED` 幂等关闭 |
+| `transport/in-process-core` | `InProcessCore`（ModelInProcess）：`commandCore` + 直接 `DocService.dispatch`，供 `tests/contract` 与 bench；不进生产 bundle |
 | `sw` | 最小 Service Worker：`action.onClicked → tabs.create(page.html)`，不持文档状态 |
 | `import` | paste / 文件选择+拖放 / 剪贴板；`arrayBuffer` transfer，文本永不进 DOM |
 
@@ -230,7 +235,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.6 保真提示（#23 / ADR-0003 修订 2026-11-09） | ✅ | `core/fidelity.ts`（**新建**：单趟 charCode 扫描源文本，无递归/无逐字符正则；字符串整段跳过；对象键**先解 JSON 转义**再判下标样式；整数 >15 位用 `BigInt(lit) !== BigInt(Number(lit))` 精确判定，另报 `1e400` 上溢 / `1e-400` 下溢；每 256K 字符让出事件循环（宏任务）、可取消；只留前 100 条片段 + 全量 `counts`）+ `DocService.fidelity`（**只读**、不推版本；`WeakMap<Root, report>` 按根身份缓存 = 编辑不重扫；文档替换 → `CANCELLED`）+ 协议 `fidelity {rootId}` / `FidelityReply` / `FidelityHit|FidelityReport`；app 侧 `requestIdleCallback`（2s 兜底）首帧后拉取 + `fidelitySeq`+rootId 丢弃迟到回包 + 第三条 32px 保真条 `#fidelityBar`（精确数量文案、「查看原文」= 切原文 + `rawLocate(hits[0].offset)` + 行 flash，与修复 `at` 同一链路；`×` 只关条）；dev hooks `fidelityState/fidelityJump/fidelityClose`；**code review 收口（2026-11-09）**：`counts` 按类别拆 `precision/overflow/underflow`（文案不再把上溢/下溢标成「大整数精度」）、带指数尾数精度纳入检测（十进制规范化比对）、重复下标键不参与键序判定、截断改为「源顺序最靠前 100 条」（有序插入 + 淘汰最大 offset）、`now/roundMs` 抽 `shared/timing`、`FIDELITY_YIELD_CHARS` 改名、冒烟截图检查改为真断言；**第二轮技术债清理**：两条提示条抽 `view/panels/notice-bar.ts` + `.noticebar*` CSS、`Frame` 改判别联合、删掉永不产出的 `skipped` 字段、去掉 Middle Man；**单测 486**（fidelity 38 / doc-service 8 追加）；冒烟 `smoke-fidelity` **24/24**（新增；含与修复条并存层序、10MB 首帧/0 长任务） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **30.4KB gz**（预算 45，slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取））、`worker.js` **14.6KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数））、`page.css` **7.3KB gz**；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **30.8KB gz**（预算 45；slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取）、T2 技术债清理 +0.4（`view/highlight` 共用写入器 + `focusTree`/拖放区接线））、`worker.js` **14.9KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数）/ T2 `core/measure` 下界预扫 +0.3）、`page.css` **7.3KB gz**（T2 +0.0）；懒加载 chunk 合计 **132.1KB gz ≤140**（编辑器相关，仅首次打开 CM6 时加载；`page.js` 内不含 CM6）；构建 ~40ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -347,19 +352,21 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - **回归 / 收口**：新增的保真扫描改变了 Worker 的让出语义 → 发现并修复「微任务让出把 Worker 卡住」的回归（10MB 时大纲 expand 1ms → **34ms**；改宏任务让出后回 1ms 级，`smoke-outline` 53/53 复绿）；另按双轴 code review 收口（见上）→ 单测 **486/486**。
 - **体积**：`page.js` 29.6→**30.2KB gz**（+0.6：第三条提示条 + app 接线）、`worker.js` 12.4→**13.9KB gz**（+1.5：扫描器）、`page.css` 7.3（+0.0）；无新增依赖。
 
-**复跑**：`npm run build && npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs && node scripts/smoke-fidelity.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。
+**复跑**：`npm run check`（tsc + vitest + build）+ 13 套冒烟：`npm run smoke && npm run smoke:ext && node scripts/smoke-search.mjs && node scripts/smoke-extension-search.mjs && node scripts/smoke-expand.mjs && node scripts/smoke-edit.mjs && node scripts/smoke-copy.mjs && node scripts/smoke-repair.mjs && node scripts/smoke-settings.mjs && node scripts/smoke-export.mjs && node scripts/smoke-raw.mjs && node scripts/smoke-outline.mjs && node scripts/smoke-fidelity.mjs`（样本在 `.spike/samples/`，可用 `.spike/gen-samples.js` 生成；冒烟**不能并发**，CDP 端口 9883）。当前口径：**23 个测试文件 / 559 单测**（含 `tests/contract` 契约套件）+ 13 套冒烟。
 
-**已知差距 / code review 待收口**（2026-10-29 审查发现，均非 slice 4 回归，按优先级进 backlog）：
+**技术债清理 T2（2026-11-09 第二批，纯 refactor/无新功能）**：① 搜索高亮两份实现合一 + Unicode 大小写折叠修正（`shared/highlight` + `view/highlight`）；② 删死 API `RowRenderer.setHit`、`DomRowPool` 单一构造；③ `CoreTransport` 契约测试落地（InProcessCore vs WorkerTransport+FakeWorker 共用一份用例）+ `WORKER_CRASH`/`CLOSED` 崩溃收口 + 修掉「事件 ctrl+win 双投递 ×2」（`worker.ts` 事件只走 ctrl）；④ `getNodeJson` 5MB 守卫改「下界预扫早停 → 再精确判据」（`core/measure`）；⑤ CM6 EOF 诊断非空范围；⑥ a11y 骨架清理（`#tree`/`#dropzone` 去掉假语义，`role=tree` 单一真相在内层 `.tjv-tree`，焦点路径统一走 `main.ts` 的 `focusTree()`）。
+
+**已知差距 / code review 待收口**（2026-10-29 审查发现 + 2026-11-09 T2 清账，均非 slice 4 回归，按优先级进 backlog）：
 
 - ~~行高真值仍是常量 / `RowMetricsSource` 未实现~~ → **已实现**（ADR-0011 §6：`TreeView.setRowHeight` + `--row-h` + `RowWindowSource.setMetrics`，设置面板可选 20/22/24/26）。
 - ~~`ThemeState` / `PanelState` / `ViewStateStore` 未接线~~ → **已接线**（ADR-0011：`SettingsState` 承担主题 + 8 项设置 + 布局态，经 `ViewStateStore` 持久化）；未单独建 `ThemeState`/`PanelState` 类。
-- `RowRenderer.setHit` 与 seams §4 接口漂移（TreeView 实际走 `RowContext.hit`）；`DomRowPool` 双构造重载无第二个调用点。
-- `CoreTransport` 契约测试（InProcess vs Worker 同一套用例）与 `WORKER_CRASH` 错误路径测试仍缺（`TIMEOUT`/`CLOSED` 已在 `WorkerTransport` 实现）。
-- 搜索高亮 helper 在 `row-renderer` 与 `search-panel` 各一份；大小写折叠对 `İ/ẞ` 等字符会错位（罕见）；smoke 脚本的 reference walk 与 `core/search.ts` 是两份实现。
+- ~~`RowRenderer.setHit` 与 seams §4 接口漂移（TreeView 实际走 `RowContext.hit`）；`DomRowPool` 双构造重载无第二个调用点~~ → **已清**（2026-11-09 T2：删死 API `setHit`，`DomRowPool` 收敛为 `(host, opts?)` 单一构造）。
+- ~~`CoreTransport` 契约测试（InProcess vs Worker 同一套用例）与 `WORKER_CRASH` 错误路径测试仍缺~~ → **已补齐**（2026-11-09 T2：`tests/contract/` 一份共享用例 × `InProcessCore` / `createWorkerCore(FakeWorker)`；TIMEOUT/CLOSED/WORKER_CRASH 独立 describe；顺带修掉「事件被 ctrl+win 双投递 ×2」的潜伏缺陷）。
+- ~~搜索高亮 helper 在 `row-renderer` 与 `search-panel` 各一份；大小写折叠对 `İ/ẞ` 等字符会错位（罕见）~~ → **已清**（2026-11-09 T2：区间计算抽 `shared/highlight.hitRanges`、DOM 写入抽 `view/highlight.writeMarkedText`；非 ASCII 走 `giu` 正则取原串下标，İ 不再错位）。**剩余**：smoke 脚本的 reference walk 与 `core/search.ts` 是两份实现。
 - 搜索选项（slice 6.5 / ADR-0014）：正则的灾难性回溯防护是**启发式静态筛查**（只拒外层无界重复量词）——`(a|a)+` 这类「重叠分支 + 量词」会漏过，漏网病态正则可卡住 Worker 至 5s 命令超时（v1 无 Worker 自动恢复，需重新导入文档）；反向也会误杀 `(?:[.-][a-z]+)*` 这类常见「分组内含 `+` + 外层 `*`」写法。两个开关是会话态**不持久化**（刷新回默认，ADR-0011 的「不进 v1 设置」仍未变）。
 - `44px` / `SEARCH_LIMIT=50,000` 在常量、CSS、smoke 脚本多处重复；结果列表滚动直接重绘、未做 rAF 合并（实测 0 长任务）。
-- 空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）。
-- 编辑：弹层未做 **focus trap**（Tab 可离开面板）；CM6 对「文档末尾」的 lint 诊断是空范围（只有 gutter marker，无行内下划线）；`getNodeJson` 先 stringify 再判 5MB（超大子树会先在 Worker 内付出 stringify 成本才拒绝，建议预计算子树大小）；50MB 文档导出（stringify + 50MB postMessage）未实测。
+- ~~空态 dropzone 有 `role=button` 但无 click/键盘处理器；`#tree` 内外层重复 `role=tree/tabIndex`（骨架遗留）~~ → **已清**（2026-11-09 T2：`#tree`/`#dropzone` 去掉假的 button/tree 语义；`role=tree`/`tabindex` 只留内层 `.tjv-tree`，`main.ts` 统一走 `focusTree()`；dropzone 空白处点击 = 选择文件）。
+- 编辑：~~CM6 对「文档末尾」的 lint 诊断是空范围~~ → **已修**（2026-11-09 T2：`diagAt` 在 EOF 给非空范围）；~~`getNodeJson` 先 stringify 再判 5MB~~ → **已修**（2026-11-09 T2：`core/measure.jsonSizeLowerBoundChars` 分配无关下界预扫 + 早停，超预算在 stringify 前拒绝）；**剩余**：弹层未做 **focus trap**（Tab 可离开面板）；50MB 文档导出（stringify + 50MB postMessage）未实测。
 - 「替换文档」已有未保存确认；「关闭文档」功能本身尚未存在（随 #11 最近文档 / 多标签再做）。
 - ~~「全部展开」在已全展开时仍可点（core `changed=false` no-op，无 UI 反馈）~~ → **已实现**（2026-11-09 slice 6.5：`rowVersion` 未变 → info toast「已经全部展开了」/「已经全部收起了」，且不做无意义的换版本/回顶）；~~「N=500 可关」待设置面板~~ → 已实现（设置「小文档自动全部展开」）。
 - `expandAll` 不把**空容器**加入 `expanded`（`{a:{}}` 全展开返回 `changed=false`、`open=false`）；若要「空容器也显示展开态」需另定并改行模型语义。

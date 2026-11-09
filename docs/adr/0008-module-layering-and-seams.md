@@ -26,8 +26,8 @@
 
 - `CoreApi`：领域方法门面（load/window/toggle/replaceNode/getNodeJson/getTrail/search/cancelSearch/eval/copy/undo/redo/reset/profile/cancelLoad），是**调用方与测试共同面对的 interface**。
 - `CoreTransport`：`request<C extends Command>(cmd): Promise<ReplyOf<C>>` + `on(event)` + `close()`，是**线上唯一的跨线程 surface**。
-- 适配器：`WorkerTransport`（MessageChannel，v1）、`InProcessTransport`（单测直接调 `DocService`）、`FakeTransport`（视图测试脚本化回包）。
-- 三者的契约测试共用同一套用例（见 build-and-test.md），保证「线上一套、测试一套」不漂移。
+- 适配器：`WorkerTransport`（MessageChannel，v1）、`InProcessCore`（`src/app/transport/in-process-core.ts`，直接调 `DocService.dispatch`）、`FakeWorker`（`tests/contract/fake-worker.ts`，跑真实 `DocService` 的假 worker，可 `hold` 复现超时/崩溃/关闭）。
+- 契约测试已落地（2026-11-09）：`tests/contract/core-transport.cases.ts` 是**唯一一份**共享用例，分别打在 in-process 与 `createWorkerCore(FakeWorker)` 上，保证「线上一套、测试一套」不漂移。
 
 ### 3. 行窗口状态机放 viewmodel，不放 view、不放 core
 
@@ -35,7 +35,7 @@
 
 ### 4. 行渲染 = `RowRenderer` 适配器 + 固定行高契约
 
-- `TreeView` 管容器（行池、滚动、选中、命中、a11y、锚定）；`RowRenderer` 管单行 DOM（`create/update/setSelected/setHit/destroy`）。v1 适配器 = DOM 行节点池 + `textContent`（ADR-0005 实测：1000 帧 31.2ms）。
+- `TreeView` 管容器（行池、滚动、选中、命中、a11y、锚定）；`RowRenderer` 管单行 DOM（`create/update/setSelected/destroy`；命中态走 `RowContext.hit`，2026-11-09 删掉从未调用的 `setHit`）。v1 适配器 = DOM 行节点池 + `textContent`（ADR-0005 实测：1000 帧 31.2ms）。
 - **固定行高是不可调契约**：滚动映射 `contentPx = totalRows × rowH` 与行窗口坐标都建立在它上面（ADR-0001）。可调的是行高**取值**（22–26px），不是「可变行高」。
 - 主题/字体/行高/缩进/类型列/面板宽度/地图尺寸一律走 CSS 变量（`tokens.css` + `--row-h` 等）；唯一进入逻辑层的视觉参数是 `RowMetrics { rowHeight, viewportRows }`。
 - 结论：**换渲染器（DOM→canvas）只写一个 `RowRenderer` 适配器；调视觉只改 CSS；两者都不动行模型、状态机与协议。** 可变行高/换行明确排除（需改 ADR-0001 的行模型与滚动映射，属架构变更）。

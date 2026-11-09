@@ -85,17 +85,19 @@ export interface CoreTransport {
 
 | Adapter | implementation | 用途 |
 |---|---|---|
-| `WorkerTransport` | `MessageChannel` 专供 `window` 回包、`postMessage` 走控制命令；`seq→resolver` 表 | 生产（v1） |
-| `InProcessTransport` | 直接持有 `DocService`，方法调用转 Promise，无克隆 | `core`/`viewmodel` 单测、bench |
-| `FakeTransport` | 脚本化 reply/event、记录调用、可注入延迟与错误 | view 测试、错误路径 |
+| `WorkerTransport` | `MessageChannel` 专供 `window` 回包、`postMessage` 走控制命令；`seq→resolver` 表；`onerror`/`onmessageerror` → 崩溃收口 | 生产（v1） |
+| `InProcessCore` | `src/app/transport/in-process-core.ts`：直接持有 `DocService.dispatch`，方法调用转 Promise，无克隆（结构接口，不 import `core`） | `tests/contract` 双适配器用例、bench |
+| `FakeWorker`（测试替身） | `tests/contract/fake-worker.ts`：`WorkerLike` 假 worker，把 `connect` 的 ctrl/win 接到真实 `DocService`；`route`/`hold` 两模式复现超时/崩溃/关闭 | 契约测试、错误路径 |
 
 **不变式（顺序与生命周期）**
-1. 每个 `request` 的 reply **恰好一次**（resolve 或 reject）；`CoreEvent` 可多次、与 reply 无序。
+1. 每个 `request` 的 reply **恰好一次**（resolve 或 reject）；`CoreEvent` 可多次、与 reply 无序，但**只从 ctrl 通道单次派发**（`worker.ts` 事件不向 win 广播——否则订阅者会收到两份，2026-11-09 契约测试发现并修复）。
 2. `seq` 单调（`window`/`search`/`eval` 各自独立计数器）；迟到回包按 `seq` 丢弃，不 notify。
 3. 一切读请求带 `rootId + 版本`；版本不匹配由 core 回 `STALE_ROOT`/`STALE_DOC`，不返回旧数据。
 4. `load` 可被下一次 `load` 抢占：旧 pending 以 `CANCELLED` 结束、旧根释放，主线程按 `loadId` 丢弃。
-5. 超时默认 5s（`window`/`getTrail` 2s）且 **不自动重试**；`close()` 后 pending reject `CLOSED`、不再派 event；崩溃走 `WORKER_CRASH`。
+5. 超时默认 5s（`window`/`getTrail` 2s）且 **不自动重试**；`close()` **幂等**，pending 全部 reject `CLOSED`、关闭端口、不再派 event；Worker 崩溃（`onerror`/`onmessageerror`）→ pending 全部 reject `WORKER_CRASH`、清 timer，**之后新命令立即 reject 且不再 postMessage**（文档已丢失）。
 6. 同一 `rootId` 的结构变更（`toggle`/`replaceNode`/`undo`）由主线程串行化，读可并发；消息体必须 structured-clone-safe（`ArrayBuffer` 只在 `load` transfer）。
+
+**契约测试**（2026-11-09 落地）：`tests/contract/` 一份共享用例（`core-transport.cases.ts`）分别打在 `InProcessCore` 与 `createWorkerCore(FakeWorker)` 上（load/window/toggle/expand/search/outline/编辑/复制/导出/raw/fidelity/stats/trail/profile/事件通道）；TIMEOUT/CLOSED/WORKER_CRASH 属 Worker 适配器专有，放独立 describe。
 
 **失败模式**：`PARSE`（含 line/column）、`TIMEOUT`、`WORKER_CRASH`（文档丢失 → 提示重新导入，源文本已释放）。
 **性能约束**：`window` 端到端 ~2ms；50MB 首帧 150ms、主线程堆 0.72MB。
@@ -158,10 +160,11 @@ export interface RowRenderer {
   create(): void;                                            // 预建视口 + overscan 行池
   update(handle: RowHandle | null, row: Row, ctx: RowContext): RowHandle;
   setSelected(handle: RowHandle | null): void;
-  setHit(handle: RowHandle, hit: boolean): void;
   destroy(): void;
 }
 ```
+
+> 2026-11-09 技术债清理：删掉从未被调用的 `setHit()`（命中态实际走 `RowContext.hit`），`DomRowPool` 收敛为单一构造 `(host, opts?)`（原双构造重载无第二调用点）。
 
 **固定行高契约（硬）**
 - `rowHeight` 恒定、唯一来源 `RowMetrics.rowHeight`；行内容必须单行（`nowrap` + ellipsis），不得 wrap、不得由内容撑高，缩进用 `padding-left` 不用嵌套容器。
