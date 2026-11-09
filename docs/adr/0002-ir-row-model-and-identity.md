@@ -115,3 +115,37 @@
    根子树在 core 层是 no-op、不能代表真实成本，大子树全展开的耗时基准待补（见 README §11 已知差距）。
 8. **已知边界**：空容器无法通过菜单展开（禁用，与 `expandAll` 不把空容器置 open 一致，ADR-0013 同款口径）；
    与 `expandAll`/`collapseAll` 共用同一条 `ROW_BUDGET` 护栏。
+
+## 修订（2026-11-09）：一条根变更路径（版本规则与回包形状收口）
+
+> 架构走查候选 1（证据见 `$TMPDIR/architecture-review-20261109-202508.html`，Strong）。术语见 `CONTEXT.md`「根变更路径」。
+
+背景：`EditReply` 家族 8 条命令（`toggle` / `toggleSubtree` / `expandAll` / `collapseAll` /
+`replaceNode` / `undo` / `redo` / `reset`）各自拼回包、各自写版本规则。前 4 条手写一套（且**不带
+`history`**），后 4 条走 `editReply()`（带 `history`）——同一契约两种方言，版本与 `changed` 规则被抄 8 遍。
+
+1. **范围 = 8 条 `EditReply` 命令**。新增 `DocService` 私有根变更路径 `mutateRoot(root, mutation)`：
+   应用变更 → 按意图推版本 → 组装形状恒定的 `EditReply`；命令体只描述「改什么、意图是什么」。
+   `expandTo` **不在路径内**：它是跳转查询（回包 `ExpandReply(rootId, rowVersion, row, totalRows)`），
+   与编辑历史/值图语义无关；并入需加一层 `EditReply → ExpandReply` 适配，扩协议无杠杆。
+2. **意图模型 `view` / `value`**：
+   - `view`（展开态：`toggle` / `toggleSubtree` / `expandAll` / `collapseAll`）：可见结果真的变了
+     （`changed`）才 `rowVersion++`；`docRevision` 不动（no-op 不制造 `STALE_ROOT` 抖动）。
+   - `value`（值图：`replaceNode` / `undo` / `redo` / `reset`）：每一步都推 `docRevision++` + `rowVersion++`。
+   - 报字段规则不变：`toggle`/`toggleSubtree` 只在 `changed && row >= 0` 给 `changedRow`、不给
+     `changedPath`；`expandAll`/`collapseAll`/`reset` 不给 `changedRow`；值图变更给 `changedPath`。
+3. **`reset` = `value` 的多步形态**：N 个历史条目逐个反向应用，每步推两版本（终值 = +N）。
+   保留原语义：reset 期间的任何迟到行窗口回包都 stale。中间版本号对迟到回包不可观测（worker 按序
+   处理命令），因此「全部替换成功后统一推版本」与逐条推进在成功路径上等价；反向序列经过的都是
+   曾经被接受的合法状态，不会触发 `TOO_MANY_ROWS`。
+4. **`EditReply.history` 从可选升为必填**（协议不变量）：回包形状恒定，「已修改 N 处」的消费方不再
+   按命令判空。此前展开态回包缺 `history`，一旦被统一回包落地消费（架构走查候选 2）就会把徽标清零——
+   这是**契约缺陷**，今天不可达（4 条展开态 handler 不走 `applyModelReply`）。
+5. **测试面**：新增 `tests/unit/core/root-mutation.test.ts`（版本矩阵 12 例 + 形状契约 3 例，走
+   `DocService.dispatch` 公共 seam）；逐命令行为断言仍留在 `doc-service.test.ts`（不删——矩阵验不变量，
+   行为测试验语义）。
+6. **否决的替代**：(a) 抽独立 `core/root-mutation.ts`——只有一个调用方，且需要 `Root` 的
+   `docRevision` / `rowVersion` / `rowModel` 与 `histories`，是「一个 adapter 的假 seam」；(b) 保持
+   `history` 可选、只靠运行期约定——类型系统抓不住漏填，正是本修订要消除的方言；(c) 把 `expandTo`
+   并入统一路径——见 1。
+7. **净行为**：用户可见行为零变化；协议上 4 条展开态回包多一个 `history` 字段（app 目前不读）。
