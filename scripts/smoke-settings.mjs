@@ -278,6 +278,20 @@ try {
   );
   await page.screenshot(path.join(SHOTS, 'settings-reloaded.png'));
 
+  // ---- phase 4：响应式断点（ADR-0017 / direction.md §3）----
+  // 此时左面板是 settings（持久化恢复），可量三块宽度：1200（≤1320 档）应收 300/284；1440 应回 320/300。
+  const measureLayout = `(() => {
+    const w = (id) => Math.round(document.getElementById(id).getBoundingClientRect().width);
+    return { vw: window.innerWidth, side: w('leftPanel'), rail: w('rail'), tree: w('tree') };
+  })()`;
+  await page.setViewport(1200, 900);
+  await new Promise((r) => setTimeout(r, 300));
+  report.breakpointNarrow = await page.eval(measureLayout);
+  await page.screenshot(path.join(SHOTS, 'settings-breakpoint-1200.png'));
+  await page.setViewport(1440, 900);
+  await new Promise((r) => setTimeout(r, 300));
+  report.breakpointWide = await page.eval(measureLayout);
+
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
     .filter((entry) => entry.type === 'error')
@@ -390,6 +404,17 @@ const checks = {
     report.reloaded?.panel === 'settings' &&
     report.reloaded?.activeBtn === 'page' &&
     JSON.stringify(report.reloaded?.rows) === JSON.stringify(DEFAULT_KEYS),
+
+  // 响应式断点（ADR-0017 / direction.md §3）：≤1320 收 300/284（树 568 = 1200-48-300-284），1440 回 320/300
+  'breakpoint:narrow-applies':
+    report.breakpointNarrow?.vw === 1200 &&
+    report.breakpointNarrow?.side === 300 &&
+    report.breakpointNarrow?.rail === 284 &&
+    report.breakpointNarrow?.tree === 568,
+  'breakpoint:wide-default':
+    report.breakpointWide?.vw === 1440 &&
+    report.breakpointWide?.side === 320 &&
+    report.breakpointWide?.rail === 300,
 
   'console:no-exception-no-error':
     report.consoleErrors?.length === 0 && report.consoleErrorLogs?.length === 0,

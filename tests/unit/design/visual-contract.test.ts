@@ -254,3 +254,39 @@ describe('视觉契约：stale 提示条不改变布局高度（ADR-0016 §2.7�
     }
   });
 });
+
+/** 取一个可能含嵌套块的 CSS 块（媒体查询里还包着 `:root` 块）。 */
+function extractBracedBlock(css: string, selector: string): string {
+  const start = css.indexOf(selector);
+  if (start < 0) throw new Error(`block not found: ${selector}`);
+  const open = css.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < css.length; i += 1) {
+    const ch = css[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return css.slice(open + 1, i);
+    }
+  }
+  throw new Error(`unbalanced block: ${selector}`);
+}
+
+describe('视觉契约：响应式断点（ADR-0017 / direction.md §3）', () => {
+  const css = read(TOKENS);
+
+  it('默认档 = 面板 320 / 右栏 300 / 树 1280', () => {
+    const base = extractBlock(css, ':root,');
+    expect(base).toContain('--left-panel-w: 320px;');
+    expect(base).toContain('--rail-w: 300px;');
+    expect(base).toContain('--tree-max: 1280px;');
+  });
+
+  it('≤1320px 断点把三个布局 token 收一档', () => {
+    const media = extractBracedBlock(css, '@media (max-width: 1320px)');
+    const root = extractBracedBlock(media, ':root');
+    expect(root).toContain('--left-panel-w: 300px;');
+    expect(root).toContain('--rail-w: 284px;');
+    expect(root).toContain('--tree-max: 980px;');
+  });
+});
