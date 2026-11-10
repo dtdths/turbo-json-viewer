@@ -40,6 +40,7 @@ describe('settings-state — 默认值与校验', () => {
       typeColumn: false,
       defaultCopyFormat: 'subtree',
       copyIndent: 2,
+      searchCopyFormat: 'path',
       exportMode: 'file',
       repairTruncated: true,
       adaptiveExpand: true,
@@ -50,6 +51,14 @@ describe('settings-state — 默认值与校验', () => {
     expect([...ROW_HEIGHT_OPTIONS]).toEqual([20, 22, 24, 26]);
     expect([...INDENT_OPTIONS]).toEqual([12, 16, 20]);
     expect([...COPY_INDENT_OPTIONS]).toEqual([0, 2, 4]);
+  });
+
+  it('searchCopyFormat：默认路径 / 合法值保留 / 非法回落（ADR-0011 修订）', () => {
+    expect(DEFAULT_SETTINGS.searchCopyFormat).toBe('path');
+    expect(normalizeSettings({}).searchCopyFormat).toBe('path');
+    expect(normalizeSettings({ searchCopyFormat: 'subtree' }).searchCopyFormat).toBe('subtree');
+    expect(normalizeSettings({ searchCopyFormat: 'compact' }).searchCopyFormat).toBe('path');
+    expect(normalizeSettings({ searchCopyFormat: 'value' }).searchCopyFormat).toBe('value');
   });
 
   it('normalizeSettings：非法/缺省/非对象 → 全部回落默认', () => {
@@ -65,6 +74,7 @@ describe('settings-state — 默认值与校验', () => {
         typeColumn: 'yes',
         defaultCopyFormat: 'compact',
         copyIndent: 3,
+        searchCopyFormat: 'compact',
         exportMode: 'download',
         repairTruncated: 1,
         adaptiveExpand: 'true',

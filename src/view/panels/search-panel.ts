@@ -31,6 +31,8 @@ export interface SearchPanelOptions {
   onFilterChange(filter: SearchFilter): void;
   /** 点击结果行（过滤后下标） */
   onSelect(index: number): void;
+  /** 双击结果行 = 复制该命中节点（ADR-0010 修订；具体格式由 app 按设置决定） */
+  onCopyResult?(path: string): void;
   onPrev(): void;
   onNext(): void;
   /** 输入框 Enter */
@@ -349,6 +351,7 @@ export class SearchPanel {
     this.scroller.addEventListener('scroll', this.handleScroll, { passive: true });
     this.filtersEl.addEventListener('click', this.handleFiltersClick);
     this.windowEl.addEventListener('click', this.handleRowClick);
+    this.windowEl.addEventListener('dblclick', this.handleRowDblClick);
 
     this.resizeObserver = new ResizeObserver(() => this.drawWindow());
     this.resizeObserver.observe(this.scroller);
@@ -463,6 +466,7 @@ export class SearchPanel {
     this.scroller.removeEventListener('scroll', this.handleScroll);
     this.filtersEl.removeEventListener('click', this.handleFiltersClick);
     this.windowEl.removeEventListener('click', this.handleRowClick);
+    this.windowEl.removeEventListener('dblclick', this.handleRowDblClick);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.slots.length = 0;
@@ -710,6 +714,9 @@ export class SearchPanel {
   };
 
   private readonly handleRowClick = (event: MouseEvent): void => {
+    // 双击的第二击（detail≥2）不再重复跳转：一次双击只跳一次（否则多一次 expandTo/window），
+    // 复制交给 dblclick。键盘触发的 click detail=0，不受影响。
+    if (event.detail > 1) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     const row = target.closest('.result');
@@ -717,5 +724,16 @@ export class SearchPanel {
     const index = Number(row.dataset.index);
     if (!Number.isInteger(index)) return;
     this.opts.onSelect(index);
+  };
+
+  /** 双击结果行 → 复制该命中节点（ADR-0010 修订：复制入口新增「搜索结果双击」）。 */
+  private readonly handleRowDblClick = (event: MouseEvent): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const row = target.closest('.result');
+    if (!(row instanceof HTMLButtonElement)) return;
+    const hitPath = row.dataset.path;
+    if (!hitPath) return;
+    this.opts.onCopyResult?.(hitPath);
   };
 }

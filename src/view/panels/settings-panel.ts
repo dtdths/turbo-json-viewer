@@ -24,7 +24,7 @@ export interface SettingsPanelOptions {
   onChange(key: SettingsKey, value: Settings[SettingsKey]): void;
 }
 
-/** 9 项设置的任一值（= 各字段类型的联合） */
+/** 10 项设置的任一值（= 各字段类型的联合） */
 type SettingValue = Settings[SettingsKey];
 
 interface SegItem {
@@ -53,7 +53,7 @@ interface CheckRowSpec {
   hint: string;
 }
 
-/* ---------------- 9 行的固定顺序与文案（ADR-0011 §1 + ADR-0012 修订） ---------------- */
+/* ---------------- 10 行的固定顺序与文案（ADR-0011 §1 及其 2026-11-03 / 2026-11-10 修订 + ADR-0012 修订） ---------------- */
 
 const THEME_ITEMS: readonly SegItem[] = [
   { value: 'dark', label: '深色' },
@@ -143,6 +143,11 @@ export class SettingsPanel {
         items: COPY_FORMAT_ITEMS,
       }),
       this.buildSegRow({ key: 'copyIndent', label: '复制缩进', items: COPY_INDENT_ITEMS }),
+      this.buildSegRow({
+        key: 'searchCopyFormat',
+        label: '搜索结果双击复制',
+        items: COPY_FORMAT_ITEMS,
+      }),
       this.buildSegRow({ key: 'exportMode', label: '导出方式', items: EXPORT_MODE_ITEMS }),
       this.buildCheckRow({
         key: 'repairTruncated',

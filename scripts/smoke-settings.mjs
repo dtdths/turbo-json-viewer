@@ -31,6 +31,7 @@ const DEFAULT_KEYS = [
   'typeColumn',
   'defaultCopyFormat',
   'copyIndent',
+  'searchCopyFormat',
   'exportMode',
   'repairTruncated',
   'adaptiveExpand',
@@ -43,6 +44,7 @@ const DEFAULTS = {
   typeColumn: false,
   defaultCopyFormat: 'subtree',
   copyIndent: 2,
+  searchCopyFormat: 'path',
   exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
@@ -208,6 +210,15 @@ try {
       const subtree = await rowCopy('$.a');
       out.copyIndent = { value: h.settingsState().copyIndent, ...subtree };
 
+      // 搜索结果双击复制格式（第 10 项，ADR-0011 修订）：默认路径 → 切子树 JSON → 切回路径
+      out.searchCopyFormat = { initial: h.settingsState().searchCopyFormat };
+      clickSeg('searchCopyFormat', 'subtree');
+      await sleep(80);
+      out.searchCopyFormat.afterClick = h.settingsState().searchCopyFormat;
+      clickSeg('searchCopyFormat', 'path');
+      await sleep(80);
+      out.searchCopyFormat.back = h.settingsState().searchCopyFormat;
+
       // 导出方式（设置面板第 9 项，ADR-0012 修订）：设为复制 → 分体按钮主操作同步
       clickSeg('exportMode', 'clipboard');
       await sleep(120);
@@ -361,6 +372,11 @@ const checks = {
   'set:copy-indent-4':
     report.copyIndent?.value === 4 &&
     (report.copyIndent?.clipboard == null || report.copyIndent?.clipboard === SUBTREE_A_4),
+  // 第 10 项设置（ADR-0011 修订）：默认路径、可切换到子树 JSON、可切回
+  'set:searchCopyFormat':
+    report.searchCopyFormat?.initial === 'path' &&
+    report.searchCopyFormat?.afterClick === 'subtree' &&
+    report.searchCopyFormat?.back === 'path',
   'set:export-mode':
     report.exportMode?.value === 'clipboard' &&
     report.exportMode?.splitLabel === '复制 JSON 到剪贴板' &&
@@ -389,6 +405,7 @@ const checks = {
         typeColumn: true,
         defaultCopyFormat: 'subtree',
         copyIndent: 4,
+        searchCopyFormat: 'path',
         exportMode: 'clipboard',
         repairTruncated: false,
         adaptiveExpand: false,

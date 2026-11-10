@@ -362,6 +362,83 @@ async function pageJumpPhase(cfg) {
   return out;
 }
 
+/**
+ * 双击搜索结果行 = 复制（ADR-0010 修订 / ADR-0011 修订）：默认路径 / 切子树 JSON / 格式不适用三条路径。
+ * 双击序列与真实浏览器一致：click(detail=1) → click(detail=2，被 detail>1 守卫吞掉) → dblclick。
+ */
+async function pageDblCopyPhase() {
+  const h = window.__tjv;
+  const out = { defaultFormat: null, path: null, defaultClip: null, defaultToast: '', subtree: null, badFormat: null };
+  const rows = () => [...document.querySelectorAll('.result[data-path]')];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitToastChange = async (before) => {
+    for (let i = 0; i < 30; i++) {
+      await sleep(20);
+      if (h.toastText() !== before) return;
+    }
+  };
+  const fire = (row) => {
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+  };
+  const dbl = async (row) => {
+    const before = h.toastText();
+    fire(row);
+    await waitToastChange(before);
+    await window.__smoke.settle(120);
+    return { clip: await h.clipboardText(), toast: h.toastText() };
+  };
+
+  const first = rows()[0];
+  if (!first) return { error: 'no result rows' };
+  out.defaultFormat = h.settingsState().searchCopyFormat;
+  out.path = String(first.dataset.path);
+  const r1 = await dbl(first);
+  out.defaultClip = r1.clip;
+  out.defaultToast = r1.toast;
+
+  // 切「子树 JSON」→ 双击同一行应得到可解析 JSON
+  h.setSetting('searchCopyFormat', 'subtree');
+  await sleep(120);
+  const r2 = await dbl(rows()[0] ?? first);
+  out.subtree = { format: h.settingsState().searchCopyFormat, clip: r2.clip, toast: r2.toast, jsonOk: false };
+  try {
+    JSON.parse(r2.clip);
+    out.subtree.jsonOk = true;
+  } catch {
+    out.subtree.jsonOk = false;
+  }
+
+  // 切「原始值」→ 找一个容器命中（copyResolve(value) 报 BAD_COMMAND）→ 双击应给错误 toast
+  h.setSetting('searchCopyFormat', 'value');
+  await sleep(120);
+  let containerPath = null;
+  for (const el of rows()) {
+    const p = String(el.dataset.path);
+    const r = await h.copyResolve(p, 'value');
+    if (r && r.error && r.error.code === 'BAD_COMMAND') {
+      containerPath = p;
+      break;
+    }
+  }
+  if (containerPath) {
+    const target = rows().find((n) => String(n.dataset.path) === containerPath) ?? rows()[0] ?? null;
+    if (!target) return { ...out, badFormat: { path: null, toast: '', clip: null, note: 'row vanished' } };
+    const before = h.toastText();
+    fire(target);
+    await waitToastChange(before);
+    out.badFormat = { path: containerPath, toast: h.toastText(), clip: await h.clipboardText() };
+  } else {
+    out.badFormat = { path: null, toast: '', clip: null, note: 'no container hit in current window' };
+  }
+
+  // 复原默认，避免影响后续 phase
+  h.setSetting('searchCopyFormat', 'path');
+  await sleep(80);
+  return out;
+}
+
 /** prev/next 多轮 + 首尾环状。 */
 async function pageNavPhase(cfg) {
   const out = { steps: [] };
@@ -741,6 +818,16 @@ try {
   errorsBefore = page.exceptions.length;
   logsBefore = page.logs.length;
   await page.setViewport(1440, 900);
+  // 双击复制要逐字读回剪贴板（ADR-0010 修订）；与 smoke-settings 同一授权方式
+  try {
+    await chrome.browser.send('Browser.grantPermissions', {
+      origin: server.base,
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+    });
+    report.clipboardGranted = true;
+  } catch {
+    report.clipboardGranted = false;
+  }
   await page.goto(`${server.base}/dist/page.html`, { timeoutMs: 20000 });
   await page.waitFor('document.readyState === "complete"', { timeoutMs: 10000 });
   await new Promise((r) => setTimeout(r, 500));
@@ -941,6 +1028,40 @@ try {
         note: 'hook 已返回但树 .row.is-current 出现更晚（异步行窗口），仅供参考',
       });
     }
+  }
+
+  /* ---- 2.5) 双击结果行 = 复制（ADR-0010 修订 / ADR-0011 修订） ---- */
+  const dblCopyPhase = jumpPhase ? await runPhase('dblcopy', pageDblCopyPhase) : null;
+  if (dblCopyPhase) {
+    report.dblCopy = dblCopyPhase;
+    check(
+      'dblcopy:default-path',
+      dblCopyPhase.defaultFormat === 'path' &&
+        dblCopyPhase.defaultClip === dblCopyPhase.path &&
+        /已复制：路径/.test(dblCopyPhase.defaultToast || ''),
+      {
+        format: dblCopyPhase.defaultFormat,
+        path: dblCopyPhase.path,
+        clip: dblCopyPhase.defaultClip,
+        toast: dblCopyPhase.defaultToast,
+      },
+    );
+    check(
+      'dblcopy:subtree-json',
+      dblCopyPhase.subtree?.format === 'subtree' &&
+        dblCopyPhase.subtree?.jsonOk === true &&
+        /已复制：子树 JSON/.test(dblCopyPhase.subtree?.toast || ''),
+      {
+        format: dblCopyPhase.subtree?.format,
+        jsonOk: dblCopyPhase.subtree?.jsonOk,
+        toast: dblCopyPhase.subtree?.toast,
+      },
+    );
+    check(
+      'dblcopy:format-not-applicable',
+      Boolean(dblCopyPhase.badFormat?.path) && /不支持当前复制格式/.test(dblCopyPhase.badFormat?.toast || ''),
+      { path: dblCopyPhase.badFormat?.path, toast: dblCopyPhase.badFormat?.toast },
+    );
   }
 
   /* ---- 3) prev/next 多轮（含环状） ---- */

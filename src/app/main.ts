@@ -186,6 +186,10 @@ const searchPanel = new SearchPanel(searchHost, {
   onSelect: (index: number) => {
     void gotoHit(index);
   },
+  // 双击结果行 = 复制该命中节点（ADR-0010 修订；格式来自设置「搜索结果双击复制」）
+  onCopyResult: (path: string) => {
+    void copyNodeToClipboard(path, settings.get('searchCopyFormat'));
+  },
   onPrev: () => {
     void searchPrev();
   },
@@ -1133,6 +1137,11 @@ async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<vo
           message: `子树过大（${formatBytes(coreError.bytes ?? 0)}），超过 5 MB，请用「导出」`,
         }),
       );
+      return;
+    }
+    // 格式不适用（容器没有「原始值」、根没有「键名」）：树菜单靠禁用项规避，搜索双击会真触发
+    if (coreError.code === 'BAD_COMMAND') {
+      showToast('该节点不支持当前复制格式；可在设置里更换', 4000, 'error');
       return;
     }
     showError(error);

@@ -16,6 +16,7 @@ export type SettingsKey =
   | 'typeColumn'
   | 'defaultCopyFormat'
   | 'copyIndent'
+  | 'searchCopyFormat'
   | 'exportMode'
   | 'repairTruncated'
   | 'adaptiveExpand';
@@ -32,6 +33,8 @@ export interface Settings {
   defaultCopyFormat: CopyFormat;
   /** 子树 JSON 缩进：0 = 紧凑 */
   copyIndent: number;
+  /** 搜索结果行「双击复制」使用的格式（默认路径；与行尾浮条 defaultCopyFormat 相互独立） */
+  searchCopyFormat: CopyFormat;
   /** 导出方式（ADR-0012 修订）：分体按钮主操作 + 设置面板「导出方式」 */
   exportMode: ExportMode;
   /** 导入时自动修复截断 JSON */
@@ -64,6 +67,7 @@ export const DEFAULT_SETTINGS: Settings = {
   typeColumn: false,
   defaultCopyFormat: 'subtree',
   copyIndent: 2,
+  searchCopyFormat: 'path',
   exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
@@ -101,6 +105,9 @@ export function normalizeSettings(raw: unknown): Settings {
       ? (bag.defaultCopyFormat as CopyFormat)
       : DEFAULT_SETTINGS.defaultCopyFormat,
     copyIndent: pickNumber(bag.copyIndent, COPY_INDENT_OPTIONS, DEFAULT_SETTINGS.copyIndent),
+    searchCopyFormat: COPY_FORMATS.has(bag.searchCopyFormat as string)
+      ? (bag.searchCopyFormat as CopyFormat)
+      : DEFAULT_SETTINGS.searchCopyFormat,
     exportMode: normalizeExportMode(bag.exportMode),
     repairTruncated: pickBoolean(bag.repairTruncated, DEFAULT_SETTINGS.repairTruncated),
     adaptiveExpand: pickBoolean(bag.adaptiveExpand, DEFAULT_SETTINGS.adaptiveExpand),
