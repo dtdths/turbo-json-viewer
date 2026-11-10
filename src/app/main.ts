@@ -23,9 +23,10 @@ import { OutlinePanel } from '../view/panels/outline-panel';
 import { CoreError } from '../protocol/errors';
 import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
-import type { CopyFormat, DocumentMeta, FidelityReport, JsonKind, RawMeta, Row } from '../protocol/types';
+import type { CopyFormat, DocumentMeta, FidelityReport, RawMeta, Row } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { DocSession, type LandingPlan } from './doc-session';
+import { installDevHook, type DevHookDeps } from './dev-hook';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
 import { SettingsState, type SettingsKey } from '../viewmodel/settings-state';
@@ -816,10 +817,11 @@ function applyModelReply(reply: EditReply): void {
 }
 
 /** 文档已修改：清空搜索命中并提示重搜（edit-spec §6）。 */
-function markSearchStale(): void {
-  searchState.markStale();
+function markSearchStale(): boolean {
+  const changed = searchState.markStale();
   applySearchToTree();
   renderSearch();
+  return changed;
 }
 
 async function openEditor(path: string): Promise<void> {
@@ -1816,39 +1818,6 @@ function showError(error: unknown): void {
   showToast(formatCoreError(error), 4000, 'error');
 }
 
-/** 导出视图态快照（dev hook 用；不返回文本本体，避免把大文本塞进协议）。 */
-function exportHookState(): {
-  mode: ExportMode;
-  menuOpen: boolean;
-  menuItems: { mode: string; label: string; checked: boolean; focused: boolean }[];
-  mainLabel: string;
-  mainText: string;
-  disabled: { main: boolean; caret: boolean };
-  lastAction: typeof exportLastAction;
-  clipboardMaxBytes: number;
-} {
-  return {
-    mode: currentExportMode(),
-    menuOpen: !exportMenu.hidden,
-    menuItems: exportMenuItems().map((item) => {
-      // 去掉勾选列（✓ 与标签同属按钮 textContent），label 只保留动作文案
-      const clone = item.cloneNode(true) as HTMLElement;
-      clone.querySelector('.exportmenu__check')?.remove();
-      return {
-        mode: item.dataset.exportMode ?? '',
-        label: (clone.textContent ?? '').trim(),
-        checked: item.getAttribute('aria-checked') === 'true',
-        focused: document.activeElement === item,
-      };
-    }),
-    mainLabel: exportBtn.getAttribute('aria-label') ?? '',
-    mainText: exportBtn.textContent ?? '',
-    disabled: { main: exportBtn.disabled, caret: exportMenuBtn.disabled },
-    lastAction: exportLastAction,
-    clipboardMaxBytes: CLIPBOARD_MAX_BYTES,
-  };
-}
-
 /* ---------------- resize ---------------- */
 
 const resizeObserver = new ResizeObserver(() => {
@@ -1872,450 +1841,139 @@ window.addEventListener('beforeunload', (event: BeforeUnloadEvent) => {
 
 /* ---------------- dev-only hook (HTTP smoke harness) ---------------- */
 
-if (!isExtension) {
-  const ms = (since: number): number => Math.round((performance.now() - since) * 100) / 100;
-  const searchDiagnostics = (): Record<string, unknown> => {
-    const view = searchState.view();
-    const scroller = document.getElementById('resultsScroll');
-    const text = (id: string): string => document.getElementById(id)?.textContent ?? '';
-    return {
-      phase: view.phase,
-      query: searchState.query,
-      total: view.total,
-      size: view.size,
-      current: view.current,
-      counts: { ...view.counts },
-      filter: view.filter,
-      truncated: view.truncated,
-      stale: searchState.stale,
-      // ADR-0014：Aa / 正则 / 内联错误（smoke 验收用）
-      caseSensitive: view.caseSensitive,
-      regex: view.regex,
-      patternError: view.patternError,
-      rendered: searchPanel.renderedCount(),
-      treeCurrentVisible: Boolean(document.querySelector('.row.is-current')),
-      scrollTop: searchPanel.listScrollTop(),
-      scrollHeight: scroller ? scroller.scrollHeight : 0,
-      // 兼容别名（内部诊断用）
-      listScrollTop: searchPanel.listScrollTop(),
-      listScrollHeight: scroller ? scroller.scrollHeight : 0,
-      countText: text('searchCount'),
-      posText: text('searchPos'),
-      footText: text('resultsFoot'),
-      path: searchState.currentHit()?.path ?? null,
-    };
-  };
-
-  /** 大纲 dev hook 共用的状态快照（契约见 ADR-0013「dev hooks」）。 */
-  const outlineHookState = (): Record<string, unknown> => {
-    const view = outlineState.view();
-    return {
-      phase: view.phase,
-      rows: view.rows.length,
-      current: view.selected,
-      expanded: outlineState.expandedPaths(),
-      loadedContainers: view.loadedContainers,
-      loadedChildren: view.loadedChildren,
-      panel: {
-        open: document.body.dataset.panel === 'outline',
-        rendered: outlinePanel.renderedCount(),
-        scrollTop: outlinePanel.scrollTopPx(),
+/**
+ * 测试钩子装配表（ADR-0008 修订 2026-11-09）：这里只列「钩子要哪些模块 / 入口 / 元素」，
+ * 快照组装与转发逻辑在 `app/dev-hook.ts`。扩展构建不安装（smoke-extension 断言其不存在）。
+ */
+function buildDevHookDeps(): DevHookDeps {
+  return {
+    session,
+    core,
+    meta: () => meta,
+    selected: () => selected,
+    editingPath: () => editingPath,
+    setEditingPath: (path) => {
+      editingPath = path;
+    },
+    isRawView,
+    viewModeAttr: () => document.body.dataset.view ?? null,
+    rawMetaInfo: () => rawMetaInfo,
+    fidelityReport: () => fidelity,
+    fidelityPending: () => fidelityPending,
+    exportLastAction: () => exportLastAction,
+    exportFileName: () =>
+      meta ? exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired') : null,
+    tree,
+    rowSource,
+    rawView,
+    rawSource,
+    searchState,
+    searchPanel,
+    outlineState,
+    outlinePanel,
+    editState,
+    subtreeEditor,
+    settings,
+    entries: {
+      importText: (text, name) => importBuffer('file', text, name),
+      toggleNode,
+      expandAll: applyExpandAll,
+      runSearch,
+      searchNext,
+      searchPrev,
+      gotoHit,
+      applyFilter,
+      markSearchStale,
+      setPanel: (panel) => {
+        if (panel !== 'none') setPanel(panel);
       },
-    };
-  };
-
-  const stateOf = (): Record<string, unknown> => ({
-    rootId: session.rootId,
-    totalRows: session.totalRows,
-    rowVersion: session.rowVersion,
-    docRevision: session.docRevision,
-    selected,
-    rendered: rowSource.snapshot().rows.length,
-    start: rowSource.snapshot().start,
-    scrollTop: tree.scrollTopPx(),
-    editCount: editState.count,
-    canUndo: editState.canUndo,
-    canRedo: editState.canRedo,
-    viewMode: isRawView() ? 'raw' : 'tree',
-  });
-
-  /** 原文视图 dev hook 共用的状态快照（契约见 ADR-0003 修订 §7）。 */
-  const rawHookState = (): Record<string, unknown> => {
-    const snapshot = rawSource.snapshot();
-    // 行池隐藏槽位没有 data-line（且文本已清空），只统计可见行
-    const rows = [...document.querySelectorAll<HTMLElement>('.raw-row[data-line]')];
-    return {
-      mode: isRawView() ? 'raw' : 'tree',
-      view: document.body.dataset.view ?? null,
-      buttons: {
-        tree: {
-          active: viewTreeBtn.classList.contains('is-active'),
-          pressed: viewTreeBtn.getAttribute('aria-pressed'),
-          disabled: viewTreeBtn.disabled,
-        },
-        raw: {
-          active: viewRawBtn.classList.contains('is-active'),
-          pressed: viewRawBtn.getAttribute('aria-pressed'),
-          disabled: viewRawBtn.disabled,
-        },
+      jumpToPath,
+      openEditor,
+      applyEditText,
+      undo: undoEdit,
+      redo: redoEdit,
+      resetEdits: () => resetEdits(true),
+      setViewMode,
+      revealRepairOffset,
+      openSettings: () => {
+        setPanel('settings');
+        return {
+          panel: document.body.dataset.panel ?? null,
+          title: panelTitle.textContent ?? '',
+          focused:
+            settingsHost.contains(document.activeElement) || document.activeElement === settingsHost,
+          rows: [...settingsHost.querySelectorAll<HTMLElement>('[data-setting]')].map(
+            (row) => row.dataset.setting ?? '',
+          ),
+        };
       },
-      raw: rawMetaInfo,
-      totalLines: snapshot.totalLines,
-      start: snapshot.start,
-      rendered: snapshot.lines.length,
-      stale: snapshot.stale,
-      scrollTop: rawView.scrollTopPx(),
-      viewportRows: rawView.viewportRows(),
-      notice: rawNotice.textContent ?? '',
-      metaLabel: rawMetaLabel.textContent ?? '',
-      modeLabel: rawModeLabel.textContent ?? '',
-      copyDisabled: rawCopyBtn.disabled,
-      flash: document.querySelector<HTMLElement>('.raw-row.is-flash')?.dataset.line ?? null,
-      statusRows: statusRows.textContent ?? '',
-      lines: rows.map((row) => ({
-        line: Number(row.dataset.line),
-        text: row.querySelector<HTMLElement>('.raw-row__code')?.textContent ?? '',
-      })),
-    };
-  };
-
-  (globalThis as unknown as { __tjv?: unknown }).__tjv = {
-    loadText: (text: string, name = 'sample.json') => importBuffer('file', text, name),
-    scrollToPx: (px: number) => tree.scrollToPx(px),
-    togglePath: (path: string, open: boolean) => toggleNode(path, open),
-    expandAll: () => applyExpandAll(true),
-    collapseAll: () => applyExpandAll(false),
-    state: stateOf,
-
-    // ---- slice 4：搜索 dev hook（契约见 docs/design/slice4-search-contract.md §5）----
-    search: async (term: string) => {
-      const started = performance.now();
-      const ok = await runSearch(term);
-      return { ms: ms(started), ok, ...searchDiagnostics() };
+      treeGeometry: () => {
+        // --row-h 设在树滚动容器上（tree-view mount 时写入），不是 :root
+        const scroller = document.querySelector<HTMLElement>('.tjv-tree');
+        const firstRow = document.querySelector<HTMLElement>('.row');
+        return {
+          rowHeight: tree.rowHeightPx(),
+          viewportRows: tree.viewportRows(),
+          totalRows: session.totalRows,
+          rowHeightCss: scroller ? getComputedStyle(scroller).getPropertyValue('--row-h').trim() : '',
+          rowHeightComputed: firstRow ? getComputedStyle(firstRow).height : '',
+          indentCss: getComputedStyle(document.documentElement).getPropertyValue('--row-indent').trim(),
+          typeColumnVisible: tree.typeColumnVisible(),
+          spacerHeight: tree.spacerHeight(),
+        };
+      },
+      contextMenu: {
+        menu: ctxMenu,
+        items: ctxItems,
+        show: showContextMenu,
+        rowElement: (path) =>
+          treeHost.querySelector<HTMLElement>(`.row[data-path="${CSS.escape(path)}"]`),
+      },
+      clipboardText: async () => {
+        try {
+          return await navigator.clipboard.readText();
+        } catch {
+          return null;
+        }
+      },
     },
-    searchNext: async () => {
-      const started = performance.now();
-      const index = await searchNext();
-      return { ms: ms(started), index, ...searchDiagnostics() };
-    },
-    searchPrev: async () => {
-      const started = performance.now();
-      const index = await searchPrev();
-      return { ms: ms(started), index, ...searchDiagnostics() };
-    },
-    searchJump: async (index: number) => {
-      const started = performance.now();
-      const jumped = await gotoHit(index);
-      return { ms: ms(started), index: jumped, ...searchDiagnostics() };
-    },
-    /** dev-only：模拟「文档已修改」→ 清空结果 + stale 提示（slice 5 编辑接入前仅测试用）。 */
-    searchMarkStale: () => {
-      const changed = searchState.markStale();
-      applySearchToTree();
-      renderSearch();
-      return { changed, ...searchDiagnostics() };
-    },
-    setSearchFilter: (filter: SearchFilter) => {
-      applyFilter(filter);
-      return searchDiagnostics();
-    },
-    searchPanel: () => searchDiagnostics(),
-    searchListScrollTo: (px: number) => {
-      searchPanel.scrollListTo(px);
-      return searchDiagnostics();
-    },
-
-    // ---- 大纲面板 dev hook（契约见 ADR-0013「dev hooks」）----
-    outlineState: () => outlineHookState(),
-    outlineOpen: () => {
-      setPanel('outline');
-    },
-    outlineToggle: async (path: string, open?: boolean) => {
-      const target = open ?? !outlineState.isExpanded(path);
-      const ok = await outlineState.setOpen(path, target);
-      return { ok, rows: outlineState.view().rows.length, open: outlineState.isExpanded(path) };
-    },
-    outlineLoadMore: async (path: string) => {
-      const ok = await outlineState.loadMore(path);
-      return { ok, rows: outlineState.view().rows.length };
-    },
-    outlineJump: async (path: string) => {
-      const jumped = await jumpToPath(path);
-      return { ok: jumped.ok, row: jumped.row };
-    },
-
-    // ---- slice 5：编辑 dev hook（契约见 docs/design/edit-spec.md §2/§8）----
-
-    /** 打开某路径的子树编辑器（走真实 getNodeJson → SubtreeEditor.open 流程）。 */
-    editOpen: async (path: string) => {
-      await openEditor(path);
-      return { open: subtreeEditor.isOpen(), path: editingPath, text: subtreeEditor.isOpen() ? subtreeEditor.getValue() : null };
-    },
-    /** 当前编辑器文本（未打开 → null）。 */
-    editText: () => (subtreeEditor.isOpen() ? subtreeEditor.getValue() : null),
-    /** 覆盖编辑器文本（模拟用户输入；JSON lint 异步生效）。 */
-    editSetText: (text: string) => {
-      subtreeEditor.setValue(text);
-      return subtreeEditor.getValue();
-    },
-    /** 走 UI 的 Apply 按钮（等 lint/禁用态生效后点击）。 */
-    editClickApply: () => {
-      document.getElementById('editApply')?.click();
-      return { open: subtreeEditor.isOpen() };
-    },
-    /** 直接走 app 的 Apply 流程（等价编辑器 Apply，绕过按钮）；返回 socket 状态。 */
-    editApplyText: async (text: string) => {
-      await applyEditText(text);
-      return { ...stateOf(), open: subtreeEditor.isOpen() };
-    },
-    editClose: () => {
-      subtreeEditor.close();
-      editingPath = null;
-      return true;
-    },
-    undo: async () => ({ ok: await undoEdit(), ...stateOf() }),
-    redo: async () => ({ ok: await redoEdit(), ...stateOf() }),
-    resetEdits: async () => ({ ok: await resetEdits(true), ...stateOf() }),
-    exportDocText: async () => {
-      if (!session.rootId) return null;
-      const reply = await core.exportDoc(session.rootId, 2);
-      return {
-        bytes: reply.bytes,
-        text: reply.text,
-        name: exportName(meta?.name ?? 'doc.json', editState.dirty, meta?.repair?.status === 'repaired'),
-      };
-    },
-    editBadgeText: () => ({ hidden: editBadge.hidden, text: editBadge.textContent }),
-
-    // ---- 复制四格式 dev hook（契约见 docs/adr/0010-copy-formats-and-clipboard.md §9）----
-
-    /** 模拟右键打开菜单（走真实 showContextMenu）；返回菜单项文案/禁用态（DOM 顺序）。 */
-    ctxOpen: (path: string, fallbackKind: JsonKind = 'object') => {
-      const rowEl = treeHost.querySelector<HTMLElement>(`.row[data-path="${CSS.escape(path)}"]`);
-      const rect = rowEl?.getBoundingClientRect();
-      // 与真实右键同源：行数据来自 TreeView 的当前窗口缓存；不在窗口内才用行 DOM + 调用方兜底合成。
-      const info: Row = tree.rowInfo(path) ?? {
-        path,
-        depth: 0,
-        key: '',
-        idx: false,
-        kind: (rowEl?.dataset.kind as JsonKind | undefined) ?? fallbackKind,
-        preview: '',
-        count: 0,
-        open: false,
-        hasChildren: false,
-      };
-      showContextMenu(path, (rect?.left ?? 40) + 24, (rect?.top ?? 80) + 12, info);
-      return {
-        hidden: ctxMenu.hidden,
-        items: ctxItems().map((item) => ({
-          act: item.dataset.act ?? '',
-          label: item.textContent ?? '',
-          disabled: item.disabled,
-          title: item.title,
-        })),
-      };
-    },
-    /** 点菜单项（真实 DOM click），等到 toast 变化后返回（复制是异步的）。 */
-    ctxClick: async (act: string) => {
-      const item = ctxMenu.querySelector<HTMLButtonElement>(`[data-act="${act}"]`);
-      if (!item) return { clicked: false, toast: '', hidden: ctxMenu.hidden };
-      const before = toast.textContent ?? '';
-      item.click();
-      for (let i = 0; i < 25; i++) {
-        await new Promise((resolve) => window.setTimeout(resolve, 20));
-        if ((toast.textContent ?? '') !== before) break;
-      }
-      return {
-        clicked: true,
-        toast: toast.hidden ? '' : (toast.textContent ?? ''),
-        hidden: ctxMenu.hidden,
-      };
-    },
-    /** 走 core 的复制路径但不写剪贴板（逐字断言用）。 */
-    copyResolve: async (path: string, format: CopyFormat) => {
-      if (!session.rootId) return { error: { code: 'NO_ROOT', message: 'no document loaded' } };
-      try {
-        const reply = await core.copyNode({ rootId: session.rootId, path, format, indent: settings.get('copyIndent') });
-        return { text: reply.text, bytes: reply.bytes, format: reply.format };
-      } catch (error) {
-        const coreError = CoreError.from(error);
-        return { error: { code: coreError.code, message: coreError.message, bytes: coreError.bytes } };
-      }
-    },
-    clipboardText: async () => {
-      try {
-        return await navigator.clipboard.readText();
-      } catch {
-        return null;
-      }
-    },
-    toastText: () => (toast.hidden ? '' : (toast.textContent ?? '')),
-
-    // ---- 截断修复 dev hook（契约见 docs/adr/0004 修订 §6 验收）----
-    // ---- 导出 dev hook（契约见 docs/adr/0012 §6/§7）----
-    exportState: () => exportHookState(),
-    exportMenuOpen: () => {
-      exportMenuBtn.click();
-      return exportHookState();
-    },
-    exportClick: () => {
-      exportBtn.click();
-      return true;
-    },
-    exportChoose: (mode: ExportMode) => {
-      const item = exportMenuItems().find((entry) => entry.dataset.exportMode === normalizeExportMode(mode));
-      item?.click();
-      return Boolean(item);
-    },
-
-    // ---- 设置 dev hook（契约见 docs/adr/0011 §7）----
-    settingsState: () => ({
-      ...settings.snapshot(),
-      ui: settings.uiState(),
-      loadedFromStore: settings.loadedFromStore,
-    }),
-    setSetting: (key: SettingsKey, value: unknown) => {
-      const changed = settings.set(key, value);
-      return { changed, ...settings.snapshot() };
-    },
-    /** 打开设置面板（走真实 setPanel），返回面板状态与焦点位置。 */
-    settingsOpen: () => {
-      setPanel('settings');
-      return {
-        panel: document.body.dataset.panel ?? null,
-        title: panelTitle.textContent ?? '',
-        focused: settingsHost.contains(document.activeElement) || document.activeElement === settingsHost,
-        rows: [...settingsHost.querySelectorAll<HTMLElement>('[data-setting]')].map((row) => row.dataset.setting ?? ''),
-      };
-    },
-    /** 行高/缩进/类型列等几何视图态（冒烟断言用）。 */
-    treeGeometry: () => {
-      // --row-h 设在树滚动容器上（tree-view mount 时写入），不是 :root
-      const scroller = document.querySelector<HTMLElement>('.tjv-tree');
-      const firstRow = document.querySelector<HTMLElement>('.row');
-      return {
-        rowHeight: tree.rowHeightPx(),
-        viewportRows: tree.viewportRows(),
-        totalRows: session.totalRows,
-        rowHeightCss: scroller ? getComputedStyle(scroller).getPropertyValue('--row-h').trim() : '',
-        rowHeightComputed: firstRow ? getComputedStyle(firstRow).height : '',
-        indentCss: getComputedStyle(document.documentElement).getPropertyValue('--row-indent').trim(),
-        typeColumnVisible: [...settingsHost.ownerDocument.querySelectorAll<HTMLElement>('.row__type')].some(
-          (el) => !el.hidden,
-        ),
-        spacerHeight: document.querySelector<HTMLElement>('.tjv-tree__spacer')?.style.height ?? null,
-      };
-    },
-    repairState: () => ({
-      status: meta?.repair?.status ?? 'none',
-      visible: !repairBar.hidden,
-      text: repairText.textContent ?? '',
-      expanded: !repairOps.hidden,
-      ops: Array.from(repairOps.querySelectorAll('.repairbar__op')).map((n) => n.textContent ?? ''),
-      // 结构化 ops（#11 原文跳行验收：at = 原文本偏移）
-      opsDetail: meta?.repair?.ops ?? [],
-      summary: meta?.repair?.summaryText ?? null,
-      counts: meta?.repair?.counts ?? null,
-      truncatedAt: meta?.repair?.truncatedAt ?? null,
-      exportName: meta ? exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired') : null,
-      statusState: statusState.textContent ?? '',
-    }),
-    repairToggle: () => {
-      repairToggle.click();
-      return !repairOps.hidden;
-    },
-    repairClose: () => {
-      repairClose.click();
-      return repairBar.hidden;
-    },
-
-    // ---- 保真提示 dev hook（#23 / ADR-0003 修订）----
-    /** 报告 + 提示条状态；`pending=true` 表示扫描在途（冒烟可轮询等它变 false）。 */
-    fidelityState: () => ({
-      pending: fidelityPending,
-      status: fidelity?.status ?? null,
-      counts: fidelity?.counts ?? null,
-      hits: fidelity?.hits ?? [],
-      scanMs: fidelity?.scanMs ?? null,
-      truncated: fidelity?.truncated ?? null,
-      barVisible: !fidelityNotice.hidden,
-      barText: fidelityNotice.text(),
-      jumpVisible: !fidelityJump.hidden,
-      viewMode: document.body.dataset.view === 'raw' ? 'raw' : 'tree',
-      statusRows: statusRows.textContent ?? '',
-    }),
-    /** 点「查看原文」（真实 DOM click → 切原文 + rawLocate + 行 flash），等 200ms 后回快照。 */
-    fidelityJump: async () => {
-      const started = performance.now();
-      fidelityJump.click();
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-      return { ms: ms(started), ...rawHookState(), fidelity: { barVisible: !fidelityBar.hidden } };
-    },
-    fidelityClose: () => {
-      fidelityClose.click();
-      return fidelityBar.hidden;
-    },
-
-    // ---- 原始文本视图 dev hook（契约见 docs/adr/0003 修订 §7）----
-    rawState: () => rawHookState(),
-    /** 切视图（走真实 setViewMode；原文首开会等索引构建完成）。 */
-    setViewMode: async (mode: 'tree' | 'raw') => {
-      const started = performance.now();
-      await setViewMode(mode);
-      return { ms: ms(started), ...rawHookState() };
-    },
-    /** 滚到像素位置（真实 scroll → onScroll → rawSource.scrollTo）。 */
-    rawScrollTo: (px: number) => {
-      rawView.scrollToPx(px);
-      return rawHookState();
-    },
-    /** 直接走 core 取原文窗口（逐字断言/性能用；不影响视图）。 */
-    rawWindowText: async (start: number, count: number) => {
-      if (!session.rootId) return null;
-      const started = performance.now();
-      const reply = await core.rawWindow({ rootId: session.rootId, seq: 0, start, count });
-      return { ms: ms(started), ...reply };
-    },
-    /** 源文本偏移 → 行号（逐字断言用）。 */
-    rawLocate: async (offset: number) => {
-      if (!session.rootId) return null;
-      return core.rawLocate({ rootId: session.rootId, offset });
-    },
-    /** 修复摘要跳行（走真实 revealRepairOffset：切视图 + locate + 高亮）。 */
-    rawRevealAt: async (offset: number) => {
-      const started = performance.now();
-      const line = await revealRepairOffset(offset);
-      await new Promise((resolve) => window.setTimeout(resolve, 120));
-      return { ms: ms(started), line, ...rawHookState() };
-    },
-    /** 点第 N 个修复摘要 `at` 按钮（真实 DOM click）。 */
-    rawRepairAt: (index: number) => {
-      const buttons = [...document.querySelectorAll<HTMLElement>('.repairbar__at')];
-      const button = buttons[index] ?? null;
-      button?.click();
-      return { clicked: Boolean(button), count: buttons.length };
-    },
-    /** 走 core 取整份原文（不写剪贴板；逐字断言与守卫用）。 */
-    rawCopyText: async (maxBytes?: number) => {
-      if (!session.rootId) return null;
-      try {
-        const reply = await core.rawSource({ rootId: session.rootId, maxBytes });
-        return { bytes: reply.bytes, chars: reply.text.length, text: reply.text };
-      } catch (error) {
-        const coreError = CoreError.from(error);
-        return { error: { code: coreError.code, message: coreError.message, bytes: coreError.bytes } };
-      }
-    },
-    /** 点「复制原文」按钮并等 toast（剪贴板逐字读回走 click 后的 clipboardText）。 */
-    rawCopy: async () => {
-      const before = toast.textContent ?? '';
-      rawCopyBtn.click();
-      for (let i = 0; i < 25; i++) {
-        await new Promise((resolve) => window.setTimeout(resolve, 20));
-        if ((toast.textContent ?? '') !== before) break;
-      }
-      return { toast: toast.hidden ? '' : (toast.textContent ?? ''), ...rawHookState() };
+    ui: {
+      statusRows,
+      editBadge,
+      toast,
+      viewTreeBtn,
+      viewRawBtn,
+      rawNotice,
+      rawMetaLabel,
+      rawModeLabel,
+      rawCopyBtn,
+      repairBar,
+      repairText,
+      repairOps,
+      repairToggle,
+      repairClose,
+      repairStatusState: statusState,
+      fidelityBar,
+      fidelityNotice,
+      fidelityJump,
+      fidelityClose,
+      exportBtn,
+      exportMenu,
+      exportMenuBtn,
+      exportMenuItems,
+      currentExportMode,
+      chooseExport: (mode) => {
+        const item = exportMenuItems().find(
+          (entry) => entry.dataset.exportMode === normalizeExportMode(mode),
+        );
+        item?.click();
+        return Boolean(item);
+      },
+      openExportMenu: () => exportMenuBtn.click(),
+      clickExportMain: () => exportBtn.click(),
+      clipboardMaxBytes: () => CLIPBOARD_MAX_BYTES,
     },
   };
 }
+
+if (!isExtension) installDevHook(buildDevHookDeps());

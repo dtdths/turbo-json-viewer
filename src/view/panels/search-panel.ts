@@ -434,6 +434,25 @@ export class SearchPanel {
     this.drawWindow();
   }
 
+  /** 面板自报的状态快照（dev hook 用）：渲染数 / 滚动几何 / 计数与页脚文本。 */
+  state(): {
+    rendered: number;
+    listScrollTop: number;
+    listScrollHeight: number;
+    countText: string;
+    posText: string;
+    footText: string;
+  } {
+    return {
+      rendered: this.rendered,
+      listScrollTop: this.scroller?.scrollTop ?? 0,
+      listScrollHeight: this.scroller?.scrollHeight ?? 0,
+      countText: this.countValue?.textContent ?? '',
+      posText: this.posEl?.textContent ?? '',
+      footText: this.footEl?.textContent ?? '',
+    };
+  }
+
   destroy(): void {
     if (!this.mounted) return;
     this.input.removeEventListener('input', this.handleInput);

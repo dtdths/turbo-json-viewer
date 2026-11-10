@@ -354,6 +354,22 @@ export class TreeView {
   }
 
   /** 直接设置滚动容器的 scrollTop；浏览器随后触发 scroll 事件，由 app 层请求窗口。 */
+  /** 当前命中行是否已渲染在行池里（dev hook 用；模块自报，不查全局 DOM）。 */
+  currentRowRendered(): boolean {
+    return this.rowsHost?.querySelector('.row.is-current') !== null;
+  }
+
+  /** 类型列是否有可见单元格（dev hook 用）。 */
+  typeColumnVisible(): boolean {
+    const cells = this.rowsHost?.querySelectorAll<HTMLElement>('.row__type') ?? [];
+    return [...cells].some((cell) => !cell.hidden);
+  }
+
+  /** spacer 高度（CSS 高度字符串；dev hook 断言滚动几何用）。 */
+  spacerHeight(): string | null {
+    return this.spacer?.style.height ?? null;
+  }
+
   scrollToPx(top: number): void {
     const scroller = this.scroller;
     if (!scroller) return;

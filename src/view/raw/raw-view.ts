@@ -262,6 +262,18 @@ export class RawView {
     }, FLASH_MS);
   }
 
+  /** 可见行的行号与文本（dev hook 用；行池自报，不查全局 DOM）。 */
+  renderedLines(): Array<{ line: number; text: string }> {
+    return this.slots
+      .filter((slot) => slot.visible)
+      .map((slot) => ({ line: slot.lineNo, text: slot.code.textContent ?? '' }));
+  }
+
+  /** 当前 flash 行（1-based；无 → null）；与 `flashLine(line)` 设置动作区分命名。 */
+  flashedLine(): number | null {
+    return this.flashLineNo;
+  }
+
   destroy(): void {
     if (!this.mounted) return;
     this.mounted = false;
