@@ -124,7 +124,7 @@
   border: 1px solid var(--border);
   border-radius: 3px;
   font-family: var(--font-ui);
-  font-size: 9px;
+  font-size: var(--text-micro);
   line-height: 13px;
   color: var(--faint);
 }
@@ -167,7 +167,7 @@
   padding: 16px 14px;
   flex: 0 0 auto;
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--text-caption);
   line-height: 1.6;
 }
 .outline__empty[hidden] {

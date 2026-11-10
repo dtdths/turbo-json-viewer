@@ -72,12 +72,11 @@
     </header>
 
     <!-- 截断修复提示条（#8 / ADR-0004）：32px，常驻到用户关闭或重新导入 -->
-    <div class="repairbar" id="repairBar" role="status" aria-live="polite" hidden>
-      <svg class="repairbar__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.2 13.4H1.8Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M8 6.2v3.2M8 11.6v.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      <span class="repairbar__text" id="repairText">—</span>
-      <button class="linkbtn repairbar__toggle" type="button" id="repairToggle" aria-expanded="false" aria-controls="repairOps">摘要</button>
-      <span class="repairbar__spacer"></span>
-      <button class="iconbtn repairbar__close" type="button" id="repairClose" aria-label="关闭修复提示">
+    <div class="noticebar repairbar" id="repairBar" role="status" aria-live="polite" hidden>
+      <svg class="noticebar__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.2 13.4H1.8Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M8 6.2v3.2M8 11.6v.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span class="noticebar__text" id="repairText">—</span>
+      <button class="linkbtn noticebar__action" type="button" id="repairToggle" aria-expanded="false" aria-controls="repairOps">摘要</button>
+      <button class="iconbtn noticebar__close" type="button" id="repairClose" aria-label="关闭修复提示">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 4.6 6.8 6.8M11.4 4.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
       </button>
       <div class="repairbar__ops" id="repairOps" hidden></div>
@@ -191,6 +190,7 @@
     <div class="empty__busy" id="emptyBusy" hidden>正在解析…</div>
     <!-- 拖放区只是放置目标：键盘入口是内层 #pickBtn（容器不再声明 button 语义，避免嵌套交互元素） -->
     <div class="dropzone" id="dropzone">
+      <svg class="dropzone__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h6.2L18 7.8v12.7H7.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M13.7 3.5v4.3H18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
       <strong>拖放 JSON 文件到这里</strong>
       <span class="dropzone__hint">或 <button class="linkbtn" type="button" id="pickBtn">选择文件</button> · <kbd>⌘V</kbd> 粘贴剪贴板</span>
     </div>
@@ -224,21 +224,21 @@
 
 <!-- 树行右键菜单（slice 5 编辑 + ADR-0010 复制四格式 + #22 子树批量展开/收起；交互契约 ADR-0015） -->
 <div class="ctxmenu" id="ctxMenu" role="menu" aria-label="行操作" hidden>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-subtree">复制子树 JSON</button>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-path">复制路径</button>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-value">复制原始值</button>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-key">复制键名</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>复制子树 JSON</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-path"><span class="ctxmenu__lead" aria-hidden="true"></span>复制路径</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-value"><span class="ctxmenu__lead" aria-hidden="true"></span>复制原始值</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-key"><span class="ctxmenu__lead" aria-hidden="true"></span>复制键名</button>
   <div class="ctxmenu__sep" role="separator"></div>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="expand-subtree">展开整棵子树</button>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="collapse-subtree">收起整棵子树</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="expand-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>展开整棵子树</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="collapse-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>收起整棵子树</button>
   <div class="ctxmenu__sep" role="separator"></div>
-  <button class="ctxmenu__item" type="button" role="menuitem" data-act="edit">编辑此节点 JSON</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="edit"><span class="ctxmenu__lead" aria-hidden="true"></span>编辑此节点 JSON</button>
 </div>
 
 <!-- 导出方式菜单（ADR-0012：主按钮执行上次方式，箭头选另一种） -->
 <div class="ctxmenu exportmenu" id="exportMenu" role="menu" aria-label="导出方式" hidden>
-  <button class="ctxmenu__item exportmenu__item" type="button" role="menuitemradio" aria-checked="true" data-export-mode="file"><span class="exportmenu__check" aria-hidden="true"></span>导出 JSON 文件</button>
-  <button class="ctxmenu__item exportmenu__item" type="button" role="menuitemradio" aria-checked="false" data-export-mode="clipboard"><span class="exportmenu__check" aria-hidden="true"></span>复制 JSON 到剪贴板</button>
+  <button class="ctxmenu__item exportmenu__item" type="button" role="menuitemradio" aria-checked="true" data-export-mode="file"><span class="ctxmenu__lead exportmenu__check" aria-hidden="true"></span>导出 JSON 文件</button>
+  <button class="ctxmenu__item exportmenu__item" type="button" role="menuitemradio" aria-checked="false" data-export-mode="clipboard"><span class="ctxmenu__lead exportmenu__check" aria-hidden="true"></span>复制 JSON 到剪贴板</button>
 </div>
 
 <div class="toast" id="toast" role="status" hidden></div>

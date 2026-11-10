@@ -45,7 +45,7 @@
   height: var(--row-h, 24px);
   flex: 0 0 var(--row-h, 24px);
   padding-left: 10px;
-  padding-right: 88px;
+  padding-right: var(--type-col-w);
   font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
   font-size: var(--text-mono, 12.5px);
   line-height: var(--row-h, 24px);
@@ -132,7 +132,7 @@
 
 .tjv-tree .row__count {
   margin-left: 7px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--faint, #737c8e);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
@@ -151,8 +151,8 @@
   max-width: 620px;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--faint, #737c8e);
-  font-size: 11.5px;
+  color: var(--faint);
+  font-size: var(--text-caption);
   flex: 0 1 auto;
 }
 
@@ -161,9 +161,9 @@
 .tjv-tree .row__type {
   position: absolute;
   right: 16px;
-  width: 72px;
+  width: calc(var(--type-col-w) - 16px);
   text-align: right;
-  font-size: 10px;
+  font-size: var(--text-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--faint, #737c8e);
@@ -204,7 +204,7 @@
   padding: 0;
   background: transparent;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--text-small);
   border-radius: var(--radius-xs, 4px);
   color: var(--muted, #8b93a7);
   line-height: 1;
@@ -233,6 +233,8 @@
   left: 0;
   display: block;
   height: 2px;
+  /* ADR-0016 §2.7：提示条不占流内高度，否则 stale 帧绘制时整树下移 2px */
+  margin-bottom: -2px;
   background: linear-gradient(90deg, transparent, var(--accent, #7c8cff), transparent);
   opacity: 0.6;
   pointer-events: none;

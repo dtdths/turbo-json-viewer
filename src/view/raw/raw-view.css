@@ -107,6 +107,8 @@
   z-index: 2;
   display: block;
   height: 2px;
+  /* ADR-0016 §2.7：同树视图，stale 提示条不占流内高度 */
+  margin-bottom: -2px;
   background: linear-gradient(90deg, transparent, var(--accent, #7c8cff), transparent);
   opacity: 0.6;
   pointer-events: none;

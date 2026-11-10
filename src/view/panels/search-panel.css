@@ -94,7 +94,7 @@
   background: transparent;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-micro);
   line-height: 1;
   white-space: nowrap;
   transition: background var(--dur-fast, 110ms) ease, color var(--dur-fast, 110ms) ease,
@@ -216,7 +216,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  height: 44px;
+  height: var(--result-row-h);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -245,7 +245,7 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-2);
 }
 .result.is-selected .result__path {
@@ -259,7 +259,7 @@
   overflow: hidden;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-micro);
   color: var(--faint);
 }
 .result__field {
@@ -280,8 +280,8 @@
   border: 1px solid var(--border);
   border-radius: 3px;
   font-family: var(--font-ui);
-  font-size: 9px;
-  line-height: 13px;
+  font-size: var(--text-micro);
+  line-height: 15px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--faint);
@@ -301,7 +301,7 @@ mark.result__hit {
 .results__empty {
   padding: 16px 14px;
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--text-caption);
   line-height: 1.6;
 }
 .results__empty[hidden] {

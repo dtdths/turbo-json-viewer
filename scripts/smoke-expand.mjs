@@ -123,6 +123,25 @@ try {
     for (let i = 0; i < 40 && !countBadge(); i++) await sleep(25);
     countBadge()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     out.countAfterClick2 = await waitState((s) => s.totalRows === 4, 5000);
+
+    // ---- ADR-0016 §2.7：stale 提示条不得改变树内容布局（展开时 2px 跳动的回归锚点）----
+    // 强制 stale 类并等两帧：修复前 .tjv-tree__spacer 会被顶下 2px（scrollHeight +2），修复后应完全不变。
+    clickBtn('expandAllBtn');
+    await waitState((s) => s.totalRows === 8, 5000);
+    const scroller = document.querySelector('.tjv-tree');
+    const spacer = document.querySelector('.tjv-tree__spacer');
+    const readLayout = () => ({
+      offset: +(spacer.getBoundingClientRect().top - scroller.getBoundingClientRect().top).toFixed(2),
+      height: scroller.scrollHeight,
+    });
+    const staleBefore = readLayout();
+    scroller.classList.add('is-stale');
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    const staleDuring = readLayout();
+    scroller.classList.remove('is-stale');
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    const staleAfter = readLayout();
+    out.staleLayout = { before: staleBefore, during: staleDuring, after: staleAfter };
     return out;
   })()`);
   Object.assign(report, phase1);
@@ -379,6 +398,13 @@ const budgetRejectOk =
   report.budget?.afterReject?.rowVersion === report.budget?.collapsed?.rowVersion &&
   report.budget?.toastHidden === false &&
   /TOO_MANY_ROWS/.test(report.budget?.toastText ?? '');
+const staleLayout = report.staleLayout ?? {};
+const staleLayoutOk =
+  staleLayout.before != null &&
+  staleLayout.during?.offset === staleLayout.before.offset &&
+  staleLayout.during?.height === staleLayout.before.height &&
+  staleLayout.after?.offset === staleLayout.before.offset &&
+  staleLayout.after?.height === staleLayout.before.height;
 const perfOk = report.maxLongTask < 100 && report.consoleErrors?.length === 0;
 
 // #9 收口：已全展开时点「全部展开」→ 中性 toast，且 rowVersion 不变（无无意义重取）
@@ -455,6 +481,7 @@ const checks = {
   '50mb:budget-reject': budgetRejectOk,
   '50mb:subtree-budget-reject': subtreeBudgetOk,
   '50mb:doc-warn-bar': docWarnOk,
+  'stale:no-layout-shift': staleLayoutOk,
   'perf:no-long-task-no-console-error': perfOk,
 };
 for (const [name, ok] of Object.entries(checks)) console.log(`${ok ? '✅' : '❌'} ${name}`);
