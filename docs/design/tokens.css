@@ -195,3 +195,16 @@
   --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px rgba(79, 99, 232, 0.5);
   --focus-ring-inset: inset 0 0 0 1px var(--accent);
 }
+
+/* ---- 响应式断点（ADR-0017 / direction.md §3）----
+   ≤1320px 收一档：左面板 320→300、右栏 300→284、树上限 1280→980。
+   只覆盖布局尺寸；颜色 / 字号 / 其它 metrics 不动。空态居中用的
+   calc(var(--left-panel-w)/2) 会自动跟随。
+   注：--tree-max 980 实际几乎惰性（窗口 ≥1312 才会被它封顶），照规格保留。 */
+@media (max-width: 1320px) {
+  :root {
+    --left-panel-w: 300px;
+    --rail-w: 284px;
+    --tree-max: 980px;
+  }
+}
