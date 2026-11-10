@@ -110,3 +110,12 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
    - **空态遮罩盖住左面板**：`.empty` 是 `position: fixed; inset: 0 0 0 48px; z-index: 30`，初始视图（无文档）点齿轮后 `body[data-panel]` 已切到 settings、但面板被遮罩整块盖住 → 视觉上「点击无效」。修法：`.side--left` 加 `position: relative; z-index: 31`（左面板始终在空态/替换层遮罩之上；模态层 z-index 更高，不受影响）。
    - **设置图标易误认为亮色模式**：原图标「圆 + 8 道射线」与主题按钮的太阳图标同形 → 改为**竖排滑杆**（三根竖线 + 圆点），与主题的太阳/月亮明确区分。
    - 冒烟 `smoke-settings.mjs` 增加 2 项空态回归断言（空态点齿轮：面板在遮罩之上、8 行、关闭回文档视图）。
+
+## 修订（2026-11-10）：第 10 项设置「搜索结果双击复制」（#26）
+
+- **schema +1**：`Settings.searchCopyFormat: CopyFormat`，默认 **`'path'`**；与 `defaultCopyFormat` 一样按 `COPY_FORMATS` 白名单校验、非法回落默认；随整包写入 `tjv.settings.v1`（无新存储键，旧数据缺该键 → 默认路径）。
+- **语义**：只影响「搜索结果行双击」这一个入口；行尾浮条 / 右键菜单仍用 `defaultCopyFormat`（两者独立，避免一个设置同时改两处）。
+- **面板**：9 行 → **10 行**，位置在「复制缩进」之后、标签「**搜索结果双击复制**」，复用 `COPY_FORMAT_ITEMS` 四选项 segmented（320px 内单行放得下，深/亮 + 1200 窄窗口截图已核）。
+- **接线**：`main.ts` 的 `SearchPanel.onCopyResult` 读 `settings.get('searchCopyFormat')` 调既有 `copyNodeToClipboard`；面板本身不读设置（保持 viewmodel 无状态依赖）。
+- **验收**：单测 724 → **725**（`searchCopyFormat` 默认/合法/非法回落）；冒烟 `smoke-settings` 23 → **24**（`set:searchCopyFormat` 默认路径 → 切子树 JSON → 切回；`DEFAULT_KEYS`/`DEFAULTS`/重启恢复对象同步 10 项）。
+- **体积**：`page.js` 33.7 → **33.9KB gz**（+0.2），`worker.js` 15.3 / `page.css` 7.3 不变。
