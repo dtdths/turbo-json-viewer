@@ -27,72 +27,36 @@
  *
  * 命中数口径：历史基准（docs/design/qa-editing-and-search.md §2.3 已注记）37,189 =
  * uncapped 键名命中数；当前 10MB 样本按 core/search.ts 语义 raw 74,378（37,189 key + 37,189 value）
- * → 上限 50,000 截断（UI `50,000+`）。脚本用 Node 侧 reference（与 core/search.ts 同语义、
- * capped + uncapped raw）算期望值，历史基准仅作 warning 记录。
+ * → 上限 50,000 截断（UI `50,000+`）。期望值来自 `scripts/lib/search-expectations.mjs` 的文档基线
+ * 常量（本脚本不再自带 reference walk；命中语义由 vitest parity oracle 保证，ADR-0014 修订
+ * 2026-11-10），历史基准仅作 warning 记录。
  */
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { extensionUrl, launchChrome, REPO_ROOT } from '../prototype/p1/lib/chrome.mjs';
 import { startStaticServer } from '../prototype/p1/lib/http.mjs';
+import { DOCUMENTED_HITS, REFERENCE_HITS, SEARCH_LIMIT } from './lib/search-expectations.mjs';
 
 /* ------------------------------------------------------------------ config */
 
 const SAMPLE = process.argv[2] || '.spike/samples/10mb.json';
 const TERM = 'hotel';
 const ROW_HEIGHT = 44;
-const SEARCH_LIMIT = 50_000;
 /** 历史基准（旧口径）：docs/design/qa-editing-and-search.md §2.3 已注记（= uncapped 键名命中数）。 */
 const LEGACY_BASELINE_HITS = 37_189;
-/** 当前口径（供文档复算）：capped 50,000 / uncapped raw 74,378。 */
-const DOCUMENTED_HITS = { bigHotelCapped: 50_000, bigHotelRaw: 74_378 };
+/**
+ * 期望命中数（来自 checked-in 文档基线 `scripts/lib/search-expectations.mjs`，不再本地 walk 现算）。
+ * 形状与旧 `analyzeHits` 返回值一致（`{total,key,value,truncated}`），后续断言零改动。
+ */
+const ref = REFERENCE_HITS.bigHotel.capped;
+const raw = REFERENCE_HITS.bigHotel.raw;
 const DIST = path.join(REPO_ROOT, 'dist');
 const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 const OK = '✅';
 const BAD = '❌';
 
 await mkdir(SHOTS, { recursive: true });
-
-/* ------------------------------------------------- reference hit counting */
-
-/**
- * 与 `src/core/search.ts` 相同的 walk 语义（键名优先、大小写不敏感、上限截断）。
- * `limit = Infinity` 时统计 uncapped raw。
- */
-function analyzeHits(value, query, limit = SEARCH_LIMIT) {
-  const out = { total: 0, key: 0, value: 0, truncated: false };
-  if (!query) return out;
-  const uncapped = limit === Infinity;
-  if (!uncapped && (!Number.isFinite(limit) || limit <= 0)) return out;
-  const needle = query.toLowerCase();
-  const matches = (text) => text.toLowerCase().includes(needle);
-  const stack = [[value, 'root', false, true]];
-  while (stack.length > 0) {
-    const [node, key, isIdx, isRoot] = stack.pop();
-    let field = null;
-    if (!isIdx && !isRoot && matches(key)) field = 'key';
-    else if (typeof node === 'string' && matches(node)) field = 'value';
-    if (field !== null) {
-      out.total += 1;
-      out[field] += 1;
-      if (out.total >= limit) {
-        out.truncated = true;
-        break;
-      }
-    }
-    if (node === null || typeof node !== 'object') continue;
-    if (Array.isArray(node)) {
-      for (let i = node.length - 1; i >= 0; i--) stack.push([node[i], '[' + i + ']', true, false]);
-    } else {
-      const keys = Object.keys(node);
-      for (let i = keys.length - 1; i >= 0; i--) {
-        const k = keys[i];
-        stack.push([node[k], k, false, false]);
-      }
-    }
-  }
-  return out;
-}
 
 function formatCount(value) {
   return Math.max(0, Math.trunc(value)).toLocaleString('en-US');
@@ -760,15 +724,12 @@ async function runPhase(name, fn, cfg) {
 }
 
 try {
-  /* ---- Node 侧 reference 命中数（capped + uncapped raw） ---- */
+  /* ---- 文档基线（checked-in 常量；本脚本不再自带 reference walk） ---- */
   const sampleAbs = path.resolve(REPO_ROOT, SAMPLE);
   if (!existsSync(sampleAbs)) throw new Error('sample missing: ' + sampleAbs);
   if (!existsSync(path.join(DIST, 'page.html'))) {
     throw new Error('dist/page.html missing — run `node build.mjs` first');
   }
-  const sampleValue = JSON.parse(await readFile(sampleAbs, 'utf8'));
-  const ref = analyzeHits(sampleValue, TERM);
-  const raw = analyzeHits(sampleValue, TERM, Infinity);
   const refCountText = ref.truncated ? formatCount(SEARCH_LIMIT) + '+' : formatCount(ref.total);
   const expectedCounts = [refCountText];
   report.reference = {
@@ -778,6 +739,7 @@ try {
     raw,
     refCountText,
     expectedCounts,
+    baseline: REFERENCE_HITS,
   };
   metrics.reference = {
     hits: ref.total,

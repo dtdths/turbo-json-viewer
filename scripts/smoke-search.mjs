@@ -25,7 +25,9 @@
  * 当前样本按 `src/core/search.ts` 语义（键名 + 字符串值、大小写不敏感、上限 50,000）：
  *   `.mock/1.json` hotel = 186（140 key + 46 value）；
  *   10MB hotel = raw 74,378（37,189 key + 37,189 value）→ capped 50,000 truncated。
- * 脚本从样本现算 reference：capped 值用于断言实现；uncapped raw 写入 report 供文档复算。
+ * 期望值来源：`scripts/lib/search-expectations.mjs` 的文档基线常量（样本 bytes+sha256 指纹钉住），
+ * 本脚本**不再**自带 reference walk —— 命中语义由 vitest parity oracle 对照独立参考实现保证
+ * （`tests/unit/core/search-parity.test.ts` / ADR-0014 修订 2026-11-10）。
  * 历史基准只作为 warning 记录，不与已更新的契约 §6 冲突。
  *
  * 输出：JSON report（关键毫秒数 / 行数 / 长任务 / 命中数）+ 通过项表 + OK/FAIL 退出码。
@@ -36,6 +38,13 @@ import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { launchChrome, REPO_ROOT } from '../prototype/p1/lib/chrome.mjs';
 import { startStaticServer } from '../prototype/p1/lib/http.mjs';
+import {
+  DOCUMENTED_HITS,
+  fingerprintText,
+  REFERENCE_HITS,
+  SAMPLES,
+  SEARCH_LIMIT,
+} from './lib/search-expectations.mjs';
 
 /* ------------------------------------------------------------------ config */
 
@@ -46,11 +55,19 @@ const BIG_TERM = 'hotel';
 const NO_HIT_TERM = 'zz-no-such-term-9x';
 const TRUNC_TERM = 'e'; // 10MB 上远超 50k 命中 → truncated
 const ROW_HEIGHT = 44;
-const SEARCH_LIMIT = 50_000;
 /** 历史基准（旧口径）：docs/design/qa-editing-and-search.md §2.3 已注记；契约 §6 已更新为 186 / raw 74,378。 */
 const LEGACY_BASELINE_HITS = { mockHotel: 58, bigHotel: 37_189 };
-/** 当前口径的 capped/raw 命中数（供文档复算）：10MB raw 74,378 = 37,189 key + 37,189 value。 */
-const DOCUMENTED_HITS = { mockHotel: 186, bigHotelCapped: 50_000, bigHotelRaw: 74_378 };
+
+/**
+ * 期望命中数别名（来自 checked-in 文档基线 `scripts/lib/search-expectations.mjs`，不再本地 walk 现算）。
+ * 形状与旧 `analyzeHits` 返回值一致（`{total,key,value,truncated}`），后续断言零改动。
+ */
+const refMock = REFERENCE_HITS.mockHotel;
+const rawMock = REFERENCE_HITS.mockHotel; // mock 未截断：raw == capped
+const refBig = REFERENCE_HITS.bigHotel.capped;
+const rawBig = REFERENCE_HITS.bigHotel.raw;
+const refBigE = REFERENCE_HITS.bigHotelE;
+const refNoHit = REFERENCE_HITS.noHit;
 
 const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 const OK = '✅';
@@ -58,63 +75,11 @@ const BAD = '❌';
 
 await mkdir(SHOTS, { recursive: true });
 
-/* ------------------------------------------------- reference hit counting */
-
-/**
- * 与 `src/core/search.ts` 完全一致的 walk 语义（键名命中优先于字符串值命中；
- * 默认大小写不敏感；命中上限 50,000 时截断），只用于算期望命中数。
- * `limit = Infinity` 时统计 uncapped raw（供文档复算 74,378）。
- * （TS 源码不进 mjs harness，这里保持最小复刻；语义改动时两处要一起改。）
- */
-function analyzeHits(value, query, limit = SEARCH_LIMIT) {
-  const out = { total: 0, key: 0, value: 0, truncated: false };
-  if (!query) return out;
-  const uncapped = limit === Infinity;
-  if (!uncapped && (!Number.isFinite(limit) || limit <= 0)) return out;
-
-  const needle = query.toLowerCase();
-  const matches = (text) => text.toLowerCase().includes(needle);
-
-  // frame: [node, key, isIndex, isRoot]
-  const stack = [[value, 'root', false, true]];
-  while (stack.length > 0) {
-    const [node, key, isIdx, isRoot] = stack.pop();
-    const keyIsName = !isIdx && !isRoot;
-
-    let field = null;
-    if (keyIsName && matches(key)) field = 'key';
-    else if (typeof node === 'string' && matches(node)) field = 'value';
-
-    if (field !== null) {
-      out.total += 1;
-      out[field] += 1;
-      if (out.total >= limit) {
-        out.truncated = true;
-        break;
-      }
-    }
-
-    if (node === null || typeof node !== 'object') continue;
-    if (Array.isArray(node)) {
-      for (let i = node.length - 1; i >= 0; i--) {
-        stack.push([node[i], '[' + i + ']', true, false]);
-      }
-    } else {
-      const keys = Object.keys(node);
-      for (let i = keys.length - 1; i >= 0; i--) {
-        const k = keys[i];
-        stack.push([node[k], k, false, false]);
-      }
-    }
-  }
-  return out;
-}
-
 async function readJsonSample(rel) {
   const abs = path.resolve(REPO_ROOT, rel);
   if (!existsSync(abs)) throw new Error('sample missing: ' + abs);
   const text = await readFile(abs, 'utf8');
-  return { rel, abs, bytes: Buffer.byteLength(text), value: JSON.parse(text) };
+  return { rel, abs, text, bytes: Buffer.byteLength(text), value: JSON.parse(text) };
 }
 
 /* ------------------------------------------------------- report primitives */
@@ -708,20 +673,30 @@ async function runPhase(name, fn, cfg) {
 }
 
 try {
-  /* ---- Node 侧 reference 命中数（与 core/search.ts 同语义；capped + uncapped raw） ---- */
+  /* ---- 文档基线：checked-in 常量 + 样本身份指纹（本脚本不再自带 reference walk） ---- */
   const mockSample = await readJsonSample(MOCK_SAMPLE);
   const bigSample = await readJsonSample(BIG_SAMPLE);
-  const refMock = analyzeHits(mockSample.value, MOCK_TERM);
-  const refBig = analyzeHits(bigSample.value, BIG_TERM);
-  const refBigE = analyzeHits(bigSample.value, TRUNC_TERM);
-  const refNoHit = analyzeHits(mockSample.value, NO_HIT_TERM);
-  const rawMock = analyzeHits(mockSample.value, MOCK_TERM, Infinity);
-  const rawBig = analyzeHits(bigSample.value, BIG_TERM, Infinity);
+  const mockFingerprint = fingerprintText(mockSample.text);
+  const bigFingerprint = fingerprintText(bigSample.text);
+  const mockIdentityOk =
+    mockFingerprint.bytes === SAMPLES.mock.bytes && mockFingerprint.sha256 === SAMPLES.mock.sha256;
+  const bigIdentityOk =
+    bigFingerprint.bytes === SAMPLES.big.bytes && bigFingerprint.sha256 === SAMPLES.big.sha256;
+  const baselineConsistent =
+    refMock.total === DOCUMENTED_HITS.mockHotel &&
+    refMock.truncated === false &&
+    rawBig.total === DOCUMENTED_HITS.bigHotelRaw &&
+    rawBig.key + rawBig.value === rawBig.total &&
+    refBig.total === Math.min(rawBig.total, SEARCH_LIMIT) &&
+    refBig.total === DOCUMENTED_HITS.bigHotelCapped &&
+    refBigE.total === SEARCH_LIMIT &&
+    refNoHit.total === 0;
   report.reference = {
-    mock: { sample: MOCK_SAMPLE, bytes: mockSample.bytes, term: MOCK_TERM, capped: refMock, raw: rawMock },
-    big: { sample: BIG_SAMPLE, bytes: bigSample.bytes, term: BIG_TERM, capped: refBig, raw: rawBig },
-    bigE: { term: TRUNC_TERM, ...refBigE },
-    noHit: { term: NO_HIT_TERM, ...refNoHit },
+    mock: { sample: MOCK_SAMPLE, term: MOCK_TERM, fingerprint: mockFingerprint, documented: refMock },
+    big: { sample: BIG_SAMPLE, term: BIG_TERM, fingerprint: bigFingerprint, documented: { capped: refBig, raw: rawBig } },
+    bigE: { term: TRUNC_TERM, documented: refBigE },
+    noHit: { term: NO_HIT_TERM, documented: refNoHit },
+    baseline: REFERENCE_HITS,
   };
   metric('reference', {
     mockHotelHits: refMock.total,
@@ -734,19 +709,14 @@ try {
     bigEHits: refBigE.total,
     bigETruncated: refBigE.truncated,
   });
-  check(
-    'reference:uncapped-raw',
-    rawMock.total === DOCUMENTED_HITS.mockHotel &&
-      rawBig.total === DOCUMENTED_HITS.bigHotelRaw &&
-      rawBig.key === LEGACY_BASELINE_HITS.bigHotel &&
-      rawBig.value === LEGACY_BASELINE_HITS.bigHotel,
-    {
-      mockRaw: rawMock.total,
-      bigRaw: rawBig,
-      documented: DOCUMENTED_HITS,
-      note: 'uncapped raw 只供文档复算；断言实现仍按 capped 50,000',
-    },
-  );
+  check('reference:documented', mockIdentityOk && bigIdentityOk && baselineConsistent, {
+    mockFingerprint,
+    bigFingerprint,
+    expectedSamples: SAMPLES,
+    documented: DOCUMENTED_HITS,
+    baseline: REFERENCE_HITS,
+    note: '样本 bytes+sha256 必须与文档基线一致；样本换过 → 按 scripts/lib/search-expectations.mjs 头部流程刷新',
+  });
   if (refMock.total !== LEGACY_BASELINE_HITS.mockHotel) {
     warn('legacy-baseline:mock', {
       legacyBaseline: LEGACY_BASELINE_HITS.mockHotel,
