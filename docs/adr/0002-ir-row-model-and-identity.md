@@ -149,3 +149,26 @@
    `history` 可选、只靠运行期约定——类型系统抓不住漏填，正是本修订要消除的方言；(c) 把 `expandTo`
    并入统一路径——见 1。
 7. **净行为**：用户可见行为零变化；协议上 4 条展开态回包多一个 `history` 字段（app 目前不读）。
+
+## 修订（2026-11-09）：展开态只用 path 口径回答
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-09，候选 4）+ `grilling` 拍板（Q1–Q5）。
+> 与既有决策的关系：**per-container identity 不变**（见本 ADR 决策 2/3）——本修订只改「怎么问」，不改节点身份。
+
+背景：`RowModel.expanded` 是公开的 `Set<Container>`，`Root.expanded` 又 alias 同一个 Set。图外只能拿值图
+节点问「开没开」，于是测试只能断言 IR 对象身份（20 处 `expanded.has(node)` / `expanded.size`），实现一
+重构就红；`Root` 还暴露了可变内部状态。
+
+1. **展开集合转私有**：`expanded` 成为 `RowModel` 的实现细节（内部使用不动）。
+2. **path 口径接口**：新增 `isOpenAt(path): boolean` 与 `openPaths(): Path[]`。
+   - 根 `$` 恒 open；标量 / 折叠容器 → false；非法路径 → `BAD_COMMAND`（与 `valueAt` / `rowOfPath` 同口径）。
+   - `openPaths()` 返回**全部**展开容器路径（**含折叠祖先下的惰性展开标记**），确定性前序；成本
+     O(值图节点数)，仅供测试 / 低频持久化，不要每帧调用。
+3. **Root 去 aliasing**：删除 `Root.expanded` 字段（构造时写入、无人读），`Root` 只持 `rootId` / `rowModel` /
+   版本。`DocService` 构造同步。
+4. **测试迁移**：20 处对象身份断言改为 path 断言；测试内本地 `openPaths(model)` 辅助函数删除，改用
+   `model.openPaths()`；新增 5 条接口测试（根恒 open / 标量根 / 非法路径 / 前序与惰性标记 / collapseAll）。
+5. **本次不做**：S5 持久化接线（`openPaths()` 正是其需要的口径，但按当前范围只做接口 + 测试）。
+6. **否决**：(a) 保留公开 Set、只加方法（两种问法并存，身份断言继续扩散）；(b) 返回内部 Set 的只读副本
+   （仍是对象身份口径）；(c) `openPaths()` 只遍历 open 子树（会漏掉折叠祖先下的惰性标记，语义不完整）。
+7. **净行为**：用户可见行为零变化；`worker.js` 15.2 → **15.3KB gz**（+0.1）。
