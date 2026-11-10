@@ -98,3 +98,36 @@ app/main.ts                   唯一装配点：searchOpts → core.search(opts)
 - **冒烟** `scripts/smoke-search.mjs` 增补：`Aa` 真实点击改变命中数、`.*` 真实点击命中正则结果、无效正则内联错误 + 结果与树高亮清空、开关点击 → 查询重跑、刷新后开关回到默认。
 - **回归**：`npm run check` + 全部冒烟（串行，CDP 9883）。
 - **体积**：`page.js` gz 增量目标 ≤ **+1.5KB**（预算 45，现 28.7；只加两个 toggle + 错误行 + viewmodel 字段）。
+
+## 修订（2026-11-10）：搜索语义的单一 oracle（架构走查候选 5）
+
+> 决策来源：`improve-codebase-architecture` 走查候选 5 + `grilling` 拍板（Q1–Q5）。
+> §2.2–§2.4 的**语义不变**，本修订只改「怎么验证它」；`src/**` 零改动。
+
+1. **问题**：命中语义此前有两份手抄实现——`src/core/search.ts`（生产）与两份冒烟脚本里的
+   reference walk（`toLowerCase().includes()`、无 opts、硬编码 50,000）。冒烟的期望值来自 walk，
+   于是两份实现互相背书；§2.2 的 `caseSensitive` / `regex` / `keysOnly` 语义**没有对照物**。
+2. **决策**：搜索语义的**单一 oracle 放 vitest**——新增 `tests/unit/core/search-parity.test.ts`
+   + 独立参考实现 `tests/unit/core/search-reference.ts`。参考实现刻意用不同结构（先把值图**前序
+   展平**成 entries 再匹配/切片，core 则是单趟 DFS 边走边判），矩阵覆盖 4 格语义组合 × `keysOnly`
+   × `limit`（含「恰好等于命中数」）× 空 query × 无命中 × 根形态 × Unicode / 非标识符键 / 深层 /
+   长串；失败 message 带 case / query / opts。冒烟不再自带第二份 walk。
+3. **冒烟期望值**：改为 checked-in 文档基线 `scripts/lib/search-expectations.mjs`（唯一常量源：
+   `SEARCH_LIMIT`、capped/raw/key/value、两个样本的 bytes + sha256 指纹）。`smoke-search` 的
+   `reference:uncapped-raw` 检查 1:1 换成 `reference:documented`（指纹匹配 + 常量自洽：
+   `raw = key + value`、`capped = min(raw, limit)`）。**显式代价**：raw 74,378 不再由冒烟实测
+   （UI 不可观测，只到 capped 50,000），保留为文档常量 + 样本指纹钉住；样本换过时该检查会红，
+   刷新流程写在常量模块头部。
+4. **覆盖边界**：parity **不**覆盖 §2.4 的灾难性回溯静态筛查——参考实现不复制该启发式（复制 =
+   重复实现、import 同一函数 = 自证）；`(a+)+` 等拒绝用例仍由 `search.test.ts` 兜底。
+   `shouldCancel` / `CANCELLED` 不属于命中语义，也不在矩阵内。
+5. **现状口径照抄**（不改行为）：`truncated = 命中总数 >= limit`（**恰好等于 `limit` 时也为
+   true**）、`total = hits.length`（截断后数量，不是全量命中数）。parity 测试把这两条钉住；
+   若认为是缺陷，另开票修，不在本修订内改。
+6. **被否决**：(a) 把 walk 收成一份共享 JS 模块给冒烟继续算期望值——harness 里永久留一份 core
+   之外的第二实现；(b) vitest 生成 checked-in JSON fixture 给冒烟读——样本不在 git、覆盖不了
+   186 / 74,378，且「期望值由被测实现生成」有自证风险；(c) 跨语言 `SEARCH_LIMIT` tie 断言——
+   要 `resolveJsonModule` / `allowJs` 才够得着，而漂移已被冒烟
+   `big:search:hits==reference` / `trunc:hits==limit` 直接抓到。
+7. **净行为**：`src/**` 零改动、用户可见行为不变；单测 **634 → 686**（+52）；13 套冒烟计数不变
+   （`smoke-search` 94/94、`smoke-extension-search` 56/56）；体积不变（测试 / 脚本不进 bundle）。
