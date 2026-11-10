@@ -6,11 +6,8 @@
  * 本模块只做 DOM 事件编排（不引 jsdom，DOM 行为由冒烟兜底）。
  *
  * 关闭原因（`MenuCloseReason`）决定是否归还焦点（ADR-0015 §2.4）：
- *   escape → 归还；select → 归还（`returnFocusOnSelect`）；outside → 视 `returnFocusOnOutside`；
+ *   escape → 归还；select → 归还；outside → 视 `returnFocusOnOutside`；
  *   blur / resize / scroll / programmatic → 不归还（焦点已被接管或不再有归属）。
- *
- * 行为开关（`flip` / `closeOnBlur` / `closeOnResize` / `returnFocusOnSelect`）用于「抽取期保持旧行为、
- * 修复期统一」的两步提交；修复完成后由默认值承担，不再从调用点传入（见 ADR-0015 §2.7）。
  */
 import {
   MENU_ANCHOR_GAP,
@@ -38,14 +35,6 @@ export interface MenuConfig {
   onClose?: (reason: MenuCloseReason) => void;
   /** 内层滚动时关闭（右键菜单 true；导出菜单锚在固定工具栏，false） */
   closeOnScroll?: boolean;
-  /** 空间不足时翻转（默认 true；抽取期传 false 保持旧 clamp-only 行为） */
-  flip?: boolean;
-  /** 焦点移出菜单时关闭（默认 false；修复期统一为 true） */
-  closeOnBlur?: boolean;
-  /** 窗口 resize 时关闭（默认 false；导出菜单旧行为为 true） */
-  closeOnResize?: boolean;
-  /** 选中项后归还焦点（默认 true；导出菜单旧行为为 false） */
-  returnFocusOnSelect?: boolean;
   /** 外部 pointerdown 关闭时归还焦点（右键菜单 true，保持旧行为；导出菜单 false） */
   returnFocusOnOutside?: boolean;
 }
@@ -79,7 +68,7 @@ export function createMenu(config: MenuConfig): MenuController {
       anchor,
       { width: rect.width, height: rect.height },
       { width: window.innerWidth, height: window.innerHeight },
-      { margin: MENU_VIEWPORT_MARGIN, gap: MENU_ANCHOR_GAP, flip: config.flip !== false },
+      { margin: MENU_VIEWPORT_MARGIN, gap: MENU_ANCHOR_GAP },
     );
     element.style.left = `${placement.left}px`;
     element.style.top = `${placement.top}px`;
@@ -108,6 +97,13 @@ export function createMenu(config: MenuConfig): MenuController {
       event.preventDefault();
       event.stopPropagation();
       controller.close('escape');
+      return;
+    }
+    if (event.key === 'Tab') {
+      // 关闭菜单、焦点回 opener；不 preventDefault——浏览器默认 Tab 会从 opener 继续移动，
+      // 因此不会把用户困在「菜单已关但焦点停在 body」的状态。
+      controller.close('blur');
+      focusOpener();
       return;
     }
     if (!isMenuNavKey(event.key)) return;
@@ -172,7 +168,7 @@ export function createMenu(config: MenuConfig): MenuController {
       if (activeMenu === controller) activeMenu = null;
       const wantsFocus =
         reason === 'escape' ||
-        (reason === 'select' && config.returnFocusOnSelect !== false) ||
+        reason === 'select' ||
         (reason === 'outside' && config.returnFocusOnOutside === true);
       if (wantsFocus) focusOpener();
       config.onClose?.(reason);
@@ -182,9 +178,9 @@ export function createMenu(config: MenuConfig): MenuController {
   element.addEventListener('click', onClick);
   element.addEventListener('keydown', onKeyDown);
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  if (config.closeOnResize === true) window.addEventListener('resize', onWindowResize);
+  window.addEventListener('resize', onWindowResize);
   if (config.closeOnScroll === true) document.addEventListener('scroll', onDocumentScroll, true);
-  if (config.closeOnBlur === true) element.addEventListener('focusout', onFocusOut);
+  element.addEventListener('focusout', onFocusOut);
 
   return controller;
 }

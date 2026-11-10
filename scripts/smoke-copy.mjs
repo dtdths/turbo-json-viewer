@@ -16,6 +16,8 @@
  *      点复制 = 子树 JSON 快路径（容器行与标量行）、点编辑 = 打开子树弹层且路径正确。
  *   5) 超大子树（>5MB 标量）→ `copyResolve` 返 TOO_LARGE + 点击复制 toast 引导导出。
  *   6) 复制只读：docRevision / rowVersion / totalRows 不变；0 page 异常 / 0 console error。
+ *   7) 菜单交互契约（ADR-0015）：打开焦点落第一可用项、↑↓ 跳过禁用项、Home/End、
+ *      Esc/Tab/失焦/外部 pointerdown/resize 关闭、Esc/选中后焦点回树。
  *
  * 截图落 .spike/smoke/copy-*.png；走 HTTP + `window.__tjv`（同 smoke-edit.mjs harness）。
  * 钩子缺失（特性尚未构建）时只报 FAIL，不中断其余断言。
@@ -189,6 +191,75 @@ try {
       out.valueContainer = await resolve(P.a, 'value');
       out.keyRoot = await resolve(P.root, 'key');
       return out;
+    })()`,
+  );
+
+  // ---- phase 3.5：菜单交互契约（ADR-0015：键盘 / 失焦 / 焦点归还 / 关闭触发） ----
+  await runPhase(
+    'menu-contract',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const { P } = window.__smoke;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const menu = document.getElementById('ctxMenu');
+      const tree = document.querySelector('#tree [role="tree"]') || document.getElementById('tree');
+      const activeAct = () => document.activeElement?.dataset?.act ?? null;
+      const press = (key) =>
+        document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      const state = () => ({ open: !menu.hidden, focusTree: document.activeElement === tree });
+      if (typeof h?.ctxOpen !== 'function' || !tree) return out;
+
+      // 打开焦点 = 第一可用项；↑↓/Home/End 只在可用项间移动
+      await h.ctxOpen(P.a);
+      out.openFocus = activeAct();
+      press('ArrowDown');
+      out.arrowDownFocus = activeAct();
+      press('End');
+      out.endFocus = activeAct();
+      press('Home');
+      out.homeFocus = activeAct();
+
+      // Esc：关闭 + 焦点回树
+      press('Escape');
+      out.escape = state();
+
+      // Tab：关闭 + 焦点回树（合成事件不触发默认 Tab 导航）
+      await h.ctxOpen(P.a);
+      press('Tab');
+      out.tab = state();
+
+      // 失焦：焦点移到菜单外 → 关闭
+      await h.ctxOpen(P.a);
+      tree.focus();
+      out.blur = state();
+
+      // 外部 pointerdown：关闭
+      await h.ctxOpen(P.a);
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      out.outside = state();
+
+      // window resize：关闭
+      await h.ctxOpen(P.a);
+      window.dispatchEvent(new Event('resize'));
+      out.resize = state();
+
+      // 选中项：关闭 + 焦点回树
+      await h.ctxOpen(P.a);
+      out.selectClick = await h.ctxClick('copy-path');
+      await sleep(120);
+      out.select = state();
+
+      // 根菜单：可用项 = copy-subtree / copy-path / edit，↓ 跳过 copy-value / copy-key / 两个子树项
+      await h.ctxOpen(P.root);
+      out.rootFirst = activeAct();
+      press('ArrowDown');
+      out.rootSecond = activeAct();
+      press('ArrowDown');
+      out.rootThird = activeAct();
+      press('Escape');
+      out.afterRoot = state();
+      return { menuContract: out };
     })()`,
   );
 
@@ -481,6 +552,28 @@ const checks = {
     isDisabled(report.arrayMenu, 'expand-subtree') &&
     isDisabled(report.arrayMenu, 'collapse-subtree') &&
     isEnabled(report.arrayMenu, 'edit'),
+
+  // ---- 菜单交互契约（ADR-0015）：键盘 / 失焦 / 焦点归还 / 关闭触发 ----
+  'menu:open-focus-first-enabled': report.menuContract?.openFocus === 'copy-subtree',
+  'menu:arrow-down': report.menuContract?.arrowDownFocus === 'copy-path',
+  'menu:home-end':
+    report.menuContract?.endFocus === 'edit' && report.menuContract?.homeFocus === 'copy-subtree',
+  'menu:escape-closes-and-restores-tree-focus':
+    report.menuContract?.escape?.open === false && report.menuContract?.escape?.focusTree === true,
+  'menu:tab-closes-and-restores-tree-focus':
+    report.menuContract?.tab?.open === false && report.menuContract?.tab?.focusTree === true,
+  'menu:blur-closes': report.menuContract?.blur?.open === false,
+  'menu:outside-pointerdown-closes': report.menuContract?.outside?.open === false,
+  'menu:resize-closes': report.menuContract?.resize?.open === false,
+  'menu:select-closes-and-restores-tree-focus':
+    report.menuContract?.selectClick?.hidden === true &&
+    report.menuContract?.select?.open === false &&
+    report.menuContract?.select?.focusTree === true,
+  'menu:nav-skips-disabled':
+    report.menuContract?.rootFirst === 'copy-subtree' &&
+    report.menuContract?.rootSecond === 'copy-path' &&
+    report.menuContract?.rootThird === 'edit' &&
+    report.menuContract?.afterRoot?.open === false,
 
   'resolve:subtree-object':
     report.subtreeA?.text === SUBTREE_A &&

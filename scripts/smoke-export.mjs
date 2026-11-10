@@ -13,6 +13,8 @@
  *   6) 选「导出 JSON 文件」→ 记录下载动作（文件名 `sample.json`）+ 方式变回文件
  *   7) 刷新页面 → 方式保持（持久化到 UiState）+ 主按钮 label 正确
  *   8) 0 page 异常 / 0 console error
+ *   9) 菜单交互契约（ADR-0015）：Tab 关闭并焦点回箭头、外部 pointerdown/resize 关闭、
+ *      定位不越出视口且锚在箭头下方、选中项后焦点回箭头（动作完成、按钮恢复可聚焦后）
  * 截图落 .spike/smoke/export-{menu,toast}.png。
  */
 import path from 'node:path';
@@ -106,6 +108,64 @@ try {
         focusOnCaret: document.activeElement === document.getElementById('exportMenuBtn'),
       };
       return out;
+    })()`,
+  );
+  // ---- phase 2b：菜单交互契约（ADR-0015：Tab / 外部 / resize / 定位 / 选中归还） ----
+  await runPhase(
+    'menu-contract',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const menu = document.getElementById('exportMenu');
+      const btn = document.getElementById('exportMenuBtn');
+      const openMenu = async () => {
+        h.exportMenuOpen();
+        await sleep(110);
+      };
+      const state = () => ({
+        open: !menu.hidden,
+        expanded: btn.getAttribute('aria-expanded'),
+        focusOnCaret: document.activeElement === btn,
+      });
+
+      // Tab：关闭 + 焦点回箭头（合成事件不触发默认 Tab 导航，因此焦点停在 opener）
+      await openMenu();
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      await sleep(60);
+      out.tab = state();
+
+      // 外部 pointerdown：关闭
+      await openMenu();
+      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      await sleep(60);
+      out.outside = state();
+
+      // window resize：关闭
+      await openMenu();
+      window.dispatchEvent(new Event('resize'));
+      await sleep(60);
+      out.resize = state();
+
+      // 定位：不越出视口、锚在箭头下方
+      await openMenu();
+      const rect = menu.getBoundingClientRect();
+      const anchor = btn.getBoundingClientRect();
+      out.position = {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        anchorBottom: anchor.bottom,
+        viewportW: window.innerWidth,
+        viewportH: window.innerHeight,
+      };
+
+      // 选中项：动作完成（按钮重新可聚焦）后焦点回箭头
+      h.exportChoose('clipboard');
+      await sleep(500);
+      out.selectFocus = state();
+      return { menuContract: out };
     })()`,
   );
   await runPhase(
@@ -254,6 +314,23 @@ const checks = {
     report.afterEscape?.expanded === 'false' &&
     report.afterEscape?.focusOnCaret === true,
   'menu:reopen': report.menuOpenState?.menuOpen === true,
+  // ---- 菜单交互契约（ADR-0015）----
+  'menu:tab-closes-and-restores-focus':
+    report.menuContract?.tab?.open === false &&
+    report.menuContract?.tab?.expanded === 'false' &&
+    report.menuContract?.tab?.focusOnCaret === true,
+  'menu:outside-pointerdown-closes':
+    report.menuContract?.outside?.open === false && report.menuContract?.outside?.expanded === 'false',
+  'menu:resize-closes': report.menuContract?.resize?.open === false,
+  'menu:position-in-viewport':
+    Boolean(report.menuContract?.position) &&
+    report.menuContract.position.left >= 7.5 &&
+    report.menuContract.position.top >= 7.5 &&
+    report.menuContract.position.right <= report.menuContract.position.viewportW - 7.5 &&
+    report.menuContract.position.bottom <= report.menuContract.position.viewportH - 7.5 &&
+    report.menuContract.position.top >= report.menuContract.position.anchorBottom,
+  'menu:select-restores-focus':
+    report.menuContract?.selectFocus?.open === false && report.menuContract?.selectFocus?.focusOnCaret === true,
 
   // 复制到剪贴板
   'copy:clipboard-text': clipboardOk(report.copy, EXPECTED_TEXT),

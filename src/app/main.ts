@@ -905,19 +905,20 @@ function syncExportUi(): void {
 
 /**
  * 导出方式菜单控制器（ADR-0015）：定位/键盘/外部关闭/焦点归还收口到 `view/menu`。
- * 抽取期显式保留旧行为（fix 提交统一）：不翻转、resize 关闭、选中项不归还焦点。
+ * 选中项后焦点归还放在动作完成之后：导出期间两个按钮被 disabled（不可聚焦），
+ * 动作结束、按钮恢复后再把焦点还给箭头按钮；只有焦点确实掉到 body 时才归还，避免抢用户中途点的位置。
  */
 const exportMenuController = createMenu({
   element: exportMenu,
   itemSelector: '[data-export-mode]',
   trigger: exportMenuBtn,
-  flip: false,
-  closeOnResize: true,
-  returnFocusOnSelect: false,
   onSelect: (item) => {
     const mode = normalizeExportMode(item.dataset.exportMode);
     rememberExportMode(mode);
-    void runExportMode(mode);
+    void runExportMode(mode).finally(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) exportMenuBtn.focus();
+    });
   },
 });
 
@@ -993,14 +994,14 @@ async function copyDocJson(): Promise<void> {
 
 /**
  * 树行右键菜单控制器（ADR-0015）：键盘/定位/外部关闭/焦点归还收口到 `view/menu`。
- * 抽取期显式保留旧行为（fix 提交统一）：不翻转、无 resize/scroll 关闭、Esc/选中回树。
+ * 右键菜单锚在光标 → 内层滚动关闭（`closeOnScroll`）；Esc/选中回树（`returnFocus`）。
  */
 const ctxMenuController = createMenu({
   element: ctxMenu,
   itemSelector: '[data-act]',
   returnFocus: focusTree,
   returnFocusOnOutside: true,
-  flip: false,
+  closeOnScroll: true,
   onSelect: (item) => {
     const act = item.dataset.act ?? '';
     const path = ctxPath;
