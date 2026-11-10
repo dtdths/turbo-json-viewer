@@ -38,6 +38,7 @@ import {
 } from '../viewmodel/export-state';
 import { SettingsPanel } from '../view/panels/settings-panel';
 import { NoticeBar } from '../view/panels/notice-bar';
+import { createMenu } from '../view/menu';
 import { createViewStateStore } from './storage';
 
 const chromeApi = (globalThis as { chrome?: { runtime?: { id?: string; getURL(path: string): string } } }).chrome;
@@ -626,8 +627,8 @@ exportBtn.addEventListener('click', () => {
   void runExportMode(currentExportMode());
 });
 exportMenuBtn.addEventListener('click', () => {
-  if (exportMenu.hidden) openExportMenu();
-  else closeExportMenu();
+  if (exportMenuController.isOpen) exportMenuController.close('programmatic');
+  else openExportMenu();
 });
 editBadge.addEventListener('click', () => {
   void resetEdits();
@@ -654,58 +655,6 @@ repairOps.addEventListener('click', (event: MouseEvent) => {
   if (!Number.isFinite(offset)) return;
   void revealRepairOffset(offset);
 });
-ctxMenu.addEventListener('click', (event: MouseEvent) => {
-  const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-act]');
-  if (!item) return;
-  const act = item.dataset.act ?? '';
-  const path = ctxPath;
-  hideContextMenu();
-  if (!path) return;
-  const format = copyFormatOfAct(act);
-  if (format) {
-    void copyNodeToClipboard(path, format);
-    return;
-  }
-  // 子树批量展开 / 收起（#22 / ADR-0002 修订）：两个固定项，不按状态翻转文案
-  if (act === 'expand-subtree') {
-    void toggleSubtree(path, true);
-    return;
-  }
-  if (act === 'collapse-subtree') {
-    void toggleSubtree(path, false);
-    return;
-  }
-  if (act === 'edit') void openEditor(path);
-});
-/** 菜单键盘（ADR-0010 §8）：↑/↓ 在可用项间循环、Home/End、Esc 关闭；Enter 由按钮原生触发。 */
-ctxMenu.addEventListener('keydown', (event: KeyboardEvent) => {
-  if (event.key === 'Escape') {
-    hideContextMenu();
-    return;
-  }
-  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
-    return;
-  }
-  event.preventDefault();
-  const items = enabledCtxItems();
-  if (items.length === 0) return;
-  const current = document.activeElement as HTMLElement | null;
-  const index = current ? items.findIndex((item) => item === current) : -1;
-  let next: number;
-  if (event.key === 'Home') next = 0;
-  else if (event.key === 'End') next = items.length - 1;
-  else if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length;
-  else next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length;
-  items[next]?.focus();
-});
-document.addEventListener(
-  'pointerdown',
-  (event: PointerEvent) => {
-    if (!ctxMenu.hidden && !ctxMenu.contains(event.target as Node)) hideContextMenu();
-  },
-  true,
-);
-
 /* ---------------- tree intents ---------------- */
 
 async function toggleNode(path: string, open: boolean): Promise<void> {
@@ -954,30 +903,32 @@ function syncExportUi(): void {
   }
 }
 
-function positionExportMenu(): void {
-  const anchor = exportMenuBtn.getBoundingClientRect();
-  const rect = exportMenu.getBoundingClientRect();
-  const left = Math.max(8, Math.min(anchor.right - rect.width, window.innerWidth - rect.width - 8));
-  const top = Math.min(anchor.bottom + 4, window.innerHeight - rect.height - 8);
-  exportMenu.style.left = `${left}px`;
-  exportMenu.style.top = `${Math.max(8, top)}px`;
-}
+/**
+ * 导出方式菜单控制器（ADR-0015）：定位/键盘/外部关闭/焦点归还收口到 `view/menu`。
+ * 抽取期显式保留旧行为（fix 提交统一）：不翻转、resize 关闭、选中项不归还焦点。
+ */
+const exportMenuController = createMenu({
+  element: exportMenu,
+  itemSelector: '[data-export-mode]',
+  trigger: exportMenuBtn,
+  flip: false,
+  closeOnResize: true,
+  returnFocusOnSelect: false,
+  onSelect: (item) => {
+    const mode = normalizeExportMode(item.dataset.exportMode);
+    rememberExportMode(mode);
+    void runExportMode(mode);
+  },
+});
 
 function openExportMenu(): void {
   if (exportMenuBtn.disabled) return;
-  exportMenu.hidden = false;
-  exportMenuBtn.setAttribute('aria-expanded', 'true');
-  positionExportMenu();
   const items = exportMenuItems();
-  const target = items.find((item) => item.dataset.exportMode === currentExportMode()) ?? items[0];
-  target?.focus();
-}
-
-function closeExportMenu(focusBack = false): void {
-  if (exportMenu.hidden) return;
-  exportMenu.hidden = true;
-  exportMenuBtn.setAttribute('aria-expanded', 'false');
-  if (focusBack) exportMenuBtn.focus();
+  const preferred = items.find((item) => item.dataset.exportMode === currentExportMode()) ?? items[0] ?? null;
+  exportMenuController.open(
+    { kind: 'rect', rect: exportMenuBtn.getBoundingClientRect(), align: 'end' },
+    preferred,
+  );
 }
 
 /** 记住本次方式（写穿 Settings，持久化；订阅会触发 applySettings → 面板回显 + 按钮/勾选同步）。 */
@@ -1040,52 +991,50 @@ async function copyDocJson(): Promise<void> {
   }
 }
 
-exportMenu.addEventListener('click', (event: MouseEvent) => {
-  const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-export-mode]');
-  if (!item) return;
-  const mode = normalizeExportMode(item.dataset.exportMode);
-  closeExportMenu();
-  rememberExportMode(mode);
-  void runExportMode(mode);
-});
-exportMenu.addEventListener('keydown', (event: KeyboardEvent) => {
-  if (event.key === 'Escape') {
-    closeExportMenu(true);
-    return;
-  }
-  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
-    return;
-  }
-  event.preventDefault();
-  const items = exportMenuItems();
-  const current = document.activeElement as HTMLElement | null;
-  const index = current ? items.findIndex((item) => item === current) : -1;
-  let next: number;
-  if (event.key === 'Home') next = 0;
-  else if (event.key === 'End') next = items.length - 1;
-  else if (event.key === 'ArrowDown') next = index < 0 ? 0 : (index + 1) % items.length;
-  else next = index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length;
-  items[next]?.focus();
-});
-document.addEventListener(
-  'pointerdown',
-  (event: PointerEvent) => {
-    if (exportMenu.hidden) return;
-    const target = event.target as Node | null;
-    if (target && (exportMenu.contains(target) || exportMenuBtn.contains(target))) return;
-    closeExportMenu();
+/**
+ * 树行右键菜单控制器（ADR-0015）：键盘/定位/外部关闭/焦点归还收口到 `view/menu`。
+ * 抽取期显式保留旧行为（fix 提交统一）：不翻转、无 resize/scroll 关闭、Esc/选中回树。
+ */
+const ctxMenuController = createMenu({
+  element: ctxMenu,
+  itemSelector: '[data-act]',
+  returnFocus: focusTree,
+  returnFocusOnOutside: true,
+  flip: false,
+  onSelect: (item) => {
+    const act = item.dataset.act ?? '';
+    const path = ctxPath;
+    if (!path) return;
+    const format = copyFormatOfAct(act);
+    if (format) {
+      void copyNodeToClipboard(path, format);
+      return;
+    }
+    // 子树批量展开 / 收起（#22 / ADR-0002 修订）：两个固定项，不按状态翻转文案
+    if (act === 'expand-subtree') {
+      void toggleSubtree(path, true);
+      return;
+    }
+    if (act === 'collapse-subtree') {
+      void toggleSubtree(path, false);
+      return;
+    }
+    if (act === 'edit') void openEditor(path);
   },
-  true,
-);
-window.addEventListener('resize', () => closeExportMenu());
+  onClose: () => {
+    ctxPath = null;
+  },
+});
 
 /**
  * 弹树行右键菜单。`row` = 该行的窗口数据（kind / open / count / hasChildren），
  * 菜单启用态一律以它为准（ADR-0010 修订 2026-11-09：#22 的子树项需要 count 判「有没有子孙」）。
  */
 function showContextMenu(path: string, x: number, y: number, row: Row): void {
+  // 先关上一轮（controller.close 会走 onClose 清 ctxPath），再写本轮 path；
+  // 否则「菜单已开着时再打开另一个行」会被 close 的清理把新 path 清掉。
+  ctxMenuController.close('programmatic');
   ctxPath = path;
-  ctxMenu.hidden = false;
   const kind = row.kind;
   const isContainerKind = kind === 'object' || kind === 'array';
   // 启用规则（ADR-0010 §1 / 修订 §启用规则）：容器没有原始值；根没有键名；子树项只在「有子孙的容器」上可用。
@@ -1105,20 +1054,7 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
   setCtxItemDisabled('expand-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('edit', false);
-  const rect = ctxMenu.getBoundingClientRect();
-  ctxMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
-  ctxMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
-  // 焦点落第一个可用项（此前固定落「编辑」，现在「编辑」在最后）
-  (enabledCtxItems()[0] ?? null)?.focus();
-}
-
-function hideContextMenu(): void {
-  if (ctxMenu.hidden) return;
-  const hadFocus = ctxMenu.contains(document.activeElement);
-  ctxMenu.hidden = true;
-  ctxPath = null;
-  // a11y：键盘关闭（Esc/激活项）后焦点还给树，避免掉到 body（opener 即树滚动容器）
-  if (hadFocus) focusTree();
+  ctxMenuController.open({ kind: 'point', x, y });
 }
 
 /* ---------------- 复制四格式（ADR-0010） ---------------- */
@@ -1155,10 +1091,6 @@ function copyFormatOfAct(act: string): CopyFormat | null {
 
 function ctxItems(): HTMLButtonElement[] {
   return Array.from(ctxMenu.querySelectorAll<HTMLButtonElement>('[data-act]'));
-}
-
-function enabledCtxItems(): HTMLButtonElement[] {
-  return ctxItems().filter((item) => !item.disabled);
 }
 
 /**
