@@ -471,13 +471,6 @@ const FULL_PATHS = [
   '$.empty',
 ];
 
-function openPaths(model: RowModel, count = 100): string[] {
-  return model
-    .window(0, count)
-    .filter((row) => row.open)
-    .map((row) => row.path);
-}
-
 describe('RowModel — toggleSubtree 展开', () => {
   it('展开整棵子树：行数/行序/展开标记与 expandAll 同口径', () => {
     const model = new RowModel(DOC);
@@ -485,7 +478,7 @@ describe('RowModel — toggleSubtree 展开', () => {
     expect(result).toEqual({ row: 2, changed: true, totalRows: 14 });
     expect(model.totalRows).toBe(14);
     expect(paths(model)).toEqual(FULL_PATHS);
-    expect(openPaths(model)).toEqual([
+    expect(model.openPaths()).toEqual([
       '$',
       '$.data',
       '$.data.hotel_list',
@@ -524,7 +517,7 @@ describe('RowModel — toggleSubtree 展开', () => {
     const result = model.toggleSubtree('$.data', true);
     expect(result).toEqual({ row: 2, changed: true, totalRows: 14 });
     expect(paths(model)).toEqual(FULL_PATHS);
-    expect(model.expanded.has(DOC.data.meta)).toBe(true);
+    expect(model.isOpenAt('$.data.meta')).toBe(true);
   });
 
   it('已全展开时是 no-op（changed=false、行映射不变）', () => {
@@ -539,23 +532,23 @@ describe('RowModel — toggleSubtree 展开', () => {
     const model = new RowModel(DOC);
     expect(model.toggleSubtree('$.empty', true)).toEqual({ row: 3, changed: false, totalRows: 4 });
     expect(model.toggleSubtree('$.empty', false)).toEqual({ row: 3, changed: false, totalRows: 4 });
-    expect(model.expanded.has(DOC.empty)).toBe(false);
+    expect(model.isOpenAt('$.empty')).toBe(false);
 
     model.toggleSubtree('$.data', true);
     const emptyRow = model.window(0, 20).find((row) => row.path === '$.empty');
     expect(emptyRow).toMatchObject({ kind: 'object', count: 0, open: false, hasChildren: false });
-    expect(model.expanded.has(DOC.empty)).toBe(false);
+    expect(model.isOpenAt('$.empty')).toBe(false);
   });
 
   it('子树内被手动 toggle 开的空容器：展开时按 rebuildAllOpen 口径复位', () => {
     const withEmpty = { c: { e: {}, n: 1 } };
     const model = new RowModel(withEmpty);
     expect(model.toggle('$.c.e', true)).toMatchObject({ changed: true, totalRows: 2 });
-    expect(model.expanded.has(withEmpty.c.e)).toBe(true);
+    expect(model.isOpenAt('$.c.e')).toBe(true);
 
     const result = model.toggleSubtree('$.c', true);
     expect(result).toEqual({ row: 1, changed: true, totalRows: 4 });
-    expect(model.expanded.has(withEmpty.c.e)).toBe(false);
+    expect(model.isOpenAt('$.c.e')).toBe(false);
     expect(paths(model)).toEqual(['$', '$.c', '$.c.e', '$.c.n']);
     expect(model.window(0, 4).map((row) => row.open)).toEqual([true, true, false, false]);
   });
@@ -575,7 +568,7 @@ describe('RowModel — toggleSubtree 展开', () => {
     const model = new RowModel(DOC);
     const result = model.toggleSubtree('$.data.meta', true);
     expect(result).toEqual({ row: -1, changed: false, totalRows: 4 });
-    expect(model.expanded.has(DOC.data.meta)).toBe(true); // 惰性标记已写入
+    expect(model.isOpenAt('$.data.meta')).toBe(true); // 惰性标记已写入
 
     model.toggle('$.data', true); // 打开祖先 → 惰性展开生效
     expect(model.totalRows).toBe(8); // 根+id+data+hotel_list+meta+count+note+empty
@@ -599,9 +592,9 @@ describe('RowModel — toggleSubtree 收起（深度复位）', () => {
     const result = model.toggleSubtree('$.data', false);
     expect(result).toEqual({ row: 2, changed: true, totalRows: 4 });
     expect(paths(model)).toEqual(['$', '$.id', '$.data', '$.empty']);
-    expect(model.expanded.has(DOC.data)).toBe(false);
-    expect(model.expanded.has(DOC.data.meta)).toBe(false);
-    expect(model.expanded.has(DOC.data.hotel_list)).toBe(false);
+    expect(model.isOpenAt('$.data')).toBe(false);
+    expect(model.isOpenAt('$.data.meta')).toBe(false);
+    expect(model.isOpenAt('$.data.hotel_list')).toBe(false);
     expect(model.rowOfPath('$.data.meta')).toBe(-1);
   });
 
@@ -611,7 +604,7 @@ describe('RowModel — toggleSubtree 收起（深度复位）', () => {
     model.toggleSubtree('$.data', false);
     expect(model.toggle('$.data', true)).toMatchObject({ changed: true, totalRows: 6 });
     expect(paths(model)).toEqual(['$', '$.id', '$.data', '$.data.hotel_list', '$.data.meta', '$.empty']);
-    expect(openPaths(model)).toEqual(['$', '$.data']);
+    expect(model.openPaths()).toEqual(['$', '$.data']);
   });
 
   it('已收起时是 no-op（changed=false、totalRows 不变）', () => {
@@ -627,13 +620,13 @@ describe('RowModel — toggleSubtree 收起（深度复位）', () => {
     expect(model.totalRows).toBe(8);
     model.toggle('$.data', false); // 折叠 data：只释放自己的索引，meta 的展开态保留
     expect(model.totalRows).toBe(4);
-    expect(model.expanded.has(DOC.data.meta)).toBe(true);
+    expect(model.isOpenAt('$.data.meta')).toBe(true);
 
     const reset = model.toggleSubtree('$.data', false);
     expect(reset).toEqual({ row: 2, changed: false, totalRows: 4 });
-    expect(model.expanded.has(DOC.data.meta)).toBe(false); // 惰性标记被复位
-    expect(model.expanded.has(DOC.data.hotel_list)).toBe(false);
-    expect(model.expanded.size).toBe(1); // 只剩根
+    expect(model.isOpenAt('$.data.meta')).toBe(false); // 惰性标记被复位
+    expect(model.isOpenAt('$.data.hotel_list')).toBe(false);
+    expect(model.openPaths().length).toBe(1); // 只剩根
   });
 
   it('子树外展开态不受影响（只动子树）', () => {
@@ -642,8 +635,8 @@ describe('RowModel — toggleSubtree 收起（深度复位）', () => {
     const result = model.toggleSubtree('$.data.meta', false);
     expect(result).toEqual({ row: 10, changed: true, totalRows: 12 });
     expect(paths(model)).toEqual(FULL_PATHS.filter((path) => !path.startsWith('$.data.meta.')));
-    expect(model.expanded.has(DOC.data.hotel_list)).toBe(true);
-    expect(model.expanded.has(DOC.data.meta)).toBe(false);
+    expect(model.isOpenAt('$.data.hotel_list')).toBe(true);
+    expect(model.isOpenAt('$.data.meta')).toBe(false);
     expect(model.rowOfPath('$.data.hotel_list[1].price')).toBe(9);
   });
 });
@@ -654,8 +647,8 @@ describe('RowModel — toggleSubtree 预算（原子拒绝）', () => {
     expect(codeOf(() => model.toggleSubtree('$.data', true))).toBe('TOO_MANY_ROWS');
     expect(model.totalRows).toBe(4);
     expect(paths(model)).toEqual(['$', '$.id', '$.data', '$.empty']);
-    expect(model.expanded.size).toBe(1);
-    expect(model.expanded.has(DOC.data)).toBe(false);
+    expect(model.openPaths().length).toBe(1);
+    expect(model.isOpenAt('$.data')).toBe(false);
 
     // 拒绝后模型未被污染：小步展开照常
     expect(model.toggle('$.data', true)).toMatchObject({ changed: true, totalRows: 6 });
@@ -669,8 +662,8 @@ describe('RowModel — toggleSubtree 预算（原子拒绝）', () => {
 
     expect(codeOf(() => model.toggleSubtree('$.data', true))).toBe('TOO_MANY_ROWS');
     expect(model.totalRows).toBe(8);
-    expect(model.expanded.has(DOC.data.hotel_list)).toBe(true);
-    expect(model.expanded.has(DOC.data.meta)).toBe(false);
+    expect(model.isOpenAt('$.data.hotel_list')).toBe(true);
+    expect(model.isOpenAt('$.data.meta')).toBe(false);
     expect(model.rowOfPath('$.data.meta')).toBe(6); // meta 仍可见、仍折叠
     expect(paths(model)).toEqual([
       '$',
@@ -689,7 +682,7 @@ describe('RowModel — toggleSubtree 预算（原子拒绝）', () => {
     const model = new RowModel(big, { rowBudget: 100 });
     expect(codeOf(() => model.toggleSubtree('$.a', true))).toBe('TOO_MANY_ROWS');
     expect(model.totalRows).toBe(2);
-    expect(model.expanded.size).toBe(1);
+    expect(model.openPaths().length).toBe(1);
   });
 });
 
@@ -705,5 +698,55 @@ describe('RowModel — toggleSubtree 深嵌套（迭代实现）', () => {
 
     expect(model.toggleSubtree('$.root', false)).toMatchObject({ row: 1, changed: true, totalRows: 2 });
     expect(model.totalRows).toBe(2);
+  });
+});
+
+describe('RowModel — 展开态 path 口径（ADR-0002 修订 2026-11-09）', () => {
+  it('根恒 open；标量与折叠容器 false；展开后 true', () => {
+    const model = new RowModel(DOC);
+    expect(model.isOpenAt(ROOT_PATH)).toBe(true);
+    expect(model.isOpenAt('$.id')).toBe(false); // 标量
+    expect(model.isOpenAt('$.data')).toBe(false); // 容器但折叠
+    expect(model.toggle('$.data', true).changed).toBe(true);
+    expect(model.isOpenAt('$.data')).toBe(true);
+  });
+
+  it('标量根文档：isOpenAt($) 仍是 true（根永远 open）', () => {
+    expect(new RowModel('hello').isOpenAt(ROOT_PATH)).toBe(true);
+  });
+
+  it('非法路径按 valueAt 同口径抛 BAD_COMMAND（标量路径不抛）', () => {
+    const model = new RowModel(DOC);
+    expect(codeOf(() => model.isOpenAt('$.nope'))).toBe('BAD_COMMAND');
+    expect(codeOf(() => model.isOpenAt('$.id.deep'))).toBe('BAD_COMMAND');
+  });
+
+  it('openPaths()：确定性前序，且包含折叠祖先下的惰性展开标记', () => {
+    const model = new RowModel(DOC);
+    model.toggleSubtree('$.data.meta', true); // data 折叠 → meta 是隐形展开标记
+    expect(model.totalRows).toBe(4); // 可见行没变
+    expect(model.isOpenAt('$.data.meta')).toBe(true);
+    expect(model.openPaths()).toEqual(['$', '$.data.meta']);
+
+    model.toggle('$.data', true); // 打开祖先：标记生效
+    expect(model.openPaths()).toEqual(['$', '$.data', '$.data.meta']);
+
+    model.expandAll();
+    expect(model.openPaths()).toEqual([
+      '$',
+      '$.data',
+      '$.data.hotel_list',
+      '$.data.hotel_list[0]',
+      '$.data.hotel_list[1]',
+      '$.data.meta',
+    ]);
+  });
+
+  it('openPaths()：collapseAll 后只剩根；空容器永不进集合', () => {
+    const model = new RowModel(DOC);
+    model.expandAll();
+    model.collapseAll();
+    expect(model.openPaths()).toEqual(['$']);
+    expect(model.isOpenAt('$.empty')).toBe(false); // 空容器不是展开态
   });
 });

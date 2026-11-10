@@ -235,7 +235,6 @@ export class DocService {
         rootId: DOC_ROOT_ID,
         kind: 'doc',
         value,
-        expanded: rowModel.expanded,
         rowModel,
         docRevision: 1,
         rowVersion: 1,

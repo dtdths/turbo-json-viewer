@@ -266,8 +266,11 @@ interface ChainEntry {
 }
 
 export class RowModel {
-  /** 展开集合（根容器始终在此集合内）；Root 直接引用同一个 Set。 */
-  readonly expanded = new Set<Container>();
+  /**
+   * 展开集合（根容器始终在此集合内）：**实现细节，不外露**。
+   * 外部只通过 `isOpenAt(path)` / `openPaths()` 以 path 口径问展开态（ADR-0002 修订 2026-11-09）。
+   */
+  private readonly expanded = new Set<Container>();
 
   private readonly indexes = new Map<Container, Fenwick>();
   private keysCache = new WeakMap<Container, string[]>();
@@ -293,6 +296,49 @@ export class RowModel {
 
   get budget(): number {
     return this.rowBudget;
+  }
+
+  /**
+   * path 处的容器是否处于展开态（ADR-0002 修订 2026-11-09：展开态只以 path 口径回答）。
+   * 根恒 open；标量 / 折叠容器 → false；路径非法 → BAD_COMMAND（与 `valueAt` / `rowOfPath` 同口径）。
+   */
+  isOpenAt(path: Path): boolean {
+    const chain = this.locateChain(path);
+    if (chain.length === 0) return true;
+    const node = (chain[chain.length - 1] as ChainEntry).node;
+    return isContainer(node) && this.expanded.has(node);
+  }
+
+  /**
+   * 全部处于展开态的容器路径（确定性前序）。
+   *
+   * 与「可见行里 open 的路径」不同：**折叠祖先下的惰性展开标记也算 open**（这正是 expanded
+   * 集合的真相，S5 持久化需要它）。成本 O(值图节点数)——大文档不要每帧调用，仅供测试 /
+   * 持久化等低频路径。
+   */
+  openPaths(): Path[] {
+    const out: Path[] = [];
+    if (!isContainer(this.rootValue)) return out;
+    const stack: Array<{ node: Container; path: Path }> = [{ node: this.rootValue, path: ROOT_PATH }];
+    while (stack.length > 0) {
+      const { node, path } = stack.pop() as { node: Container; path: Path };
+      if (this.expanded.has(node)) out.push(path);
+      // 逆序入栈 → pop 出正序（确定性前序遍历）
+      if (Array.isArray(node)) {
+        for (let i = node.length - 1; i >= 0; i--) {
+          const child: unknown = node[i];
+          if (isContainer(child)) stack.push({ node: child, path: appendIndex(path, i) });
+        }
+      } else {
+        const keys = this.keysOf(node);
+        for (let i = keys.length - 1; i >= 0; i--) {
+          const key = keys[i] as string;
+          const child: unknown = node[key];
+          if (isContainer(child)) stack.push({ node: child, path: appendKey(path, key) });
+        }
+      }
+    }
+    return out;
   }
 
   /** 行窗口；越界/负数裁剪，不抛错。 */
@@ -582,7 +628,7 @@ export class RowModel {
   /**
    * 一次性重建「全 open」行模型（expandAll 的实现；调用方已做预算检查）。
    * 迭代后序：先收集容器帧，子容器完成后把「子树行数」回填给父容器作可见尺寸；
-   * 不使用递归（深 JSON 不爆栈）。expanded 是 Root 共享的 Set，只能 clear/add，不能重新赋值。
+   * 不使用递归（深 JSON 不爆栈）。expanded 只能 clear/add，不能重新赋值。
    */
   private rebuildAllOpen(): void {
     const root = this.rootValue as Container;

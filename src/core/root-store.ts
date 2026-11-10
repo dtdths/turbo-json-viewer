@@ -30,8 +30,6 @@ export interface Root {
   kind: RootKind;
   /** JSON.parse 值图（expression 根引用原节点，不复制） */
   value: unknown;
-  /** 展开集合（与 rowModel.expanded 是同一个 Set） */
-  expanded: Set<object>;
   rowModel: RowModel;
   /** 内容版本：导入 / 修复 / replaceNode / reset 时 +1 */
   docRevision: number;
