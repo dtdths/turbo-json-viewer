@@ -113,3 +113,7 @@
 - 深/亮两套截图对照（空态/主视图/菜单/提示条/搜索/设置/亮色）；
 - README §11 新增 6.15 行 + 数字同步；`direction.md` §3/§4/§6 与 `docs/design/tokens.css` 同步；
 - 不推送（push 前问用户）。
+
+**验收结果（2026-11-10，用户拍板）**：用户查看按最终代码重新生成的深/亮两套截图（`.spike/audit/` 19 张）后**验收通过**，**#21 关闭**。
+关票前复测：`npm run check` 29 文件 / **722 单测全绿**；**13 套冒烟串行全绿**（search 94 / extension-search 56 / expand 21 / edit 14 / copy 38 / repair 14 / settings 21 / export 21 / raw 26 / outline 53 / fidelity 24；`smoke` 与 `smoke:ext` 打 OK）；体积 `page.js` 33.7 / `worker.js` 15.3 / `page.css` 7.2 KB gz。
+后续零散观感意见**另开票**（#21 作废）；本轮明确排除的响应式断点另开票跟进。
