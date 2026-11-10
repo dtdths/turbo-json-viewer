@@ -1,9 +1,12 @@
 /* ==========================================================================
-   Turbo JSON Viewer — v1 视觉方向 Converged (A + B details)
-   Base: Direction A · Graphite / Indigo.
-   Borrowed from B: optional right-aligned type column + search result panel.
-   Theme is selected by [data-theme="dark"|"light"] on <html>.
+   Turbo JSON Viewer — Direction A · Graphite / Indigo
+   Design tokens. Theme is selected by [data-theme="dark"|"light"] on <html>.
    Dark is the default (professional tool, low-glare, long-session use).
+
+   口径（ADR-0016，2026-11-10）：
+   - 字号只用 --text-* 八档，CSS 里不再出现 raw px 字号（契约测试守住）。
+   - 尺寸只用下方 metrics 变量；不再散落硬编码 48/320/300/1280。
+   - 对比度：承担小字的 --muted/--faint 与语法色已提升到正文 ≥4.5:1（深/亮）。
    ========================================================================== */
 
 :root,
@@ -17,21 +20,11 @@
   --bg-elevated: #1a1f2b;
   --bg-input: #0d1016;
   --bg-hover: rgba(255, 255, 255, 0.045);
-  --bg-pressed: rgba(255, 255, 255, 0.07);
   --bg-selected: rgba(124, 140, 255, 0.14);
   --bg-selected-strong: rgba(124, 140, 255, 0.2);
   --bg-accent-soft: rgba(124, 140, 255, 0.1);
-  --overlay: rgba(5, 7, 11, 0.66);
-
-  /* ---- converged additions (2026-10-27) ---- */
-  --guide: #1f2532;              /* indent guide */
-  --scrollbar: #262d3b;
-  --scrollbar-hover: #364054;
-  --statusbar-bg: #0e1118;
-  --statusbar-fg: #c6ccd9;
-  --search-panel-w: 320px;       /* search result sidebar */
-  --type-col-w: 88px;            /* optional right-aligned type column */
-  --type-col-color: var(--muted);
+  /* 替换层 / 编辑弹层的遮罩（ADR-0016：收进 token，不再硬编码） */
+  --backdrop: rgba(6, 8, 12, 0.55);
 
   /* ---- borders / hairlines ---- */
   --border-subtle: #1a1f29;
@@ -39,11 +32,11 @@
   --border-strong: #2e3648;
   --border-focus: #7c8cff;
 
-  /* ---- text ---- */
+  /* ---- text（对比度口径见 ADR-0016 §2.3） ---- */
   --text: #e7eaf0;
   --text-2: #c6ccd9;
-  --muted: #8b93a7;
-  --faint: #737c8e;
+  --muted: #9aa3b8;
+  --faint: #8a93a6;
   --text-on-accent: #0b0d12;
 
   /* ---- accent (indigo) ---- */
@@ -60,9 +53,9 @@
   --syntax-string: #6fd3b5;
   --syntax-number: #e3b778;
   --syntax-boolean: #b49cff;
-  --syntax-null: #7b8496;
-  --syntax-punct: #737c8e;
-  --syntax-index: #6f7a90;
+  --syntax-null: #949cab;
+  --syntax-punct: #8a93a6;
+  --syntax-index: #8790a3;
 
   /* ---- semantic ---- */
   --danger: #ff7a85;
@@ -80,30 +73,34 @@
   --hit-text: #f5d79c;
   --hit-row: rgba(240, 196, 96, 0.045);
 
-  /* ---- typography ---- */
+  /* ---- typography（ADR-0016 §2.2：+1 档；只用这八档） ---- */
   --font-ui: system-ui, -apple-system, "SF Pro Text", "PingFang SC",
     "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono",
     Consolas, "Liberation Mono", monospace;
 
-  --text-micro: 10px;      /* badges, tick labels, kbd */
-  --text-caption: 11px;    /* status bar, meta */
-  --text-small: 12px;      /* secondary UI */
-  --text-body: 13px;       /* default UI */
-  --text-mono: 12.5px;     /* JSON tree / code */
-  --text-title: 16px;      /* panel titles */
-  --text-display: 22px;    /* empty state headline */
-  --leading-tight: 1.2;
-  --leading-ui: 1.45;
-  --leading-code: 20px;
+  --text-micro: 11px;      /* 类型标、kbd、foot、单位 */
+  --text-caption: 12px;    /* 状态栏、面板标题、meta、提示条 */
+  --text-small: 13px;      /* 次级 UI：菜单项、过滤按钮、说明 */
+  --text-body: 14px;       /* 默认 UI */
+  --text-mono: 13.5px;     /* JSON 树 / 原文 / 路径 */
+  --text-title: 17px;      /* 面板 / 弹层标题 */
+  --text-display-sm: 22px; /* 替换层标题 */
+  --text-display: 24px;    /* 空态主标题 */
 
-  /* ---- metrics ---- */
+  /* ---- metrics（ADR-0016 §2.1：尺寸单一来源） ---- */
   --toolbar-h: 48px;
-  --banner-h: 32px;
+  --repairbar-h: 32px;     /* 三条提示条共用高度 */
   --status-h: 26px;
-  --row-h: 24px;           /* tree row */
+  --row-h: 24px;           /* 树行高：不随字号涨（信息密度） */
   --row-indent: 16px;
-  --map-w: 264px;
+  --type-col-w: 88px;      /* 树行右侧保留带（类型列 + 行尾浮条） */
+  --activity-w: 48px;
+  --left-panel-w: 320px;
+  --rail-w: 300px;
+  --tree-max: 1280px;
+  --menu-item-h: 32px;
+  --result-row-h: 44px;
 
   /* ---- spacing scale ---- */
   --sp-1: 2px;
@@ -122,23 +119,19 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 10px;
-  --radius-xl: 14px;
   --radius-pill: 999px;
 
   /* ---- elevation (soft, low-contrast; borders do most of the work) ---- */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.35), 0 10px 26px -10px rgba(0, 0, 0, 0.65);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45), 0 28px 64px -20px rgba(0, 0, 0, 0.8);
-  --shadow-accent: 0 6px 18px -8px rgba(124, 140, 255, 0.55);
   --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px rgba(124, 140, 255, 0.6);
   --focus-ring-inset: inset 0 0 0 1px var(--accent);
 
   /* ---- motion ---- */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-fast: 110ms;
   --dur: 160ms;
-  --dur-slow: 220ms;
 }
 
 [data-theme="light"] {
@@ -150,21 +143,10 @@
   --bg-elevated: #ffffff;
   --bg-input: #ffffff;
   --bg-hover: rgba(27, 32, 48, 0.04);
-  --bg-pressed: rgba(27, 32, 48, 0.07);
   --bg-selected: rgba(79, 99, 232, 0.09);
   --bg-selected-strong: rgba(79, 99, 232, 0.15);
   --bg-accent-soft: rgba(79, 99, 232, 0.08);
-  --overlay: rgba(27, 32, 48, 0.34);
-
-  /* ---- converged additions (2026-10-27) ---- */
-  --guide: #e8ebf2;
-  --scrollbar: #c9d0dd;
-  --scrollbar-hover: #b3bccd;
-  --statusbar-bg: #f7f8fb;
-  --statusbar-fg: #3c445a;
-  --search-panel-w: 320px;
-  --type-col-w: 88px;
-  --type-col-color: var(--muted);
+  --backdrop: rgba(240, 243, 248, 0.62);
 
   --border-subtle: #edeff5;
   --border: #e3e7ef;
@@ -173,8 +155,8 @@
 
   --text: #1b2030;
   --text-2: #3c445a;
-  --muted: #626c84;
-  --faint: #667086;
+  --muted: #4f5870;
+  --faint: #4e5769;
   --text-on-accent: #ffffff;
 
   --accent: #4f63e8;
@@ -185,13 +167,13 @@
   --accent-soft: rgba(79, 99, 232, 0.08);
   --accent-border: rgba(79, 99, 232, 0.3);
 
-  --syntax-key: #4b5a7a;
-  --syntax-string: #0c7b5a;
-  --syntax-number: #96610f;
-  --syntax-boolean: #6d4bd6;
-  --syntax-null: #667086;
-  --syntax-punct: #667086;
-  --syntax-index: #8b93a5;
+  --syntax-key: #3d4a66;
+  --syntax-string: #0a6b4e;
+  --syntax-number: #7d4f0b;
+  --syntax-boolean: #5a3ac6;
+  --syntax-null: #4e5769;
+  --syntax-punct: #4e5769;
+  --syntax-index: #5f687d;
 
   --danger: #cf3040;
   --danger-bg: rgba(207, 48, 64, 0.07);
@@ -210,7 +192,6 @@
   --shadow-sm: 0 1px 2px rgba(20, 28, 48, 0.06);
   --shadow-md: 0 2px 6px rgba(20, 28, 48, 0.06), 0 10px 24px -12px rgba(20, 28, 48, 0.18);
   --shadow-lg: 0 8px 24px rgba(20, 28, 48, 0.1), 0 28px 60px -24px rgba(20, 28, 48, 0.24);
-  --shadow-accent: 0 6px 16px -8px rgba(79, 99, 232, 0.45);
   --focus-ring: 0 0 0 2px var(--bg-app), 0 0 0 4px rgba(79, 99, 232, 0.5);
   --focus-ring-inset: inset 0 0 0 1px var(--accent);
 }
