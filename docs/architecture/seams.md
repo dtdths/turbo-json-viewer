@@ -282,6 +282,25 @@ export class DocSession {
 
 **删除测试**：删掉 → 6 个回包站点各自手抄「换版本 → `setRoot` → `requestWindow` →（附加动作）→ 状态栏」，漏一步只表现为窗口悄悄停在旧版本。
 
+## 6.6 app · 测试钩子（Dev Hook）
+
+**位置**：`src/app/dev-hook.ts`（纯 TS；装配表在 `main.ts` 的 `buildDevHookDeps()`）；只在 HTTP 冒烟页面安装（`!isExtension`）。
+
+```ts
+// src/app/dev-hook.ts
+export interface DevHook { /* 58 个成员，见 ADR-0008 修订 */ }
+export function createDevHook(deps: DevHookDeps): DevHook;
+export function installDevHook(deps: DevHookDeps): void;   // 挂 globalThis.__tjv
+```
+
+**不变式**
+- 成员名 / 参数 / 返回形状 = 13 套冒烟脚本的硬契约（`DevHook` interface 钉住成员表；冒烟零改动）。
+- hook 只做两件事：**转发** app 真实入口（导入/搜索/编辑/导出/原文…）与**组装快照**；不重写链路、不直连 core 走 UI 之外的分支（只读导出/原文/复制解析除外，语义沿用历史契约）。
+- 模块真值（树当前命中是否渲染、原文可见行与 flash、搜索面板计数/滚动几何、大纲开合）一律问 module；hook 只保留**视觉/布局探针**（computed style、CSS 变量、元素文本）。
+- 扩展构建不安装（`smoke-extension` 断言 `window.__tjv` 不存在）。
+
+**删除测试**：删掉 → `main.ts` 尾部再长出 ~450 行第二套 app（重写入口、直连 core、刮 DOM），行为验证只能压进 7k 行浏览器冒烟。
+
 ## 7. 删除测试汇总
 
 - **S1 Worker 边界**：删掉 → 复杂度平移到每个 view + Worker 生命周期，`core` 只能靠真浏览器测。

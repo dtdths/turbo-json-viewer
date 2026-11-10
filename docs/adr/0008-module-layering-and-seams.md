@@ -109,3 +109,36 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    `main.ts` 私有（不可测，等于没抽）；(c) 把 `onLoaded` 整段搬进 module（导入管线是另一件事）。
 9. **净行为**：用户可见行为不变；唯一内部差异是 load 的回顶改走 `setRoot({ scrollTopPx: 0 })`（与
    expandAll 同款，少一次在途请求），由 13 套冒烟验收。
+
+## 修订（2026-11-09）：测试钩子从 main.ts 移出为 dev-hook 模块
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-09，候选 3）+ `grilling` 拍板（Q1–Q5）。
+> §6「工程与测试按层落地」不变——DOM / 长任务 / 滚动 / 布局仍归真机冒烟；本修订只移走 main.ts 里的测试 adapter。
+
+1. **一个新 module**：`src/app/dev-hook.ts` 导出 `createDevHook(deps): DevHook`（纯工厂，import 期零副作用）
+   + `installDevHook(deps)`；`main.ts` 尾部只剩装配表 `buildDevHookDeps()` 与
+   `if (!isExtension) installDevHook(...)`。`main.ts` 2321 → 1979 行，hook 从「第二套 app」变成
+   「转发 + 组装快照」。
+2. **依赖形态**：结构化句柄分组（`session` / `core` / `tree` / `search` / `outline` / `edit` / `raw` /
+   `settings` / `ui` + `entries` 真实入口）；`meta` / `editingPath` / `selected` / `exportLastAction` 这类
+   app 可变状态用 getter/setter 暴露，避免第二真相源。否决「逐个注入 ~58 个散回调」：接口更浅、
+   测试要 mock 一片。
+3. **状态归属**：hook 不再从**全局 DOM 反推模块真值**——`TreeView` 自报 `currentRowRendered()` /
+   `typeColumnVisible()` / `spacerHeight()`；`SearchPanel.state()` 报渲染数 / 滚动几何 / 计数与页脚文本；
+   `RawView` 报 `renderedLines()` / `flashedLine()`；大纲面板开合问 `settings.uiState().panel`。
+   保留真正的视觉/布局探针（`getComputedStyle` 的 `--row-h` / 行高 / `--row-indent`）在装配表里——
+   那是浏览器 harness 的分工。
+4. **API 兼容（硬约束）**：58 个成员名 / 参数 / 返回形状逐字保持；`DevHook` interface 把成员表钉进类型；
+   13 套冒烟脚本零改动；安装条件仍 `!isExtension`（`smoke-extension` 断言 `window.__tjv` 不存在）。
+   动态探测点已核对：`smoke-search` 的 required 函数清单、`smoke-fidelity` 的 hooks/missingHooks、
+   `smoke-copy` 的 `ctxOpen` typeof 检查。
+5. **测试面**：`tests/unit/app/dev-hook.test.ts`（node env、fake deps）：成员表逐字（`Object.keys`）、
+   `state()` / `searchPanel()` / `repairState()` / `fidelityState()` / `settingsState()` 快照、
+   `copyResolve` / `exportDocText` 错误路径、纯转发；不引入 jsdom（DOM/布局仍由冒烟兜底）。
+   钩子从「不可测」变成「构造时注入依赖即可在 node 里测」。
+6. **被否决**：(a) 按功能拆 5 个文件（过度，成员之间共享快照语境）；(b) 继续留在 `main.ts`（现状 =
+   第二套 app）；(c) 给 hook 注入 58 个散回调（见 2）。
+7. **净行为**：用户可见行为不变；唯一内部变化是 3 处「纯 DOM 反推」改为模块自报（值逐字一致，由 13 套
+   冒烟验收）。体积：`page.js` 31.9 → **33.0KB gz**（+1.1：hook 工厂与依赖表；预算 45 未动）。
+   **已知可优化**：hook 仍静态打进生产 `page.js`（运行时 `isExtension` 守卫），后续可用动态 import
+   拆成仅 HTTP harness 加载的 chunk。
