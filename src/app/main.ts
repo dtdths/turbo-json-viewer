@@ -4,6 +4,7 @@
  */
 import '../view/styles/tokens.css';
 import './styles/shell.css';
+import '../view/tab-strip.css';
 import '../view/tree/tree.css';
 import '../view/panels/search-panel.css';
 import '../view/panels/outline-panel.css';
@@ -17,6 +18,7 @@ import { RawWindowSource } from '../viewmodel/raw-window-source';
 import { SearchState, type SearchFilter } from '../viewmodel/search-state';
 import { OutlineState } from '../viewmodel/outline-state';
 import { TreeView } from '../view/tree/tree-view';
+import { TabStrip } from '../view/tab-strip';
 import { RawView } from '../view/raw/raw-view';
 import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
@@ -44,8 +46,19 @@ import type {
 } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { DocSession, type LandingPlan, type SessionState } from './doc-session';
-import { installDevHook, type DevHookDeps, type ExpressionHookState } from './dev-hook';
+import {
+  installDevHook,
+  type DevHookDeps,
+  type ExpressionHookState,
+  type WorkspaceHookState,
+} from './dev-hook';
 import { EditState } from '../viewmodel/edit-state';
+import {
+  WorkspaceState,
+  type TabInput,
+  type TabRuntime,
+  type TabState,
+} from '../viewmodel/workspace-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
 import { SettingsState, type SettingsKey } from '../viewmodel/settings-state';
 import {
@@ -103,6 +116,8 @@ const emptyPendingName = el('emptyPendingName');
 const emptyPendingReplace = el<HTMLButtonElement>('emptyPendingReplace');
 const emptyBusy = el('emptyBusy');
 const emptyClose = el<HTMLButtonElement>('emptyClose');
+/** 入口层「替换 ⇄ 新标签」切换（#18：单文档时标签条隐藏，这是开第 2 个标签的可见入口） */
+const emptyModeToggle = el<HTMLButtonElement>('emptyModeToggle');
 const importBtn = el<HTMLButtonElement>('importBtn');
 const pickBtn = el<HTMLButtonElement>('pickBtn');
 const dropzone = el('dropzone');
@@ -152,7 +167,63 @@ const worker = new Worker(workerUrl, { type: 'module' });
 const workerCore = createWorkerCore(worker);
 const core = workerCore.api;
 
-const rowSource = new RowWindowSource(core, { rowHeight: settings.get('rowHeight') });
+/* ---------------- 工作区（#18 / ADR-0009）：每标签一份 runtime ---------------- */
+
+/**
+ * 每个标签私有的四份 adapter（行窗口 / 原文窗口 / 搜索 / 编辑）。
+ * 切标签 = 换这组引用 + 换订阅目标（ADR-0009 §3），**不关根、不重解析**。
+ * 下面的模块级 `let rowSource/searchState/editState/rawSource` 始终指向**活动标签**的实例；
+ * 空工作区时指向 bootstrap（不会被真正取数，因为所有入口都有 session.rootId 守卫）。
+ */
+function createTabRuntime(): TabRuntime {
+  return {
+    rowSource: new RowWindowSource(core, { rowHeight: settings.get('rowHeight') }),
+    rawSource: new RawWindowSource(core, { rowHeight: settings.get('rowHeight') }),
+    searchState: new SearchState(),
+    editState: new EditState(),
+  };
+}
+
+const workspace = new WorkspaceState({ createRuntime: createTabRuntime });
+/** 空工作区占位 runtime（关掉最后一个标签后回落到它）。 */
+let emptyRuntime = createTabRuntime();
+
+let rowSource: RowWindowSource = emptyRuntime.rowSource;
+let rawSource: RawWindowSource = emptyRuntime.rawSource;
+let searchState: SearchState = emptyRuntime.searchState;
+let editState: EditState = emptyRuntime.editState;
+
+/** 每标签的非 adapter 视图态（原文索引元信息 / 保真报告 / 表达式结果视图 / 滚动位置）。 */
+interface TabExtras {
+  rawMetaInfo: RawMeta | null;
+  fidelity: FidelityReport | null;
+  /** 最近一次成功的表达式结果（会话内保留；换文档即清） */
+  exprView: ExprViewState | null;
+  /** 进入表达式结果视图前的文档会话快照（返回文档树时 restore） */
+  docSessionBeforeExpr: SessionState | null;
+  /** 树的滚动位置（切回来时恢复，ADR-0009 §3「滚动锚点」） */
+  scrollTopPx: number;
+  /** 原文视图的滚动位置（切回来时恢复） */
+  rawScrollTopPx: number;
+}
+const tabExtras = new Map<string, TabExtras>();
+
+function extrasOf(tabId: string): TabExtras {
+  let extras = tabExtras.get(tabId);
+  if (!extras) {
+    extras = {
+      rawMetaInfo: null,
+      fidelity: null,
+      exprView: null,
+      docSessionBeforeExpr: null,
+      scrollTopPx: 0,
+      rawScrollTopPx: 0,
+    };
+    tabExtras.set(tabId, extras);
+  }
+  return extras;
+}
+
 const tree = new TreeView(treeHost, {
   rowHeight: settings.get('rowHeight'),
   renderer: (host: HTMLElement) => new DomRowPool(host, { rowHeight: settings.get('rowHeight') }),
@@ -180,6 +251,18 @@ const tree = new TreeView(treeHost, {
 });
 tree.mount();
 
+/* 标签条（#18 / ADR-0009 §1）：只渲染 DOM；切换/关闭/新增的语义全在 app 层 */
+const tabStrip = new TabStrip(el('tabStrip'), {
+  onSelect: (id) => switchTab(id),
+  onClose: (id) => {
+    void closeTab(id);
+  },
+  onAdd: () => openNewTabLayer(),
+});
+tabStrip.mount();
+workspace.subscribe((view) => tabStrip.render(view));
+tabStrip.render(workspace.view());
+
 /**
  * 把焦点交给树（a11y 单一真相）：`#tree` 只是骨架容器，`role=tree` / `tabindex` 挂在内层 `.tjv-tree`
  * 滚动容器上（TreeView.mount）。所有「焦点回树」的路径都走这里，避免一半聚焦外层、一半聚焦内层。
@@ -191,22 +274,15 @@ function focusTree(): void {
 /* ---------------- 原始文本视图（#11 / ADR-0003 修订 2026-11-03） ---------------- */
 
 /** 原文窗口状态机（单飞/合并/seq 丢弃/overscan；原文无 rowVersion——doc 生命周期即版本）。 */
-const rawSource = new RawWindowSource(core, { rowHeight: settings.get('rowHeight') });
 const rawView = new RawView(rawHost, {
   rowHeight: settings.get('rowHeight'),
   onScroll: (top: number) => rawSource.scrollTo(top),
 });
 rawView.mount();
-rawSource.subscribe((snapshot) => {
-  rawView.render(snapshot);
-  updateStatus();
-});
 
 /** 搜索面板的会话态选项（ADR-0014 §2.5：唯一真相在 app 层，不持久化，刷新回默认）。 */
 let searchOpts: { caseSensitive: boolean; regex: boolean } = { caseSensitive: false, regex: false };
 
-/** 搜索状态机（viewmodel，无 DOM）：命中集/当前命中/过期判定/虚拟窗口。 */
-const searchState = new SearchState();
 const searchPanel = new SearchPanel(searchHost, {
   onQueryChange: (query: string) => queueSearch(query),
   onFilterChange: (filter: SearchFilter) => applyFilter(filter),
@@ -300,10 +376,257 @@ let fidelityPending = false;
 let fidelitySeq = 0;
 
 /** 编辑会话（slice 5 / #16 / ADR-0006）：当前编辑目标 + 修改计数/撤销可用性。 */
-const editState = new EditState();
-editState.subscribe(renderEditBadge);
 let editingPath: string | null = null;
 let ctxPath: string | null = null;
+
+/* ---------------- 工作区接线（#18 / ADR-0009）：活动标签 ↔ 模块级视图态 ---------------- */
+
+let unbindRowSource: (() => void) | null = null;
+let unbindRawSource: (() => void) | null = null;
+let unbindEditState: (() => void) | null = null;
+
+/** 把三份订阅重挂到当前活动标签的 adapter（切标签时调用；旧订阅先退，避免双份渲染）。 */
+function bindRuntimeSubscriptions(): void {
+  unbindRowSource?.();
+  unbindRawSource?.();
+  unbindEditState?.();
+  unbindRowSource = rowSource.subscribe((snapshot) => {
+    tree.render(snapshot);
+    updateStatus();
+  });
+  unbindRawSource = rawSource.subscribe((snapshot) => {
+    rawView.render(snapshot);
+    updateStatus();
+  });
+  unbindEditState = editState.subscribe(renderEditBadge);
+  renderEditBadge();
+}
+
+function activeTab(): TabState | null {
+  return workspace.active();
+}
+
+/** 把会话字段 / 选中 / 滚动位置存回当前活动标签（切走前调用；不在热路径上，不制造额外重绘）。 */
+function saveActiveSession(): void {
+  const tab = activeTab();
+  if (!tab) return;
+  const extras = extrasOf(tab.id);
+  extras.rawMetaInfo = rawMetaInfo;
+  extras.fidelity = fidelity;
+  extras.exprView = exprView;
+  extras.docSessionBeforeExpr = docSessionBeforeExpr;
+  extras.scrollTopPx = tree.scrollTopPx();
+  extras.rawScrollTopPx = rawView.scrollTopPx();
+  workspace.update(tab.id, {
+    docRevision: session.docRevision,
+    rowVersion: session.rowVersion,
+    totalRows: session.totalRows,
+    selected,
+  });
+}
+
+/**
+ * 绑定一个标签：换 adapter 引用 + 重挂订阅 + 恢复该标签的会话/选中/非 adapter 视图态。
+ * 不取窗口、不重画面板（那部分在 `restoreActiveTabView`，加载路径用 applyLanding 自己推）。
+ */
+function bindTab(tab: TabState): void {
+  const extras = extrasOf(tab.id);
+  rowSource = tab.runtime.rowSource;
+  rawSource = tab.runtime.rawSource;
+  searchState = tab.runtime.searchState;
+  editState = tab.runtime.editState;
+  bindRuntimeSubscriptions();
+  session.restore({
+    rootId: tab.rootId,
+    docRevision: tab.docRevision,
+    rowVersion: tab.rowVersion,
+    totalRows: tab.totalRows,
+  });
+  meta = tab.meta;
+  selected = tab.selected;
+  rawMetaInfo = extras.rawMetaInfo;
+  fidelity = extras.fidelity;
+  exprView = extras.exprView;
+  // 表达式结果视图不跨标签自动激活：切回来时若左面板是表达式，由 setPanel('expression') 的
+  // 既有恢复链路决定（见 switchTab）；这里一律先按「文档树」绑定会话。
+  exprViewActive = false;
+  docSessionBeforeExpr = null;
+  refreshHookDeps();
+}
+
+/** 工具栏 / 文件 chip / 三条常驻提示条 / 状态栏按活动标签重画。 */
+function renderTabChrome(): void {
+  const tab = activeTab();
+  const hasDoc = tab !== null;
+  fileChip.hidden = !hasDoc;
+  if (tab) {
+    fileName.textContent = tab.meta.name;
+    fileMeta.textContent = formatBytes(tab.meta.bytes);
+  }
+  setExportButtonsDisabled(!hasDoc);
+  syncExportUi();
+  expandAllBtn.disabled = !hasDoc;
+  collapseAllBtn.disabled = !hasDoc;
+  viewTreeBtn.disabled = !hasDoc;
+  viewRawBtn.disabled = !hasDoc;
+  renderRepair();
+  renderDocWarn();
+  renderFidelity();
+  renderRawChrome();
+  updateStatus();
+}
+
+/** 标签切换后统一重绘：树窗口 / 搜索 / 大纲 / 工具栏与提示条 / 原文视图。 */
+function restoreActiveTabView(): void {
+  const tab = activeTab();
+  if (!tab) return;
+  const extras = extrasOf(tab.id);
+  // 树：同根同版本时 WindowMachine 保留上一帧（切回不闪白），滚动位置按标签恢复
+  rowSource.setMetrics(metrics());
+  rowSource.setRoot(
+    { rootId: tab.rootId, rowVersion: tab.rowVersion, totalRows: tab.totalRows },
+    { scrollTopPx: extras.scrollTopPx },
+  );
+  tree.scrollToPx(extras.scrollTopPx);
+  setSelection(selected);
+  rowSource.requestWindow();
+  // 搜索：命中集 / 面板输入框都换成本标签的（SearchPanel.render 会在输入框未聚焦时同步值）
+  searchJumped = false;
+  applySearchToTree();
+  renderSearch();
+  // 大纲：按新根重新打开（面板开合是工作区级，数据按标签）
+  void outlineState.open(tab.rootId);
+  renderTabChrome();
+  // 表达式结果条：新标签没有激活的结果视图 → 隐藏（结果本体按标签保留在 extras）
+  renderExpressionBar();
+  // 原文视图：正看原文 → 为该标签重新 open（本标签已有索引元信息时 open 会复用 worker 侧索引）
+  if (isRawView()) void setViewMode('raw', { persist: false });
+  else updateStatus();
+}
+
+/** 切标签：存档旧标签 → 换绑定 → 重绘（不关根、不重解析，ADR-0009 §3）。 */
+function switchTab(id: string): void {
+  if (id === workspace.activeId) return;
+  if (activeTab()) {
+    // 表达式结果视图是文档级临时视图：切走先回文档树（结果保留在本标签 extras，重进可恢复）
+    if (exprViewActive) backToDocTree({ silent: true });
+    cancelInFlightExpression();
+    saveActiveSession();
+  }
+  if (!workspace.activate(id)) return;
+  const tab = activeTab();
+  if (!tab) return;
+  bindTab(tab);
+  restoreActiveTabView();
+  if (document.body.dataset.panel === 'expression') setPanel('expression');
+  focusTree();
+}
+
+/**
+ * 关闭标签（ADR-0009 §4）：先释放 Worker 根（closeRoot，幂等），再从工作区移除；
+ * 关的是活动标签 → 激活相邻标签（WorkspaceState 选右邻→左邻）；关掉最后一个 → 回空态。
+ * 有未导出的临时修改时先确认（用户 2026-11-11 拍板：确认后关闭）。
+ */
+async function closeTab(id: string, opts: { force?: boolean } = {}): Promise<void> {
+  const tab = workspace.get(id);
+  if (!tab) return;
+  if (
+    !opts.force &&
+    tab.runtime.editState.dirty &&
+    !window.confirm(`「${tab.name}」有未导出的临时修改，关闭后将丢弃。确认关闭？`)
+  ) {
+    return;
+  }
+  const wasActive = workspace.activeId === id;
+  const result = workspace.remove(id);
+  if (!result) return;
+  tabExtras.delete(id);
+  // closeRoot 幂等（未知根回 closed:false）；失败不阻断关闭
+  void core.closeRoot(result.removed.rootId).catch(() => undefined);
+  if (workspace.size === 0) {
+    enterEmptyState();
+    return;
+  }
+  if (!wasActive) return;
+  cancelInFlightExpression();
+  const next = activeTab();
+  if (!next) return;
+  bindTab(next);
+  restoreActiveTabView();
+  if (document.body.dataset.panel === 'expression') setPanel('expression');
+  focusTree();
+}
+
+/** 关掉最后一个标签 → 回到初始空态（导入层 + 全部入口禁用，ADR-0009 §4）。 */
+function enterEmptyState(): void {
+  session.restore({ rootId: null, docRevision: 0, rowVersion: 0, totalRows: 0 });
+  meta = null;
+  selected = null;
+  rawMetaInfo = null;
+  fidelity = null;
+  fidelityPending = false;
+  fidelitySeq += 1;
+  rawOpenSeq += 1;
+  exprView = null;
+  exprViewActive = false;
+  docSessionBeforeExpr = null;
+  cancelInFlightExpression();
+  editingPath = null;
+  subtreeEditor.close();
+  // adapter 回落到新的空 runtime（旧标签的 adapter 已随标签一起丢弃）
+  emptyRuntime = createTabRuntime();
+  rowSource = emptyRuntime.rowSource;
+  rawSource = emptyRuntime.rawSource;
+  searchState = emptyRuntime.searchState;
+  editState = emptyRuntime.editState;
+  bindRuntimeSubscriptions();
+  // 视图复位
+  tree.setSearch(null);
+  tree.setSelected(null);
+  rawView.scrollToPx(0);
+  searchOpts = { caseSensitive: false, regex: false };
+  resetSearch();
+  outlineState.close();
+  document.body.dataset.view = 'tree';
+  viewTreeBtn.classList.add('is-active');
+  viewTreeBtn.setAttribute('aria-pressed', 'true');
+  viewRawBtn.classList.remove('is-active');
+  viewRawBtn.setAttribute('aria-pressed', 'false');
+  // 导入层回初始空态
+  resetImportLayerView();
+  empty.classList.remove('is-hidden');
+  empty.classList.remove('is-busy');
+  fileChip.hidden = true;
+  setExportButtonsDisabled(true);
+  expandAllBtn.disabled = true;
+  collapseAllBtn.disabled = true;
+  viewTreeBtn.disabled = true;
+  viewRawBtn.disabled = true;
+  repairBar.hidden = true;
+  docWarnNotice.hide();
+  fidelityNotice.hide();
+  fidelityNotice.setActionVisible(false);
+  renderRawChrome();
+  renderEditBadge();
+  renderExpressionBar();
+  updateStatus();
+  setPanel('doc');
+  emptyInner.focus();
+}
+
+/**
+ * 第 2+ 份大文档的内存提示（ADR-0009 §4）：8 × 50MB ≈ 584MB 上界，按标签线性增长。
+ * 只在「工作区已有别的标签」且「本份或合计超过大文档阈值」时提示，不阻断导入。
+ */
+function maybeShowWorkspaceMemoryHint(tab: TabState): void {
+  if (workspace.size < 2) return;
+  const totalBytes = workspace.ids.reduce((sum, id) => sum + (workspace.get(id)?.bytes ?? 0), 0);
+  if (tab.bytes < LARGE_DOC_WARN_BYTES && totalBytes < LARGE_DOC_WARN_BYTES) return;
+  showToast(
+    `工作区现有 ${workspace.size} 个标签：内存按文档线性增长（50 MB ≈ 73 MB Worker 堆/份）。关闭不用的标签可释放。`,
+    5000,
+  );
+}
 
 /**
  * 回包落地执行器（app 侧唯一副作用点）：把 `LandingPlan` 变成行窗口 / 视口 / 命中 / 状态栏动作。
@@ -312,8 +635,15 @@ let ctxPath: string | null = null;
 function applyLanding(plan: LandingPlan): void {
   const rootId = plan.state.rootId;
   if (!rootId) return;
+  // 多标签（ADR-0009 §2）：回包按 rootId 路由——不是活动标签的根（旧根/别的标签/迟到回包）
+  // 一律丢弃，绝不写进当前视图态。表达式结果根走下面各自的分支。
+  const tab = activeTab();
+  if (!tab) return;
+  const forActiveDoc = rootId === tab.rootId;
+  const forActiveExpr = exprViewActive && exprView !== null && rootId === exprView.rootId;
+  if (!forActiveDoc && !forActiveExpr) return;
   // 表达式视图内的展开/折叠会推进 expr 根的 rowVersion：同步视图态（重进表达式模式时用）
-  if (exprViewActive && exprView && rootId === exprView.rootId) {
+  if (forActiveExpr && exprView) {
     exprView.rowVersion = plan.state.rowVersion;
     exprView.totalRows = plan.state.totalRows;
   }
@@ -336,6 +666,15 @@ function applyLanding(plan: LandingPlan): void {
     window.setTimeout(() => tree.setChangedPath(null), CHANGED_FLASH_MS);
   }
   updateStatus();
+}
+
+/**
+ * 回包是否属于**当前活动标签的文档根**（多标签 / ADR-0009 §2）：
+ * 切标签后，旧根的在途回包必须丢弃，不能写进新标签的会话（版本号巧合靠不住）。
+ */
+function isActiveDocRoot(rootId: string): boolean {
+  const tab = activeTab();
+  return tab !== null && !exprViewActive && rootId === tab.rootId;
 }
 
 function metrics(): { rowHeight: number; viewportRows: number } {
@@ -417,6 +756,16 @@ let exprSeq = 0;
 let exprRunning = false;
 /** 最近一次成功执行的表达式文本（「重新执行」用；面板被改过则以面板当前文本为准） */
 let exprLastText = '';
+
+/**
+ * 作废在途求值（切标签 / 关标签 / 回空态时调用）：seq 自增让迟到回包被丢弃，
+ * 同时解开 running 闸门（否则新标签面板会一直显示「执行中」且拒绝再执行）。
+ */
+function cancelInFlightExpression(): void {
+  exprSeq += 1;
+  exprRunning = false;
+  expressionPanel.setRunning(false);
+}
 
 const expressionBar = new ExpressionBar(exprBarRoot);
 
@@ -726,8 +1075,13 @@ function consumeWatchdogFlag(): void {
 
 const EMPTY_TITLE_INITIAL = '拖入 JSON，毫秒级开始查看';
 const EMPTY_TITLE_REPLACE = '打开新文档';
+const EMPTY_TITLE_NEW_TAB = '在新标签中打开';
 const EMPTY_SUB_INITIAL = '本地只读 · 数据不经过网络 · 50 MB 文档由 Worker 常驻';
 const EMPTY_SUB_REPLACE = '本地只读 · 数据不经过网络 · 原文件不受影响';
+const EMPTY_SUB_NEW_TAB = '本地只读 · 新标签与当前文档并存，可随时切换';
+
+/** 入口层三种形态（#18 / ADR-0009 §5）：空态 / 替换当前标签 / 新标签。 */
+type ImportMode = 'initial' | 'replace' | 'new-tab';
 
 /** 外部拖放 → 替换层里暂存的文件（等待用户确认，Q6-A） */
 let pendingFile: File | null = null;
@@ -736,8 +1090,11 @@ function importLayerOpen(): boolean {
   return !empty.classList.contains('is-hidden');
 }
 
-function importLayerMode(): 'initial' | 'replace' {
-  return empty.dataset.mode === 'replace' ? 'replace' : 'initial';
+function importLayerMode(): ImportMode {
+  const mode = empty.dataset.mode;
+  if (mode === 'replace') return 'replace';
+  if (mode === 'new-tab') return 'new-tab';
+  return 'initial';
 }
 
 function setImportError(message: string | null): void {
@@ -750,6 +1107,7 @@ function setImportBusy(busy: boolean): void {
   empty.classList.toggle('is-busy', busy);
   emptyPendingReplace.disabled = busy;
   pickBtn.disabled = busy;
+  emptyModeToggle.disabled = busy;
 }
 
 function clearPendingFile(): void {
@@ -769,31 +1127,74 @@ function resetImportLayerView(): void {
   emptyWarn.hidden = true;
   emptyWarnDoc.textContent = '—';
   emptyClose.hidden = true;
+  emptyModeToggle.hidden = true;
+  emptyModeToggle.disabled = false;
   clearPendingFile();
   setImportError(null);
   setImportBusy(false);
 }
 
-/** 已打开文档时：点「导入」/文件 chip / ⌘O 打开显式替换层。返回是否真的打开。 */
-function openImportLayer(): boolean {
+/**
+ * 把入口层切到指定形态（替换 / 新标签）：
+ * - 替换：显示「将替换当前文档」警示（ADR-0004 导入层语义不变）；
+ * - 新标签：**无覆盖警示**（ADR-0009 §5），复用同一张空态卡。
+ * 两种形态之间用一个切换链接（`#emptyModeToggle`）互相可达——单文档时标签条隐藏，
+ * 这是开第 2 个标签的可见入口（ADR-0009 §4「⌘O 新标签模式」的落地）。
+ */
+function applyImportLayerMode(mode: 'replace' | 'new-tab'): void {
+  const isNew = mode === 'new-tab';
+  empty.dataset.mode = mode;
+  emptyTitle.textContent = isNew ? EMPTY_TITLE_NEW_TAB : EMPTY_TITLE_REPLACE;
+  emptySub.textContent = isNew ? EMPTY_SUB_NEW_TAB : EMPTY_SUB_REPLACE;
+  emptyWarnDoc.textContent = meta ? `${meta.name}（${formatBytes(meta.bytes)}）` : '当前文档';
+  emptyWarn.hidden = isNew;
+  emptyClose.hidden = false;
+  emptyModeToggle.hidden = false;
+  emptyModeToggle.textContent = isNew ? '改为替换当前文档' : '在新标签中打开';
+}
+
+/** 已打开文档时：打开入口层（替换 / 新标签两种形态）。返回是否真的打开。 */
+function openImportLayer(target: 'replace' | 'new-tab' = 'replace'): boolean {
   if (!session.rootId || importLayerOpen()) return false;
-  if (!confirmDiscardEdits()) return false;
+  if (target === 'new-tab' && !workspace.view().canAdd) {
+    showToast(`最多 ${workspace.max} 个标签，请先关闭不用的标签`, 3000, 'error');
+    return false;
+  }
+  if (target === 'replace' && !confirmDiscardEdits()) return false;
   resetImportLayerView();
-  empty.dataset.mode = 'replace';
+  applyImportLayerMode(target);
   empty.classList.remove('is-hidden');
   empty.setAttribute('role', 'dialog');
   empty.setAttribute('aria-modal', 'true');
   empty.setAttribute('aria-labelledby', 'emptyTitle');
-  emptyTitle.textContent = EMPTY_TITLE_REPLACE;
-  emptySub.textContent = EMPTY_SUB_REPLACE;
-  emptyWarnDoc.textContent = meta ? `${meta.name}（${formatBytes(meta.bytes)}）` : '当前文档';
-  emptyWarn.hidden = false;
-  emptyClose.hidden = false;
   emptyInner.focus();
   return true;
 }
 
-/** 取消替换层：丢弃在途导入回包，回到文档视图。 */
+/** 「新标签」入口（标签条 `＋` / ⌘⇧O / 替换层里的切换链接）。 */
+function openNewTabLayer(): void {
+  if (!session.rootId) return;
+  if (importLayerOpen()) {
+    if (importLayerMode() !== 'new-tab') toggleImportLayerMode();
+    return;
+  }
+  openImportLayer('new-tab');
+}
+
+/** 入口层内「替换 ⇄ 新标签」切换。 */
+function toggleImportLayerMode(): void {
+  if (!importLayerOpen()) return;
+  const next = importLayerMode() === 'new-tab' ? 'replace' : 'new-tab';
+  if (next === 'replace' && !confirmDiscardEdits()) return;
+  if (next === 'new-tab' && !workspace.view().canAdd) {
+    showToast(`最多 ${workspace.max} 个标签，请先关闭不用的标签`, 3000, 'error');
+    return;
+  }
+  applyImportLayerMode(next);
+  setImportError(null);
+}
+
+/** 取消入口层：丢弃在途导入回包，回到文档视图。 */
 function closeImportLayer(): void {
   if (!session.rootId || !importLayerOpen()) return;
   if (empty.classList.contains('is-busy')) loadSeq += 1;
@@ -802,7 +1203,7 @@ function closeImportLayer(): void {
   importBtn.focus();
 }
 
-/** 导入成功后隐藏入口层（初始空态或替换层）。 */
+/** 导入成功后隐藏入口层（初始空态、替换层或新标签层）。 */
 function hideImportLayer(): void {
   empty.classList.add('is-hidden');
   resetImportLayerView();
@@ -810,13 +1211,22 @@ function hideImportLayer(): void {
 
 /* ---------------- import ---------------- */
 
+/** 本次导入应落到哪里：空工作区建第一个标签；入口层「新标签」形态 → 新增；其余 → 替换当前。 */
+function currentImportTarget(): 'replace' | 'new-tab' {
+  if (!workspace.activeId) return 'new-tab';
+  const mode = importLayerOpen() ? importLayerMode() : 'replace';
+  return mode === 'new-tab' ? 'new-tab' : 'replace';
+}
+
 async function importBuffer(
   source: 'file' | 'paste' | 'clipboard',
   data: ArrayBuffer | string,
   name: string,
+  target?: 'replace' | 'new-tab',
 ): Promise<void> {
   const loadId = ++loadSeq;
   const inLayer = importLayerOpen();
+  const resolvedTarget = target ?? currentImportTarget();
   if (inLayer) {
     clearPendingFile();
     setImportError(null);
@@ -832,7 +1242,7 @@ async function importBuffer(
       opts: { repair: settings.get('repairTruncated'), adaptiveExpand: settings.get('adaptiveExpand') },
     });
     if (loadId !== loadSeq) return;
-    onLoaded(reply);
+    onLoaded(reply, resolvedTarget);
   } catch (error) {
     if (loadId !== loadSeq) return;
     if (CoreError.from(error).code === 'CANCELLED') return;
@@ -845,62 +1255,98 @@ async function importBuffer(
   }
 }
 
-async function importFile(file: File): Promise<void> {
+async function importFile(file: File, target?: 'replace' | 'new-tab'): Promise<void> {
   const buffer = await file.arrayBuffer();
-  await importBuffer('file', buffer, file.name || 'document.json');
+  await importBuffer('file', buffer, file.name || 'document.json', target);
 }
 
-function onLoaded(reply: LoadReply): void {
-  const rid = reply.rootId;
-  // 换文档：表达式结果视图整体作废（旧根引用旧值图；worker 侧也随新 load 丢弃）
-  exprView = null;
-  if (exprViewActive) {
-    exprViewActive = false;
-    expressionBar.hide();
-    docSessionBeforeExpr = null;
-  }
-  // 换文档 = document 意图：版本字段 / 回顶 / 清选中都由落地计划统一（executor 内）
-  const plan = session.land(reply, { kind: 'document' });
-  meta = reply.meta;
-  selected = null;
+/**
+ * 替换标签前的状态复位（复用 runtime，但上一份文档的搜索/编辑/原文/反馈都要清干净）。
+ * 新标签不需要（runtime 是新建的），只清 extras。
+ */
+function resetTabStateForNewDoc(tab: TabState): void {
+  tab.runtime.searchState.begin('', searchOpts);
+  tab.runtime.editState.clear();
+  tab.runtime.rawSource.clear();
+  const extras = extrasOf(tab.id);
+  extras.rawMetaInfo = null;
+  extras.fidelity = null;
+  extras.exprView = null;
+  extras.docSessionBeforeExpr = null;
+  extras.scrollTopPx = 0;
+  extras.rawScrollTopPx = 0;
+  rawOpenSeq += 1;
+  fidelitySeq += 1;
+  fidelityPending = false;
+  cancelInFlightExpression();
+}
 
-  hideImportLayer();
-  fileChip.hidden = false;
-  fileName.textContent = reply.meta.name;
-  fileMeta.textContent = formatBytes(reply.meta.bytes);
-  setExportButtonsDisabled(false);
-  syncExportUi();
-  expandAllBtn.disabled = false;
-  collapseAllBtn.disabled = false;
-  viewTreeBtn.disabled = false;
-  viewRawBtn.disabled = false;
-  // 新文档：清空编辑会话（slice 5）
+/**
+ * 一次 load 回包落到工作区（#18 / ADR-0009 §4–§5）：
+ * - `new-tab`：新增标签并激活（新 runtime 天然干净）；
+ * - `replace`：替换活动标签的根（保留标签 id / runtime；**先成功 load 再 closeRoot 旧根**，
+ *   这样新文档解析失败时原标签不会被掏空）。
+ * 之后统一按新文档重画：版本落地 / 提示条 / 搜索 / 大纲 / 原文 / 表达式示例 / 视图模式。
+ */
+function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
+  const input: TabInput = {
+    rootId: reply.rootId,
+    name: reply.meta.name,
+    bytes: reply.meta.bytes,
+    meta: reply.meta,
+    docRevision: reply.docRevision,
+    rowVersion: reply.rowVersion,
+    totalRows: reply.totalRows,
+  };
+  const active = workspace.active();
+  const replaceTarget = target === 'replace' ? active : null;
+  // 1) 切走前存档当前活动标签（版本字段 / 选中 / 滚动）
+  if (active) saveActiveSession();
+  const oldRootId = replaceTarget?.rootId ?? null;
+
+  // 2) 会话落地（document 意图：换版本 + 回顶 + 清选中）
+  const plan = session.land(reply, { kind: 'document' });
+
+  // 3) 绑定标签（替换保留 id/runtime；新标签新建 runtime）
+  const tab = replaceTarget ? workspace.replace(replaceTarget.id, input) : workspace.add(input);
+  if (!tab) {
+    // 兜底：软上限在 UI 已禁用；真发生则释放刚建的根，工作区保持不变
+    void core.closeRoot(reply.rootId).catch(() => undefined);
+    hideImportLayer();
+    showToast(`最多 ${workspace.max} 个标签，未打开新文档`, 3000, 'error');
+    return;
+  }
+  workspace.activate(tab.id);
+  // 4) 替换场景：复用 runtime，但必须清掉上一份文档的全部状态
+  if (replaceTarget) resetTabStateForNewDoc(tab);
+  else tabExtras.delete(tab.id);
+  bindTab(tab);
   editingPath = null;
   subtreeEditor.close();
-  editState.clear();
-  renderEditBadge();
-  renderRepair();
-  renderDocWarn();
-  resetFidelity();
-  scheduleFidelityScan();
 
-  // 新文档：旧原文索引随旧根丢弃（惰性重建）；恢复上次视图模式（ADR-0003 修订）
-  rawOpenSeq += 1;
-  rawMetaInfo = null;
-  rawSource.clear();
-  renderRawChrome();
+  // 5) 旧根释放（幂等；失败不影响新文档）
+  if (oldRootId !== null && oldRootId !== reply.rootId) {
+    void core.closeRoot(oldRootId).catch(() => undefined);
+  }
 
+  // 6) 视图重画
+  hideImportLayer();
+  renderTabChrome();
   applyLanding(plan);
   rowSource.setMetrics(metrics());
   rowSource.requestWindow();
   resetSearch();
   // 新文档：重置大纲并加载根页（面板此刻可能未打开，数据先备好）
-  void outlineState.open(rid);
+  void outlineState.open(reply.rootId);
   setPanel('doc');
   // 新文档：表达式示例按新顶层字段重算（面板未打开也先备好）
   refreshExpressionExamples();
   focusTree();
   void setViewMode(settings.uiState().viewMode === 'raw' ? 'raw' : 'tree', { persist: false });
+  // 保真扫描按新根重排（resetFidelity 递增 seq 丢弃旧在途），再调度首帧后扫描
+  resetFidelity();
+  scheduleFidelityScan();
+  maybeShowWorkspaceMemoryHint(tab);
 }
 
 /**
@@ -926,8 +1372,9 @@ document.addEventListener('paste', (event: ClipboardEvent) => {
     void importBuffer('paste', text, '剪贴板.json');
     return;
   }
-  // 文档已打开：只有导入层内才接受粘贴；层关闭时完全不处理（Q5-A）
-  if (!importLayerOpen() || importLayerMode() !== 'replace') return;
+  // 文档已打开：只有入口层内才接受粘贴；层关闭时完全不处理（Q5-A）。
+  // 层形态决定落点（替换当前标签 / 新标签），#18 / ADR-0009 §5。
+  if (!importLayerOpen() || importLayerMode() === 'initial') return;
   event.preventDefault();
   void importBuffer('paste', text, '剪贴板.json');
 });
@@ -940,12 +1387,20 @@ window.addEventListener('drop', (event: DragEvent) => {
   const file = event.dataTransfer?.files?.[0];
   if (!file) return;
   if (!session.rootId) {
-    // 初始空态：直接导入
+    // 初始空态：直接导入（建第一个标签）
     void importFile(file);
     return;
   }
-  if (importLayerOpen() && importLayerMode() === 'replace') {
-    // 导入层内拖放：层本身即确认（Q9-A），立即导入
+  // 拖放按落点分流（ADR-0009 §5）：标签条空白 = 新标签；文档视图 = 替换当前标签（暂存确认）。
+  // 注意 event.target 可能是 document / text 节点等非元素，不能直接 .closest（会抛 TypeError）。
+  const target = event.target;
+  const inTabStrip = target instanceof Element && target.closest('#tabStrip') !== null;
+  if (inTabStrip) {
+    void importFile(file, 'new-tab');
+    return;
+  }
+  if (importLayerOpen() && importLayerMode() !== 'initial') {
+    // 入口层内拖放：层本身即确认（Q9-A），立即导入（落点由层形态决定）
     void importFile(file);
     return;
   }
@@ -974,6 +1429,7 @@ fileChip.addEventListener('click', () => {
   else fileInput.click();
 });
 emptyClose.addEventListener('click', () => closeImportLayer());
+emptyModeToggle.addEventListener('click', () => toggleImportLayerMode());
 emptyPendingReplace.addEventListener('click', () => {
   const file = pendingFile;
   if (!file) return;
@@ -981,8 +1437,8 @@ emptyPendingReplace.addEventListener('click', () => {
   void importFile(file);
 });
 empty.addEventListener('click', (event: MouseEvent) => {
-  // 点遮罩（inner 之外）关闭替换层
-  if (event.target === empty && session.rootId && importLayerMode() === 'replace') closeImportLayer();
+  // 点遮罩（inner 之外）关闭入口层（替换层与新标签层都可取消）
+  if (event.target === empty && session.rootId && importLayerMode() !== 'initial') closeImportLayer();
 });
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
@@ -1044,6 +1500,7 @@ async function toggleNode(path: string, open: boolean): Promise<void> {
   if (!session.rootId) return;
   try {
     const reply = await core.toggle({ rootId: session.rootId, path, open });
+    if (!isActiveDocRoot(reply.rootId)) return;
     applyLanding(session.land(reply, { kind: 'toggle' }));
   } catch (error) {
     showError(error);
@@ -1065,7 +1522,9 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
   if (isRawView()) await setViewMode('tree');
   try {
     // no-op 判据统一来自落地计划（rowVersion 是否真的推进），不再手抄 rowVersionBefore
-    const plan = session.land(await core.toggleSubtree({ rootId: session.rootId, path, open }), { kind: 'subtree' });
+    const reply = await core.toggleSubtree({ rootId: session.rootId, path, open });
+    if (!isActiveDocRoot(reply.rootId)) return;
+    const plan = session.land(reply, { kind: 'subtree' });
     if (!plan.changed) {
       showToast(open ? '整棵子树已经全部展开了' : '整棵子树已经全部收起了', 1800, 'info');
       return;
@@ -1096,10 +1555,9 @@ async function applyExpandAll(open: boolean): Promise<void> {
     // #9 收口：已是目标状态（core no-op → 不推进 rowVersion）时给一句中性反馈，
     // 不做无意义的换版本/回顶/重取窗口——此前点了完全没反应。
     // 判定口径 = 落地计划的 changed（core 只在 changed 时 rowVersion++，不额外加协议字段）。
-    const plan = session.land(
-      open ? await core.expandAll(session.rootId) : await core.collapseAll(session.rootId),
-      { kind: 'expandAll' },
-    );
+    const reply = open ? await core.expandAll(session.rootId) : await core.collapseAll(session.rootId);
+    if (!isActiveDocRoot(reply.rootId)) return;
+    const plan = session.land(reply, { kind: 'expandAll' });
     if (!plan.changed) {
       showToast(open ? '已经全部展开了' : '已经全部收起了', 1800, 'info');
       return;
@@ -1143,7 +1601,7 @@ function confirmReset(): boolean {
  * + 选中与短暂高亮 + 修改计数。search stale 由调用方按需补。
  */
 function applyModelReply(reply: EditReply): void {
-  if (!session.rootId) return;
+  if (!session.rootId || !isActiveDocRoot(reply.rootId)) return;
   // 锚点必须在换根前记录（edit-spec §4.4）；滚动策略与编辑类附加动作在 landing 内统一
   applyLanding(session.land(reply, { kind: 'edit' }, { anchor: rowSource.anchor() }));
 }
@@ -1689,6 +2147,8 @@ function queueSearch(query: string): void {
  */
 async function runSearch(query: string): Promise<boolean> {
   const loadAtStart = loadSeq;
+  // 多标签（ADR-0009 §2）：切标签 / 换根后迟到回包必须丢弃，不能写进当前标签的命中集
+  const rootAtStart = session.rootId;
   const trimmed = query.trim();
   const seq = searchState.begin(trimmed, searchOpts);
   applySearchToTree();
@@ -1704,6 +2164,7 @@ async function runSearch(query: string): Promise<boolean> {
   try {
     const reply = await core.search({ rootId: session.rootId, seq, query: trimmed, opts: searchOpts });
     if (loadAtStart !== loadSeq) return false;
+    if (rootAtStart !== session.rootId || reply.rootId !== session.rootId) return false;
     const accepted = searchState.apply(
       {
         seq: reply.seq,
@@ -1777,6 +2238,7 @@ async function jumpToPath(path: string): Promise<{ ok: boolean; row: number }> {
   if (isRawView()) await setViewMode('tree');
   try {
     const reply = await core.expandTo({ rootId: session.rootId, path });
+    if (!isActiveDocRoot(reply.rootId)) return { ok: false, row: -1 };
     // 居中 + 选中都在 landing 里（viewport 与行高作为纯数据传入）
     applyLanding(
       session.land(reply, { kind: 'jump', path, row: reply.row }, {
@@ -1867,14 +2329,15 @@ window.addEventListener('keydown', (event: KeyboardEvent) => {
     setPanel('search');
     return;
   }
-  // 打开导入层（已打开文档时的显式替换入口，Q11-B）
+  // 打开导入层（已打开文档时的显式替换入口，Q11-B）；⌘⇧O = 新标签（#18 / ADR-0009 §4）
   if (mod && key === 'o') {
     if (!session.rootId) return;
     event.preventDefault();
-    openImportLayer();
+    if (event.shiftKey) openNewTabLayer();
+    else openImportLayer();
     return;
   }
-  if (event.key === 'Escape' && session.rootId && importLayerOpen() && importLayerMode() === 'replace') {
+  if (event.key === 'Escape' && session.rootId && importLayerOpen() && importLayerMode() !== 'initial') {
     event.preventDefault();
     closeImportLayer();
     return;
@@ -2416,8 +2879,80 @@ function buildDevHookDeps(): DevHookDeps {
         setBudget: (level) => settings.set('advBudget', level),
       },
     },
+    // 多文档工作区（#18 / ADR-0009 §9）
+    workspace: {
+      state: () => workspaceHookState(),
+      entries: {
+        openNewTab: () => openNewTabLayer(),
+        importText: (text, name) => importBuffer('file', text, name, 'new-tab'),
+        switchTab: (id) => switchTab(id),
+        closeTab: (id) => closeTab(id, { force: true }),
+      },
+    },
   };
 }
 
+/**
+ * 工作区快照（dev hook）：标签数据来自 `WorkspaceState`（活动标签的版本字段取实时会话，
+ * 其余标签取切走时存档值），strip 是**DOM/布局探针**（高度来自 inline style）。
+ */
+function workspaceHookState(): WorkspaceHookState {
+  const view = workspace.view();
+  const stripEl = el('tabStrip');
+  const addBtn = document.querySelector<HTMLButtonElement>('#tabAdd');
+  const rendered = [...stripEl.querySelectorAll<HTMLElement>('.tabstrip__tab')];
+  return {
+    size: workspace.size,
+    max: workspace.max,
+    activeId: view.activeId,
+    canAdd: view.canAdd,
+    hidden: view.hidden,
+    tabs: workspace.ids.map((id) => {
+      const tab = workspace.get(id) as TabState;
+      const live = id === view.activeId && !exprViewActive;
+      return {
+        id,
+        name: tab.name,
+        active: id === view.activeId,
+        rootId: tab.rootId,
+        docRevision: live ? session.docRevision : tab.docRevision,
+        totalRows: live ? session.totalRows : tab.totalRows,
+        editCount: tab.runtime.editState.count,
+      };
+    }),
+    strip: {
+      hidden: stripEl.hidden,
+      heightPx: Math.round(stripEl.getBoundingClientRect().height),
+      styleHeightPx: Number.parseFloat(stripEl.style.height) || 0,
+      role: stripEl.getAttribute('role'),
+      rendered: rendered.length,
+      addDisabled: addBtn?.disabled ?? true,
+      addTitle: addBtn?.title ?? '',
+      labels: rendered.map((node) => node.querySelector('.tabstrip__title')?.textContent ?? ''),
+      selectedId:
+        rendered.find((node) => node.getAttribute('aria-selected') === 'true')?.dataset.tabId ?? null,
+      layer: { open: importLayerOpen(), mode: importLayerMode() },
+    },
+  };
+}
+
+/**
+ * 测试钩子 deps 只装配一次；切标签时把**可变模块句柄**改成活动标签的实例
+ * （`rowSource` / `rawSource` / `searchState` / `editState` 会随标签替换，见 bindTab）。
+ */
+let hookDeps: DevHookDeps | null = null;
+
+function refreshHookDeps(): void {
+  if (!hookDeps) return;
+  hookDeps.rowSource = rowSource;
+  hookDeps.rawSource = rawSource;
+  hookDeps.searchState = searchState;
+  hookDeps.editState = editState;
+}
+
 consumeWatchdogFlag();
-if (!isExtension) installDevHook(buildDevHookDeps());
+if (!isExtension) {
+  hookDeps = buildDevHookDeps();
+  installDevHook(hookDeps);
+  refreshHookDeps();
+}

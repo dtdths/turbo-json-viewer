@@ -9,7 +9,7 @@ import { createDevHook, type DevHookDeps } from '../../../src/app/dev-hook';
 import { DocSession } from '../../../src/app/doc-session';
 import { CoreError } from '../../../src/protocol/errors';
 
-/** 69 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
+/** 75 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
 const HOOK_MEMBERS = [
   'loadText', 'scrollToPx', 'togglePath', 'expandAll', 'collapseAll', 'state',
   'search', 'searchNext', 'searchPrev', 'searchJump', 'searchMarkStale', 'setSearchFilter',
@@ -28,6 +28,8 @@ const HOOK_MEMBERS = [
   'expressionState', 'expressionOpen', 'expressionSetText', 'expressionRun', 'expressionRunText',
   'expressionComplete', 'expressionSetStrict', 'expressionBack', 'expressionRerun', 'expressionLocate',
   'expressionSetBudget',
+  // #18 / ADR-0009 §9：多文档工作区（6 个）
+  'workspaceState', 'tabStripState', 'tabOpen', 'tabImportText', 'tabSwitch', 'tabClose',
 ].sort();
 
 function fakeElement(over: Record<string, unknown> = {}): HTMLElement {
@@ -162,6 +164,33 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
         setBudget: () => false,
       },
     },
+    workspace: {
+      state: () => ({
+        size: 0,
+        max: 8,
+        activeId: null,
+        canAdd: false,
+        hidden: true,
+        tabs: [],
+        strip: {
+          hidden: true,
+          heightPx: 32,
+          role: 'tablist',
+          rendered: 0,
+          addDisabled: true,
+          addTitle: '',
+          labels: [],
+          selectedId: null,
+          layer: { open: false, mode: 'initial' },
+        },
+      }),
+      entries: {
+        openNewTab: () => {},
+        importText: async () => {},
+        switchTab: () => {},
+        closeTab: async () => {},
+      },
+    },
     ui: {
       statusRows: fakeElement({ textContent: '0 行' }),
       editBadge: fakeElement({ hidden: true, textContent: '已修改 0 处' }),
@@ -197,7 +226,7 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
 }
 
 describe('dev hook — API 契约与纯快照组装', () => {
-  it('成员表逐字保持（69 个，顺序无关）', () => {
+  it('成员表逐字保持（75 个，顺序无关）', () => {
     const hook = createDevHook(fakeDeps());
     expect(Object.keys(hook).sort()).toEqual(HOOK_MEMBERS);
     for (const key of HOOK_MEMBERS) expect(typeof hook[key]).toBe('function');
@@ -389,5 +418,96 @@ describe('dev hook — API 契约与纯快照组装', () => {
 
   it('installDevHook 只在被调用时挂 globalThis.__tjv（模块 import 无副作用）', () => {
     expect((globalThis as { __tjv?: unknown }).__tjv).toBeUndefined();
+  });
+
+  /* ---- 多文档工作区（#18 / ADR-0009 §9） ---- */
+
+  it('workspaceState / tabStripState：纯转发，不重新组装', () => {
+    const state = {
+      size: 2,
+      max: 8,
+      activeId: 'tab:2',
+      canAdd: true,
+      hidden: false,
+      tabs: [
+        { id: 'tab:1', name: 'a.json', active: false, rootId: 'doc:1', docRevision: 1, totalRows: 4, editCount: 0 },
+        { id: 'tab:2', name: 'b.json', active: true, rootId: 'doc:2', docRevision: 2, totalRows: 7, editCount: 1 },
+      ],
+      strip: {
+        hidden: false,
+        heightPx: 32,
+        role: 'tablist',
+        rendered: 2,
+        addDisabled: false,
+        addTitle: '新标签（⌘⇧O）',
+        labels: ['a.json', 'b.json'],
+        selectedId: 'tab:2',
+        layer: { open: false, mode: 'initial' },
+      },
+    };
+    const deps = fakeDeps({ workspace: { state: () => state, entries: fakeDeps().workspace.entries } });
+    const hook = createDevHook(deps);
+    expect(hook.workspaceState()).toEqual(state);
+    expect(hook.tabStripState()).toEqual(state.strip);
+  });
+
+  it('tabOpen / tabSwitch / tabClose：转发到 app 入口并回最新工作区快照', async () => {
+    const calls: string[] = [];
+    let activeId: string | null = null;
+    const state = (): never =>
+      ({
+        size: activeId === null ? 0 : 1,
+        max: 8,
+        activeId,
+        canAdd: true,
+        hidden: true,
+        tabs: [],
+        strip: { hidden: true, heightPx: 32, role: 'tablist', rendered: 0, addDisabled: false, addTitle: '', labels: [], selectedId: null, layer: { open: false, mode: 'initial' } },
+      }) as never;
+    const deps = fakeDeps({
+      workspace: {
+        state,
+        entries: {
+          openNewTab: () => calls.push('open'),
+          importText: async () => {
+            calls.push('import');
+          },
+          switchTab: (id: string) => {
+            calls.push(`switch:${id}`);
+            activeId = id;
+          },
+          closeTab: async (id: string) => {
+            calls.push(`close:${id}`);
+            activeId = null;
+          },
+        },
+      },
+    });
+    const hook = createDevHook(deps);
+
+    expect(hook.tabOpen().canAdd).toBe(true);
+    await hook.tabClose('tab:1');
+    expect(hook.tabSwitch('tab:2').activeId).toBe('tab:2');
+    expect(calls).toEqual(['open', 'close:tab:1', 'switch:tab:2']);
+  });
+
+  it('tabImportText：等真实导入完成后再回快照（名字缺省 tab.json）', async () => {
+    const names: string[] = [];
+    const deps = fakeDeps({
+      workspace: {
+        ...fakeDeps().workspace,
+        entries: {
+          ...fakeDeps().workspace.entries,
+          importText: async (_text: string, name: string) => {
+            names.push(name);
+            await Promise.resolve();
+          },
+        },
+      },
+    });
+    const hook = createDevHook(deps);
+    await hook.tabImportText('{"a":1}');
+    await hook.tabImportText('{"b":2}', 'b.json');
+    expect(names).toEqual(['tab.json', 'b.json']);
   });
 });

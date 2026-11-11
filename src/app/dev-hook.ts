@@ -242,6 +242,45 @@ export interface ExpressionHookState {
   statusState: string;
 }
 
+/** 单个标签的工作区快照（#18 / ADR-0009 §9）。 */
+export interface TabHookState {
+  id: string;
+  name: string;
+  active: boolean;
+  rootId: string | null;
+  docRevision: number;
+  totalRows: number;
+  /** 该标签的临时修改处数（每标签独立 EditState） */
+  editCount: number;
+}
+
+/** 标签条 DOM / 布局探针（视觉与 a11y 断言用；高度来自 inline style）。 */
+export interface TabStripHookState {
+  hidden: boolean;
+  /** **布局高度**（getBoundingClientRect；hidden 时 = 0，不占位） */
+  heightPx: number;
+  /** inline style 高度（= TAB_STRIP_HEIGHT 32；hidden 时也照报，证明高度单一真相） */
+  styleHeightPx: number;
+  role: string | null;
+  rendered: number;
+  addDisabled: boolean;
+  addTitle: string;
+  labels: string[];
+  selectedId: string | null;
+  /** 入口层形态：initial / replace / new-tab（ADR-0009 §5） */
+  layer: { open: boolean; mode: string };
+}
+
+export interface WorkspaceHookState {
+  size: number;
+  max: number;
+  activeId: string | null;
+  canAdd: boolean;
+  hidden: boolean;
+  tabs: TabHookState[];
+  strip: TabStripHookState;
+}
+
 /** 钩子成员类型（= 冒烟脚本消费的契约；也是 `createDevHook` 的返回类型）。 */
 export interface DevHook {
   loadText(text: string, name?: string): Promise<void>;
@@ -343,6 +382,20 @@ export interface DevHook {
   expressionLocate(path?: string): Promise<{ path: string | null }>;
   /** 设置高级预算档位（= 设置第 11 项）。 */
   expressionSetBudget(level: ExprBudgetLevel): { changed: boolean } & ExpressionHookState;
+
+  /* ---- 多文档工作区（#18 / ADR-0009 §9） ---- */
+  /** 工作区快照：标签列表 / 活动标签 / 每标签版本 + 标签条布局探针。 */
+  workspaceState(): WorkspaceHookState;
+  /** 标签条 DOM/布局探针（= workspaceState().strip，冒烟视觉断言常用）。 */
+  tabStripState(): TabStripHookState;
+  /** 点标签条「＋」：打开「新标签」入口层（真实链路）。 */
+  tabOpen(): WorkspaceHookState;
+  /** 在「新标签」入口层里导入文本（落点 = 新标签；真实 importBuffer 链路）。 */
+  tabImportText(text: string, name?: string): Promise<WorkspaceHookState>;
+  /** 切标签（真实 switchTab：换 runtime / 恢复会话与滚动）。 */
+  tabSwitch(id: string): WorkspaceHookState;
+  /** 关标签（真实 closeTab：先 closeRoot 再移除；不弹 confirm，等价用户确认）。 */
+  tabClose(id: string): Promise<WorkspaceHookState>;
 
   /** 允许按名探测（冒烟脚本 `Object.keys` / `typeof hook[k]`）。 */
   [key: string]: unknown;
@@ -476,13 +529,30 @@ export interface DevHookDeps {
       setBudget(level: ExprBudgetLevel): boolean;
     };
   };
+
+  /* ---- 多文档工作区（#18 / ADR-0009 §9）：模块状态 + app 真实入口 ---- */
+  workspace: {
+    /** 组装工作区快照（标签数据来自 WorkspaceState，strip 来自 DOM 探针） */
+    state(): WorkspaceHookState;
+    entries: {
+      /** 打开「新标签」入口层（真实 openNewTabLayer） */
+      openNewTab(): void;
+      /** 在「新标签」入口层里导入文本（真实 importBuffer；落点 = 新标签） */
+      importText(text: string, name: string): Promise<void>;
+      switchTab(id: string): void;
+      /** 关闭标签（真实 closeTab；不弹 confirm——钩子等价用户已确认） */
+      closeTab(id: string): Promise<void>;
+    };
+  };
 }
 
 const ms = (since: number): number => Math.round((performance.now() - since) * 100) / 100;
 
 /** 纯工厂：不碰全局状态（单测可直接调用）。 */
 export function createDevHook(deps: DevHookDeps): DevHook {
-  const { session, core, tree, rowSource, rawView, rawSource, ui } = deps;
+  // 注意：rowSource / rawSource 是**活动标签**的实例，会随切标签替换——
+  // 这里不解构它们，调用点一律走 deps.*（多标签 #18 / ADR-0009 §3）。
+  const { session, core, tree, rawView, ui } = deps;
 
   const searchDiagnostics = (): SearchDiagnostics => {
     const view = deps.searchState.view();
@@ -538,8 +608,8 @@ export function createDevHook(deps: DevHookDeps): DevHook {
     rowVersion: session.rowVersion,
     docRevision: session.docRevision,
     selected: deps.selected(),
-    rendered: rowSource.snapshot().rows.length,
-    start: rowSource.snapshot().start,
+    rendered: deps.rowSource.snapshot().rows.length,
+    start: deps.rowSource.snapshot().start,
     scrollTop: tree.scrollTopPx(),
     editCount: deps.editState.count,
     canUndo: deps.editState.canUndo,
@@ -548,7 +618,7 @@ export function createDevHook(deps: DevHookDeps): DevHook {
   });
 
   const rawHookState = (): RawHookState => {
-    const snapshot = rawSource.snapshot();
+    const snapshot = deps.rawSource.snapshot();
     return {
       mode: deps.isRawView() ? 'raw' : 'tree',
       view: deps.viewModeAttr(),
@@ -985,6 +1055,26 @@ export function createDevHook(deps: DevHookDeps): DevHook {
     expressionSetBudget: (level: ExprBudgetLevel) => {
       const changed = deps.expression.entries.setBudget(level);
       return { changed, ...expressionHookState() };
+    },
+
+    // ---- 多文档工作区 dev hook（#18 / ADR-0009 §9）----
+    workspaceState: () => deps.workspace.state(),
+    tabStripState: () => deps.workspace.state().strip,
+    tabOpen: () => {
+      deps.workspace.entries.openNewTab();
+      return deps.workspace.state();
+    },
+    tabImportText: async (text: string, name = 'tab.json') => {
+      await deps.workspace.entries.importText(text, name);
+      return deps.workspace.state();
+    },
+    tabSwitch: (id: string) => {
+      deps.workspace.entries.switchTab(id);
+      return deps.workspace.state();
+    },
+    tabClose: async (id: string) => {
+      await deps.workspace.entries.closeTab(id);
+      return deps.workspace.state();
     },
   };
 }
