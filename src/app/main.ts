@@ -35,6 +35,7 @@ import { parentPath, ROOT_PATH } from '../shared/path';
 import {
   displayTitle,
   exportFileName,
+  exprExportFileName,
   renameFromExport,
   sanitizeDocName,
   type ExportNameFlags,
@@ -1224,7 +1225,8 @@ function applyImportLayerMode(mode: 'replace' | 'new-tab'): void {
   empty.dataset.mode = mode;
   emptyTitle.textContent = isNew ? EMPTY_TITLE_NEW_TAB : EMPTY_TITLE_REPLACE;
   emptySub.textContent = isNew ? EMPTY_SUB_NEW_TAB : EMPTY_SUB_REPLACE;
-  emptyWarnDoc.textContent = meta ? `${currentBaseName() ?? meta.name}（${formatBytes(meta.bytes)}）` : '当前文档';
+  const active = activeTab();
+  emptyWarnDoc.textContent = active ? `${active.name}（${formatBytes(active.meta.bytes)}）` : '当前文档';
   emptyWarn.hidden = isNew;
   emptyClose.hidden = false;
   emptyModeToggle.hidden = false;
@@ -1841,18 +1843,20 @@ function currentBaseName(): string | null {
   return tab?.name ?? meta?.name ?? null;
 }
 
+/** 本次导出的后缀判据（签发一次，导出与预填名共用同一份）。 */
+function currentNameFlags(): ExportNameFlags {
+  return {
+    edited: editState.dirty,
+    repaired: meta?.repair?.status === 'repaired',
+  };
+}
+
 /** 当前导出文件名：表达式结果视图导出 = `<名>-expr-N.json`（与文档导出区分，ADR-0018 §4）。 */
 function currentExportName(): string | null {
   const base = currentBaseName();
   if (base === null) return null;
-  const flags: ExportNameFlags = {
-    edited: editState.dirty,
-    repaired: meta?.repair?.status === 'repaired',
-  };
-  if (exprViewActive && exprView) {
-    return `${sanitizeDocName(base)}-${exprView.rootId.replace(':', '-')}.json`;
-  }
-  return exportFileName(base, flags);
+  if (exprViewActive && exprView) return exprExportFileName(base, exprView.rootId);
+  return exportFileName(base, currentNameFlags());
 }
 
 /** 系统「另存为」返回的最小句柄形状（File System Access API 的局部声明，避免 lib.dom 版本差异）。 */
@@ -1884,17 +1888,20 @@ function downloadText(name: string, text: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** 写显示名并刷新chrome（两处改名入口共用）：无名变化/未知标签时 no-op。 */
+function writeDocName(tabId: string, name: string): void {
+  const tab = workspace.get(tabId);
+  if (!tab || name === '' || name === tab.name) return;
+  workspace.update(tabId, { name });
+  if (workspace.activeId === tabId) renderTabChrome();
+}
+
 /**
- * 标签改名（双击标题 / F2 与导出确认共用）：清洗 → 写 `TabState.name`；
+ * 标签改名（双击标题 / F2 入口）：清洗 → 写 `TabState.name`；
  * 空串（用户全删）= 保持原名；原名 `meta.name` 不动（只用于悬停追溯与导入语义）。
  */
 function applyDocRename(tabId: string, raw: string): void {
-  const tab = workspace.get(tabId);
-  if (!tab) return;
-  const name = sanitizeDocName(raw);
-  if (name === '' || name === tab.name) return;
-  workspace.update(tabId, { name });
-  if (workspace.activeId === tabId) renderTabChrome();
+  writeDocName(tabId, sanitizeDocName(raw));
 }
 
 /**
@@ -1909,30 +1916,24 @@ function applyExportName(
   oneOff: boolean,
 ): void {
   if (oneOff || tabId === null) return;
-  const tab = workspace.get(tabId);
-  if (!tab) return;
   const base = renameFromExport(finalName, prefillName, flags);
-  if (base === null || base === tab.name) return;
-  workspace.update(tabId, { name: base });
-  if (workspace.activeId === tabId) renderTabChrome();
+  if (base !== null) writeDocName(tabId, base);
 }
 
 /**
  * 文件导出（ADR-0012 / ADR-0021，2026-11-12 修订）：先弹系统「另存为」——预填默认名
- * （含 `-editor` / `-truncated-repaired` 后缀）、可改名字与保存位置，确认后才写入；
- * 取消 = 不导出、不改名、零副作用。无 FSA 的浏览器回落普通下载（无确认框，如实记录）。
+ * （含 `-edited` / `-truncated-repaired` 后缀）、可改名字与保存位置，确认后才写入；
+ * 取消 = 不导出、不改名、零副作用。无 FSA（或被环境/策略拒绝）时回落普通下载，
+ * 无确认框、如实记录。
  */
 async function exportDoc(): Promise<void> {
   if (!session.rootId || !meta) return;
-  const tab = activeTab();
-  const tabId = tab?.id ?? null;
-  const flags: ExportNameFlags = {
-    edited: editState.dirty,
-    repaired: meta.repair?.status === 'repaired',
-  };
   // 文件名必须在 await 前定：导出期间切标签会用新标签的名字命名旧内容
-  const name = currentExportName() ?? exportFileName(meta.name, flags);
-  const oneOff = exprViewActive;
+  const name = currentExportName();
+  if (name === null) return;
+  const tabId = activeTab()?.id ?? null;
+  const flags = currentNameFlags();
+  const oneOff = exprViewActive && exprView !== null;
   const rootId = session.rootId;
   setExportButtonsDisabled(true);
   try {
@@ -1943,7 +1944,7 @@ async function exportDoc(): Promise<void> {
       exportLastAction = { mode: 'file', name, bytes };
       return;
     }
-    let handle: SaveFileHandleLike;
+    let handle: SaveFileHandleLike | null = null;
     try {
       handle = await picker({
         suggestedName: name,
@@ -1952,9 +1953,14 @@ async function exportDoc(): Promise<void> {
     } catch (error) {
       // 用户取消系统对话框：零副作用（不导出、不改名、不报错）
       if ((error as { name?: string } | null)?.name === 'AbortError') return;
-      throw error;
+      // API 存在但被环境/企业策略拒绝：回落普通下载，导出不中断（如实记录在 ADR）
     }
     const { text, bytes } = await core.exportDoc(rootId, 2);
+    if (!handle) {
+      downloadText(name, text);
+      exportLastAction = { mode: 'file', name, bytes };
+      return;
+    }
     const writable = await handle.createWritable();
     await writable.write(text);
     await writable.close();

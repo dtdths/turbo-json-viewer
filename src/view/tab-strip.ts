@@ -26,10 +26,18 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const TAB_SELECTOR = '.tabstrip__tab';
 const CLOSE_SELECTOR = '.tabstrip__close';
 
+/** 单个标签的视图数据（viewmodel 的 `TabView` 与之逐字对齐）。 */
+export interface TabStripTab {
+  id: string;
+  name: string;
+  originalName: string;
+  active: boolean;
+}
+
 /** 标签条要渲染的纯视图数据（viewmodel 的 `WorkspaceView` 与之逐字对齐）。 */
 export interface TabStripView {
   hidden: boolean;
-  tabs: { id: string; name: string; originalName: string; active: boolean }[];
+  tabs: TabStripTab[];
   activeId: string | null;
   canAdd: boolean;
   max: number;
@@ -175,10 +183,7 @@ export class TabStrip {
 
   /* ------------------------------ 内部 ------------------------------ */
 
-  private buildTab(
-    tab: { id: string; name: string; originalName: string; active: boolean },
-    isTabStop: boolean,
-  ): HTMLElement {
+  private buildTab(tab: TabStripTab, isTabStop: boolean): HTMLElement {
     const el = document.createElement('div');
     el.className = 'tabstrip__tab';
     el.setAttribute('role', 'tab');
@@ -263,7 +268,7 @@ export class TabStrip {
       event.stopPropagation();
       if (event.key === 'Enter') {
         event.preventDefault();
-        this.commitRename();
+        this.commitRename(true);
       } else if (event.key === 'Escape') {
         event.preventDefault();
         this.cancelRename();
@@ -272,7 +277,8 @@ export class TabStrip {
     input.addEventListener('click', (event) => event.stopPropagation());
     input.addEventListener('dblclick', (event) => event.stopPropagation());
     input.addEventListener('blur', () => {
-      if (this.editing?.input === input) this.commitRename();
+      // 失焦提交：焦点已经/即将落到用户点击的地方，不抢回标签（Enter 提交才回焦点）
+      if (this.editing?.input === input) this.commitRename(false);
     });
     tabEl.draggable = false;
     title.replaceWith(input);
@@ -281,15 +287,19 @@ export class TabStrip {
     input.select();
   }
 
-  /** 提交改名意图（空串也上报，由 app 决定「保持原名」）并还原 DOM；状态刷新走 app 的 render。 */
-  private commitRename(): void {
+  /**
+   * 提交改名意图（空串也上报，由 app 决定「保持原名」）并还原 DOM；状态刷新走 app 的 render。
+   * `refocus` 只在键盘提交（Enter）时把焦点还给标签；失焦提交不抢焦点（否则会把焦点从用户
+   * 刚点的地方拽回来）。
+   */
+  private commitRename(refocus: boolean): void {
     const editing = this.editing;
     if (!editing) return;
     this.editing = null;
     const value = editing.input.value;
     this.restoreTitle(editing);
     this.opts.onRename(editing.id, value);
-    this.focusTab(editing.id);
+    if (refocus) this.focusTab(editing.id);
   }
 
   /** 取消改名：还原标题、丢弃输入、焦点回标签。 */
@@ -415,17 +425,29 @@ export class TabStrip {
     const tabEl = target.closest<HTMLElement>(TAB_SELECTOR);
     if (tabEl && this.items.contains(tabEl)) {
       const id = tabEl.dataset.tabId;
-      if (id) this.activate(id);
+      if (!id) return;
+      // 双击的第二击（detail=2）就进改名：不依赖 dblclick 靶点——双击非活动标签时第一击
+      // 会切标签并整条重绘，第一次点击的节点已被替换，dblclick 未必派发到标题上。
+      if (event.detail === 2) {
+        event.preventDefault();
+        this.beginRename(tabEl);
+        return;
+      }
+      this.activate(id);
     }
   };
 
-  /** 双击标题 = 就地改名（单击仍是切换；关闭/＋不参与）。 */
+  /**
+   * 双击标签（标题位置）= 就地改名（单击仍是切换；关闭 / ＋不参与）。
+   * 靶点取整个标签而不只是标题 span：双击非活动标签时第一击会切标签并整条重绘，
+   * 第二击的 dblclick 可能落在新 DOM 的标签节点上。
+   */
   private readonly onDblClick = (event: MouseEvent): void => {
     const target = event.target as HTMLElement | null;
-    const title = target?.closest<HTMLElement>('.tabstrip__title');
-    if (!title || !this.items.contains(title)) return;
-    const tabEl = title.closest<HTMLElement>(TAB_SELECTOR);
-    if (!tabEl) return;
+    if (!target) return;
+    if (target.closest(CLOSE_SELECTOR) || target.closest('#tabAdd')) return;
+    const tabEl = target.closest<HTMLElement>(TAB_SELECTOR);
+    if (!tabEl || !this.items.contains(tabEl)) return;
     event.preventDefault();
     this.beginRename(tabEl);
   };

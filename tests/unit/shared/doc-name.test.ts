@@ -4,6 +4,7 @@ import {
   baseNameFromExport,
   displayTitle,
   exportFileName,
+  exprExportFileName,
   renameFromExport,
   sanitizeDocName,
 } from '../../../src/shared/doc-name';
@@ -23,6 +24,13 @@ describe('shared/doc-name', () => {
     it('removes control characters and trailing dots/spaces', () => {
       expect(sanitizeDocName('a\u0000b\u001fc\u007fd')).toBe('abcd');
       expect(sanitizeDocName('  name. ')).toBe('name');
+    });
+
+    it('strips trailing dots before and after the .json suffix', () => {
+      expect(sanitizeDocName('a.json.')).toBe('a');
+      expect(sanitizeDocName('a.json.json')).toBe('a.json');
+      expect(sanitizeDocName('a .json')).toBe('a');
+      expect(sanitizeDocName('  name.  ')).toBe('name');
     });
 
     it('returns empty string for blank input', () => {
@@ -63,6 +71,20 @@ describe('shared/doc-name', () => {
       const long = exportFileName('x'.repeat(200), { edited: true, repaired: true });
       expect(long.length).toBeLessThanOrEqual(DOC_NAME_MAX);
       expect(long.endsWith('.json')).toBe(true);
+    });
+  });
+
+  describe('exprExportFileName', () => {
+    it('appends the expr root id as a suffix', () => {
+      expect(exprExportFileName('sample.json', 'expr:1')).toBe('sample-expr-1.json');
+      expect(exprExportFileName('订单', 'expr:12')).toBe('订单-expr-12.json');
+    });
+
+    it('shares the DOC_NAME_MAX cap and the untitled fallback', () => {
+      expect(exprExportFileName('   ', 'expr:1')).toBe('untitled-expr-1.json');
+      const long = exprExportFileName('x'.repeat(200), 'expr:1');
+      expect(long.length).toBeLessThanOrEqual(DOC_NAME_MAX);
+      expect(long.endsWith('-expr-1.json')).toBe(true);
     });
   });
 

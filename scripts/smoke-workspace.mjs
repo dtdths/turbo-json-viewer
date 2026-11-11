@@ -563,6 +563,39 @@ try {
   );
   await page.screenshot(path.join(SHOTS, 'workspace-rename-light.png'));
 
+  // 双击**非活动**标签：首击切标签会整条重绘，改名靠第二击（detail=2）兜住靶点更替
+  await runPhase(
+    'rename-nonactive',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const activeBefore = h.workspaceState().activeId;
+      const target = h.workspaceState().tabs.find((tab) => tab.id !== activeBefore);
+      const titleOf = () =>
+        document.querySelector('#tabStrip .tabstrip__tab[data-tab-id="' + target.id + '"] .tabstrip__title');
+      titleOf()?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+      await sleep(200);
+      const activated = h.workspaceState().activeId === target.id;
+      titleOf()?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+      await sleep(200);
+      const input = document.querySelector(
+        '#tabStrip .tabstrip__tab[data-tab-id="' + target.id + '"] .tabstrip__rename',
+      );
+      out.renameNonActive = {
+        activated,
+        isInput: input?.tagName === 'INPUT',
+        value: input?.value ?? null,
+        name: target.name,
+      };
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(150);
+      out.renameNonActive.restored =
+        h.workspaceState().tabs.find((tab) => tab.id === target.id)?.name === target.name;
+      return out;
+    })()`,
+  );
+
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
     .filter((entry) => entry.type === 'error')
@@ -779,6 +812,11 @@ const checks = {
     report.renameCommit?.tabTitle === '订单 2024（原名：' + report.nameBefore + '）',
   'rename:blank-keeps-name':
     report.renameBlank?.name === '订单 2024' && report.renameBlank?.label === '订单 2024',
+  'rename:non-active-tab-opens':
+    report.renameNonActive?.activated === true &&
+    report.renameNonActive?.isInput === true &&
+    report.renameNonActive?.value === report.renameNonActive?.name &&
+    report.renameNonActive?.restored === true,
 
   'console:no-exception-no-error':
     report.consoleErrors?.length === 0 && report.consoleErrorLogs?.length === 0,

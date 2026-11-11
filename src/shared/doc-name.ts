@@ -6,9 +6,10 @@
  *
  * 规则（用户 2026-11-12 拍板）：
  *   - 统一清洗：trim → 去控制字符 → 文件系统非法字符 `/ \ : * ? " < > |` 换成 `-` →
- *     去掉末尾 `.json` → 去末尾的点/空格 → 截到 `DOC_NAME_MAX` 个码点。
+ *     去末尾的点/空格 → 去掉末尾一层 `.json` → 再截到 `DOC_NAME_MAX` 个码点。
  *   - 导出名 = 清洗后的基名 + `-truncated-repaired` + `-edited` + `.json`（后缀顺序与旧
- *     `exportName` 逐字节一致，ADR-0004 §7 / ADR-0006 §2）。
+ *     `exportName` 逐字节一致，ADR-0004 §7 / ADR-0006 §2）；表达式结果导出 =
+ *     `<基名>-<expr-N>.json`，与文档导出共用同一套长度上限。
  *   - 反向：从系统「另存为」返回的最终文件名里剥掉 `.json` 与「本次导出确实加过」的后缀，
  *     得到新的显示名；最终名与预填名相同 = 用户没改名，返回 null。
  */
@@ -17,7 +18,7 @@ export const DOC_NAME_MAX = 120;
 const JSON_SUFFIX = /\.json$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 const ILLEGAL_FILE_CHARS = /[\\/:*?"<>|]/g;
-const TRAILING_DOTS = /\.+$/;
+const TRAILING_DOTS_SPACES = /[\s.]+$/;
 
 const EDITED_SUFFIX = '-edited';
 const REPAIRED_SUFFIX = '-truncated-repaired';
@@ -37,26 +38,39 @@ function capCodePoints(text: string, max: number): string {
 
 /**
  * 清洗用户输入的文档名：清洗后可能为空字符串（调用方决定「空 = 保持原名」还是禁用确认）。
- * 幂等，且对已是合法基名的输入原样返回（`sample` → `sample`）。
+ * 只剥**一层**末尾 `.json`（`a.json.json` → `a.json`），对已是合法基名的输入原样返回
+ * （`sample` → `sample`）；`.json` 前后各去一次末尾点/空格，所以 `a.json.` → `a`、
+ * `a .json` → `a`。
  */
 export function sanitizeDocName(input: string): string {
   let name = input.trim();
   name = name.replace(CONTROL_CHARS, '');
   name = name.replace(ILLEGAL_FILE_CHARS, '-');
+  name = name.replace(TRAILING_DOTS_SPACES, '');
   name = name.replace(JSON_SUFFIX, '');
-  name = name.replace(TRAILING_DOTS, '');
+  name = name.replace(TRAILING_DOTS_SPACES, '');
   return capCodePoints(name, DOC_NAME_MAX);
+}
+
+/** 把「基名 + 固定后缀」拼成 ≤DOC_NAME_MAX 的文件名（基名空 → untitled）。 */
+function joinFileName(base: string, suffix: string): string {
+  // 基名清洗后为空时用导入兜底名（import.ts 的 untitled.json）的基名，保证导出名合法
+  const clean = sanitizeDocName(base) || 'untitled';
+  // 总长（含后缀与扩展名）不超过 DOC_NAME_MAX：给后缀与 `.json` 留出空间后再截基名
+  const room = Math.max(1, DOC_NAME_MAX - suffix.length - '.json'.length);
+  const capped = capCodePoints(clean, room).replace(TRAILING_DOTS_SPACES, '') || 'untitled';
+  return `${capped}${suffix}.json`;
 }
 
 /** 导出文件名：基名 + 修复后缀 + 编辑后缀 + `.json`（旧 `exportName` 的逐字节等价迁移）。 */
 export function exportFileName(base: string, flags: ExportNameFlags = {}): string {
   const suffix = `${flags.repaired ? REPAIRED_SUFFIX : ''}${flags.edited ? EDITED_SUFFIX : ''}`;
-  // 基名清洗后为空时用导入兜底名（import.ts 的 untitled.json）的基名，保证导出名合法
-  const clean = sanitizeDocName(base) || 'untitled';
-  // 总长（含后缀与扩展名）不超过 DOC_NAME_MAX：给后缀与 `.json` 留出空间后再截基名
-  const room = Math.max(1, DOC_NAME_MAX - suffix.length - '.json'.length);
-  const capped = capCodePoints(clean, room).replace(TRAILING_DOTS, '') || 'untitled';
-  return `${capped}${suffix}.json`;
+  return joinFileName(base, suffix);
+}
+
+/** 表达式结果导出名：`<基名>-<expr-N>.json`（与文档导出同一套清洗与 120 上限，ADR-0018 §4）。 */
+export function exprExportFileName(base: string, exprRootId: string): string {
+  return joinFileName(base, `-${exprRootId.replace(':', '-')}`);
 }
 
 /**
