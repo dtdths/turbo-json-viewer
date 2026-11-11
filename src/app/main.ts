@@ -32,6 +32,13 @@ import {
   exprWatchdogMs,
 } from '../protocol/versions';
 import { parentPath, ROOT_PATH } from '../shared/path';
+import {
+  displayTitle,
+  exportFileName,
+  renameFromExport,
+  sanitizeDocName,
+  type ExportNameFlags,
+} from '../shared/doc-name';
 import type {
   CopyFormat,
   DocumentMeta,
@@ -274,6 +281,10 @@ const tabStrip = new TabStrip(el('tabStrip'), {
   onMove: (id, toIndex) => {
     workspace.move(id, toIndex);
   },
+  // 标签就地改名（#29 / ADR-0021）：清洗后写显示名；空串 = 保持原名
+  onRename: (id, raw) => {
+    applyDocRename(id, raw);
+  },
 });
 tabStrip.mount();
 workspace.subscribe((view) => tabStrip.render(view));
@@ -494,7 +505,9 @@ function renderTabChrome(): void {
   const hasDoc = tab !== null;
   fileChip.hidden = !hasDoc;
   if (tab) {
-    fileName.textContent = tab.meta.name;
+    // 显示名 = 标签名（默认 = 导入文件名；改名见 ADR-0021），原名只用于悬停追溯
+    fileName.textContent = tab.name;
+    fileChip.title = displayTitle(tab.name, tab.meta.name);
     fileMeta.textContent = formatBytes(tab.meta.bytes);
   }
   setExportButtonsDisabled(!hasDoc);
@@ -1211,7 +1224,7 @@ function applyImportLayerMode(mode: 'replace' | 'new-tab'): void {
   empty.dataset.mode = mode;
   emptyTitle.textContent = isNew ? EMPTY_TITLE_NEW_TAB : EMPTY_TITLE_REPLACE;
   emptySub.textContent = isNew ? EMPTY_SUB_NEW_TAB : EMPTY_SUB_REPLACE;
-  emptyWarnDoc.textContent = meta ? `${meta.name}（${formatBytes(meta.bytes)}）` : '当前文档';
+  emptyWarnDoc.textContent = meta ? `${currentBaseName() ?? meta.name}（${formatBytes(meta.bytes)}）` : '当前文档';
   emptyWarn.hidden = isNew;
   emptyClose.hidden = false;
   emptyModeToggle.hidden = false;
@@ -1820,14 +1833,139 @@ async function resetEdits(skipConfirm = false): Promise<boolean> {
   }
 }
 
-function exportName(name: string, edited: boolean, repaired = false): string {
-  const base = name.replace(/\.json$/i, '');
-  // ADR-0004 §7：修复过的文档导出带后缀（不往 JSON 里塞注释，保持可解析）
-  return `${base}${repaired ? '-truncated-repaired' : ''}${edited ? '-edited' : ''}.json`;
+/* ---------------- 导出（ADR-0012）：下载文件 / 复制到剪贴板 分体按钮 ---------------- */
+
+/** 当前显示名（标签名；改名只改页面侧显示，`meta.name` 保留导入原名，ADR-0021）。 */
+function currentBaseName(): string | null {
+  const tab = activeTab();
+  return tab?.name ?? meta?.name ?? null;
 }
 
-/** 导出当前值图（唯一落盘动作；`-edited` 后缀；ADR-0006 §2）。 */
-/* ---------------- 导出（ADR-0012）：下载文件 / 复制到剪贴板 分体按钮 ---------------- */
+/** 当前导出文件名：表达式结果视图导出 = `<名>-expr-N.json`（与文档导出区分，ADR-0018 §4）。 */
+function currentExportName(): string | null {
+  const base = currentBaseName();
+  if (base === null) return null;
+  const flags: ExportNameFlags = {
+    edited: editState.dirty,
+    repaired: meta?.repair?.status === 'repaired',
+  };
+  if (exprViewActive && exprView) {
+    return `${sanitizeDocName(base)}-${exprView.rootId.replace(':', '-')}.json`;
+  }
+  return exportFileName(base, flags);
+}
+
+/** 系统「另存为」返回的最小句柄形状（File System Access API 的局部声明，避免 lib.dom 版本差异）。 */
+interface SaveFileHandleLike {
+  readonly name: string;
+  createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }>;
+}
+type SavePickerLike = (options: {
+  suggestedName?: string;
+  types?: { description?: string; accept?: Record<string, string[]> }[];
+}) => Promise<SaveFileHandleLike>;
+
+/** 有 File System Access API 时返回绑定好的 picker（真机扩展页实测可用；无则回落普通下载）。 */
+function saveFilePicker(): SavePickerLike | null {
+  const api = (window as unknown as { showSaveFilePicker?: SavePickerLike }).showSaveFilePicker;
+  return typeof api === 'function' ? api.bind(window) : null;
+}
+
+/** 回落路径（无 File System Access API）：Blob + `<a download>`，文件名已在调用前定死。 */
+function downloadText(name: string, text: string): void {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * 标签改名（双击标题 / F2 与导出确认共用）：清洗 → 写 `TabState.name`；
+ * 空串（用户全删）= 保持原名；原名 `meta.name` 不动（只用于悬停追溯与导入语义）。
+ */
+function applyDocRename(tabId: string, raw: string): void {
+  const tab = workspace.get(tabId);
+  if (!tab) return;
+  const name = sanitizeDocName(raw);
+  if (name === '' || name === tab.name) return;
+  workspace.update(tabId, { name });
+  if (workspace.activeId === tabId) renderTabChrome();
+}
+
+/**
+ * 系统「另存为」保存后：按最终文件名反推基名，写回标签显示名（ADR-0021）。
+ * 表达式结果视图的导出是**一次性文件名**（结果根是派生视图），不回写文档名。
+ */
+function applyExportName(
+  tabId: string | null,
+  finalName: string,
+  prefillName: string,
+  flags: ExportNameFlags,
+  oneOff: boolean,
+): void {
+  if (oneOff || tabId === null) return;
+  const tab = workspace.get(tabId);
+  if (!tab) return;
+  const base = renameFromExport(finalName, prefillName, flags);
+  if (base === null || base === tab.name) return;
+  workspace.update(tabId, { name: base });
+  if (workspace.activeId === tabId) renderTabChrome();
+}
+
+/**
+ * 文件导出（ADR-0012 / ADR-0021，2026-11-12 修订）：先弹系统「另存为」——预填默认名
+ * （含 `-editor` / `-truncated-repaired` 后缀）、可改名字与保存位置，确认后才写入；
+ * 取消 = 不导出、不改名、零副作用。无 FSA 的浏览器回落普通下载（无确认框，如实记录）。
+ */
+async function exportDoc(): Promise<void> {
+  if (!session.rootId || !meta) return;
+  const tab = activeTab();
+  const tabId = tab?.id ?? null;
+  const flags: ExportNameFlags = {
+    edited: editState.dirty,
+    repaired: meta.repair?.status === 'repaired',
+  };
+  // 文件名必须在 await 前定：导出期间切标签会用新标签的名字命名旧内容
+  const name = currentExportName() ?? exportFileName(meta.name, flags);
+  const oneOff = exprViewActive;
+  const rootId = session.rootId;
+  setExportButtonsDisabled(true);
+  try {
+    const picker = saveFilePicker();
+    if (!picker) {
+      const { text, bytes } = await core.exportDoc(rootId, 2);
+      downloadText(name, text);
+      exportLastAction = { mode: 'file', name, bytes };
+      return;
+    }
+    let handle: SaveFileHandleLike;
+    try {
+      handle = await picker({
+        suggestedName: name,
+        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+      });
+    } catch (error) {
+      // 用户取消系统对话框：零副作用（不导出、不改名、不报错）
+      if ((error as { name?: string } | null)?.name === 'AbortError') return;
+      throw error;
+    }
+    const { text, bytes } = await core.exportDoc(rootId, 2);
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    exportLastAction = { mode: 'file', name: handle.name, bytes };
+    applyExportName(tabId, handle.name, name, flags, oneOff);
+  } catch (error) {
+    showError(error);
+  } finally {
+    setExportButtonsDisabled(false);
+  }
+}
 
 /** 上次执行的导出动作（dev hook / 验收用；不保留文本） */
 let exportLastAction: { mode: ExportMode; name?: string; bytes?: number; copied?: boolean } | null = null;
@@ -1899,40 +2037,6 @@ async function runExportMode(mode: ExportMode): Promise<void> {
   else await exportDoc();
 }
 
-/** 当前导出文件名：表达式结果视图导出 = `<原名>-expr-N.json`（与文档导出区分，ADR-0018 §4）。 */
-function currentExportName(): string | null {
-  if (!meta) return null;
-  if (exprViewActive && exprView) {
-    const base = meta.name.replace(/\.json$/i, '');
-    return `${base}-${exprView.rootId.replace(':', '-')}.json`;
-  }
-  return exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
-}
-
-/** 文件导出（既有行为）：Blob + `<a download>`，文件名带 -edited / -truncated-repaired。 */
-async function exportDoc(): Promise<void> {
-  if (!session.rootId || !meta) return;
-  // 文件名必须在 await 前定：导出期间切标签会用新标签的名字命名旧内容
-  const name = currentExportName() ?? 'document.json';
-  setExportButtonsDisabled(true);
-  try {
-    const { text, bytes } = await core.exportDoc(session.rootId, 2);
-    const blob = new Blob([text], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    exportLastAction = { mode: 'file', name, bytes };
-  } catch (error) {
-    showError(error);
-  } finally {
-    setExportButtonsDisabled(false);
-  }
-}
 
 /**
  * 复制当前值图 JSON（ADR-0012 §2/§4）：与文件导出逐字同一份文本；
@@ -3064,8 +3168,8 @@ function buildDevHookDeps(): DevHookDeps {
     fidelityPending: () => fidelityPending,
     fidelityIndex: () => fidelityIndex,
     exportLastAction: () => exportLastAction,
-    exportFileName: () =>
-      meta ? exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired') : null,
+    // 与真实导出口径一致（表达式结果视图下也是 -expr-N.json，ADR-0021）
+    exportFileName: () => currentExportName(),
     tree,
     rowSource,
     rawView,
