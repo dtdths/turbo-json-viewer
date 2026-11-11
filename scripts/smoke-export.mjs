@@ -10,11 +10,14 @@
  *   4) 选「复制 JSON 到剪贴板」→ 剪贴板**逐字**等于导出文本 + toast「已复制：JSON」(success) +
  *      菜单关闭 + 方式记住（主按钮 label 变「复制 JSON 到剪贴板」）
  *   5) 主按钮复用上次方式：再点主按钮仍复制
- *   6) 选「导出 JSON 文件」→ 记录下载动作（文件名 `sample.json`）+ 方式变回文件
+ *   6) 选「导出 JSON 文件」→ 系统「另存为」桩（ADR-0021）：预填 `sample.json`、写入文本逐字 ==
+ *      导出文本、记录下载动作 + 方式变回文件
  *   7) 刷新页面 → 方式保持（持久化到 UiState）+ 主按钮 label 正确
  *   8) 0 page 异常 / 0 console error
  *   9) 菜单交互契约（ADR-0015）：Tab 关闭并焦点回箭头、外部 pointerdown/resize 关闭、
  *      定位不越出视口且锚在箭头下方、选中项后焦点回箭头（动作完成、按钮恢复可聚焦后）
+ *  10) 另存为改名联动（ADR-0021）：桩返回 `报告-2024.json` → 文件 chip 与标签名变 `报告-2024`；
+ *      取消另存为 → 不导出、不改名（lastAction/chip 不变）
  * 截图落 .spike/smoke/export-{menu,toast}.png。
  */
 import path from 'node:path';
@@ -71,6 +74,24 @@ try {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await h.loadText(${JSON.stringify(JSON.stringify(FIXTURE))}, 'sample.json');
       await sleep(400);
+      // 系统「另存为」桩（ADR-0021）：无头里没有原生对话框，记录预填名与写入文本
+      window.__saveCalls = [];
+      window.__saveMode = 'accept';
+      window.__saveCustomName = '';
+      window.showSaveFilePicker = async (opts) => {
+        window.__saveCalls.push({ name: (opts && opts.suggestedName) || null, text: null });
+        if (window.__saveMode === 'cancel') throw new DOMException('cancelled', 'AbortError');
+        const name = window.__saveMode === 'custom' ? window.__saveCustomName : (opts && opts.suggestedName) || 'x.json';
+        return {
+          name,
+          createWritable: async () => ({
+            write: async (text) => {
+              window.__saveCalls[window.__saveCalls.length - 1].text = text;
+            },
+            close: async () => {},
+          }),
+        };
+      };
       out.boot = { export: h.exportState(), state: h.state() };
       return out;
     })()`,
@@ -221,7 +242,44 @@ try {
       out.fileMenu = menu;
       h.exportChoose('file');
       await sleep(400);
-      out.file = { export: h.exportState(), toast: h.toastText() };
+      out.file = {
+        export: h.exportState(),
+        toast: h.toastText(),
+        saveCalls: window.__saveCalls.slice(),
+      };
+      return out;
+    })()`,
+  );
+
+  // ---- phase 4b：另存为改名联动 / 取消零副作用（ADR-0021）----
+  await runPhase(
+    'rename-from-dialog',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      // 用户在系统框里改名 → 保存后按最终文件名反推基名，写回文件 chip / 标签名
+      window.__saveCalls.length = 0;
+      window.__saveMode = 'custom';
+      window.__saveCustomName = '报告-2024.json';
+      h.exportChoose('file');
+      await sleep(400);
+      out.renamePhase = {
+        export: h.exportState(),
+        chipName: document.getElementById('fileName')?.textContent ?? null,
+        tabName: h.workspaceState?.().tabs?.[0]?.name ?? null,
+        saveCalls: window.__saveCalls.slice(),
+      };
+      // 再导出一次并在系统框里取消：零副作用（不导出、不改名）
+      window.__saveCalls.length = 0;
+      window.__saveMode = 'cancel';
+      h.exportChoose('file');
+      await sleep(300);
+      out.cancelPhase = {
+        export: h.exportState(),
+        chipName: document.getElementById('fileName')?.textContent ?? null,
+        saveCalls: window.__saveCalls.slice(),
+      };
       return out;
     })()`,
   );
@@ -394,6 +452,20 @@ const checks = {
     report.file?.export?.lastAction?.mode === 'file' &&
     report.file?.export?.lastAction?.name === 'sample.json' &&
     item(report.file?.export, 'file')?.checked === true,
+
+  // ---- 系统另存为（ADR-0021）----
+  'file:save-dialog-prefill': report.file?.saveCalls?.[0]?.name === 'sample.json',
+  'file:save-written-text': report.file?.saveCalls?.[0]?.text === EXPECTED_TEXT,
+  'rename:from-save-dialog':
+    report.renamePhase?.chipName === '报告-2024' &&
+    report.renamePhase?.tabName === '报告-2024' &&
+    report.renamePhase?.export?.lastAction?.mode === 'file' &&
+    report.renamePhase?.export?.lastAction?.name === '报告-2024.json' &&
+    report.renamePhase?.saveCalls?.[0]?.name === 'sample.json',
+  'rename:cancel-no-side-effect':
+    report.cancelPhase?.chipName === '报告-2024' &&
+    report.cancelPhase?.export?.lastAction?.name === '报告-2024.json' &&
+    (report.cancelPhase?.saveCalls ?? []).length === 1,
 
   // 刷新后持久化
   'persist:mode':

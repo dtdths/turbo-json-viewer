@@ -14,7 +14,9 @@
  *   6) 软上限 8：满 8 后 `＋` 禁用且 title 变提示；第 9 个开不出来；
  *   7) 内存提示：第 2+ 份大文档（合计 ≥ 50 MB）导入后给一次性 toast；小文档不给；
  *   8) 0 page 异常 / 0 console error。
- * 截图落 .spike/smoke/workspace-{two-tabs,light,empty}.png；走 HTTP + `window.__tjv`。
+ *   9) 标签就地改名（#29 / ADR-0021）：双击标题出输入框（全选、禁拖拽）、Esc 取消、
+ *      F2 键盘入口、Enter 提交后标签/文件 chip 同步并把原名写进悬停 title、空白提交保持原名。
+ * 截图落 .spike/smoke/workspace-{two-tabs,light,empty,rename,rename-light}.png；走 HTTP + `window.__tjv`。
  */
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -477,6 +479,90 @@ try {
     })()`,
   );
 
+  // ---- 标签就地改名（#29 / ADR-0021）----
+  await runPhase(
+    'rename-open',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      h.setSetting('theme', 'dark');
+      await sleep(150);
+      const activeId = h.workspaceState().activeId;
+      const tabEl = document.querySelector('#tabStrip .tabstrip__tab[data-tab-id="' + activeId + '"]');
+      const titleEl = tabEl?.querySelector('.tabstrip__title');
+      out.activeId = activeId;
+      out.nameBefore = h.workspaceState().tabs.find((tab) => tab.id === activeId)?.name ?? null;
+      titleEl?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+      await sleep(150);
+      const input = tabEl?.querySelector('.tabstrip__rename');
+      out.renameOpen = {
+        isInput: input?.tagName === 'INPUT',
+        value: input?.value ?? null,
+        allSelected: input ? input.selectionStart === 0 && input.selectionEnd === input.value.length : false,
+        draggable: tabEl?.getAttribute('draggable'),
+      };
+      return out;
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'workspace-rename.png'));
+
+  await runPhase(
+    'rename-commit',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const activeId = h.workspaceState().activeId;
+      const tabSel = '#tabStrip .tabstrip__tab[data-tab-id="' + activeId + '"]';
+      // Esc：取消，名字不变
+      document.querySelector('#tabStrip .tabstrip__rename')?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+      await sleep(150);
+      out.renameCancel = {
+        inputGone: document.querySelector('#tabStrip .tabstrip__rename') === null,
+        name: h.workspaceState().tabs.find((tab) => tab.id === activeId)?.name ?? null,
+      };
+      // F2：键盘入口再进一次编辑，输入新名 + Enter
+      document.querySelector(tabSel)?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'F2', bubbles: true }),
+      );
+      await sleep(150);
+      const input2 = document.querySelector('#tabStrip .tabstrip__rename');
+      out.renameF2 = { isInput: input2?.tagName === 'INPUT' };
+      if (input2) {
+        input2.value = '订单 2024.json';
+        input2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      }
+      await sleep(250);
+      const tabAfter = document.querySelector(tabSel);
+      out.renameCommit = {
+        name: h.workspaceState().tabs.find((tab) => tab.id === activeId)?.name ?? null,
+        chip: document.getElementById('fileName').textContent,
+        label: tabAfter?.querySelector('.tabstrip__title')?.textContent ?? null,
+        tabTitle: tabAfter?.getAttribute('title') ?? null,
+      };
+      // 空白提交 = 保持原名
+      tabAfter?.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+      await sleep(150);
+      const input3 = document.querySelector('#tabStrip .tabstrip__rename');
+      if (input3) {
+        input3.value = '   ';
+        input3.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      }
+      await sleep(200);
+      out.renameBlank = {
+        name: h.workspaceState().tabs.find((tab) => tab.id === activeId)?.name ?? null,
+        label: document.querySelector(tabSel + ' .tabstrip__title')?.textContent ?? null,
+      };
+      h.setSetting('theme', 'light');
+      await sleep(150);
+      return out;
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'workspace-rename-light.png'));
+
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
     .filter((entry) => entry.type === 'error')
@@ -676,6 +762,23 @@ const checks = {
     report.dropped?.activeLabel === 'dropped.json' &&
     report.dropped?.chip === 'dropped.json' &&
     (report.dropped?.names ?? []).includes('dropped.json'),
+
+  // 标签就地改名（#29 / ADR-0021）
+  'rename:inline-open':
+    report.renameOpen?.isInput === true &&
+    report.renameOpen?.value === report.nameBefore &&
+    report.renameOpen?.allSelected === true &&
+    report.renameOpen?.draggable === 'false',
+  'rename:esc-cancels':
+    report.renameCancel?.inputGone === true && report.renameCancel?.name === report.nameBefore,
+  'rename:f2-opens': report.renameF2?.isInput === true,
+  'rename:commit-syncs-chip-and-tab':
+    report.renameCommit?.name === '订单 2024' &&
+    report.renameCommit?.label === '订单 2024' &&
+    report.renameCommit?.chip === '订单 2024' &&
+    report.renameCommit?.tabTitle === '订单 2024（原名：' + report.nameBefore + '）',
+  'rename:blank-keeps-name':
+    report.renameBlank?.name === '订单 2024' && report.renameBlank?.label === '订单 2024',
 
   'console:no-exception-no-error':
     report.consoleErrors?.length === 0 && report.consoleErrorLogs?.length === 0,
