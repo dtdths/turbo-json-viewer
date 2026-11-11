@@ -1,0 +1,108 @@
+/* ==========================================================================
+   view/tab-strip — 多文档标签条（#18 / ADR-0009 §1、direction.md §11）
+   工具栏正下方 32px 最简条：文件名 + ×，可选 ＋ 新标签；仅 ≥2 个文档时显示。
+
+   视觉口径（direction.md §11 例外修订）：
+   - 1px 边框 + --bg-panel 底、无阴影；活动标签只多 --bg-selected 底 + 2px 靛蓝下划线；
+   - 不新增颜色 token（全部来自 view/styles/tokens.css）；字号只用 --text-* 八档。
+
+   高度单一真相：host 的 32px 由 TabStrip.mount() 按 TAB_STRIP_HEIGHT 写 inline style，
+   本文件不写 height / min-height（只写显隐、边框、底色、对齐），避免两处真相漂移。
+   ========================================================================== */
+
+.tabstrip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  padding: 0 var(--sp-2) 0 var(--sp-1);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+/* hidden 时不占高度（单文档界面与 C 形态完全一致）：本文件声明了 display:flex，
+   必须显式压回 UA 的 [hidden] 语义（沿用 shell 里 .noticebar[hidden] 的写法） */
+.tabstrip[hidden] { display: none; }
+
+/* ---------------------------- 标签列表 ---------------------------- */
+
+.tabstrip__items {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ---------------------------- 单个标签 ---------------------------- */
+
+.tabstrip__tab {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 56px;
+  max-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-4);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--muted);
+  font-size: var(--text-caption);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.tabstrip__tab:hover { background: var(--bg-hover); color: var(--text-2); }
+
+/* 活动标签：--bg-selected 底 + 2px 靛蓝下划线（伪元素画线，不参与高度） */
+.tabstrip__tab[aria-selected="true"] {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+.tabstrip__tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+}
+
+/* 文件名：超长 ellipsis（悬停 title 看全名，title 由 TabStrip.render 写） */
+.tabstrip__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------- 关闭按钮 ---------------------------- */
+
+.tabstrip__close {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  color: var(--faint);
+}
+.tabstrip__close:hover { background: var(--bg-hover); color: var(--text); }
+.tabstrip__close svg { width: 16px; height: 16px; display: block; }
+
+/* ---------------------------- ＋ 新标签 ---------------------------- */
+
+/* 双重类名提高权重：不依赖 CSS 的 import 顺序，稳定压过 shell 里 .iconbtn 的 28px 方框 */
+.iconbtn.tabstrip__add {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  margin-left: var(--sp-1);
+}
+.iconbtn.tabstrip__add svg { width: 14px; height: 14px; display: block; }

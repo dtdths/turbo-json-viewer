@@ -353,6 +353,8 @@ body.rail-collapsed .rail { display: none; }
 .empty__inner { width: min(620px, calc(100vw - 120px)); text-align: center; }
 .empty__title { font-size: var(--text-display); letter-spacing: -0.02em; margin: 0 0 8px; }
 .empty__sub { color: var(--muted); margin: 0 0 26px; }
+/* 入口层「替换 ⇄ 新标签」切换（#18）：初始空态下不显示 */
+.empty__mode { margin: -18px 0 22px; font-size: var(--text-small); }
 .dropzone {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
   min-height: 200px;
@@ -376,12 +378,12 @@ body[data-panel="settings"] .empty__inner {
   transform: translateX(calc(var(--left-panel-w) / 2));
 }
 
-.empty[data-mode="replace"] {
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) {
   inset: var(--toolbar-h) 0 var(--status-h) var(--activity-w);
   background: var(--backdrop);
   backdrop-filter: blur(2px);
 }
-.empty[data-mode="replace"] .empty__inner {
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) .empty__inner {
   position: relative;
   max-height: calc(100vh - 140px);
   overflow: auto;
@@ -392,8 +394,8 @@ body[data-panel="settings"] .empty__inner {
   box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, 0.35));
   text-align: left;
 }
-.empty[data-mode="replace"] .empty__title { text-align: left; font-size: var(--text-display-sm); }
-.empty[data-mode="replace"] .empty__sub { text-align: left; margin-bottom: 16px; }
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) .empty__title { text-align: left; font-size: var(--text-display-sm); }
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) .empty__sub { text-align: left; margin-bottom: 16px; }
 .empty__close { position: absolute; top: 8px; right: 8px; }
 .empty__warn {
   display: flex;
@@ -445,7 +447,7 @@ body[data-panel="settings"] .empty__inner {
 .empty__pending[hidden],
 .empty__busy[hidden],
 .empty__close[hidden] { display: none; }
-.empty[data-mode="replace"] .dropzone { min-height: 150px; }
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) .dropzone { min-height: 150px; }
 
 /* ---------------- toast ---------------- */
 

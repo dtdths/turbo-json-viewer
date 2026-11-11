@@ -22,6 +22,7 @@ const COMPONENT_CSS = [
   'src/view/panels/search-panel.css',
   'src/view/panels/settings-panel.css',
   'src/view/panels/outline-panel.css',
+  'src/view/tab-strip.css',
 ];
 
 /** tokens.css 里的运行期变量（由 TS 写 inline style，不在 tokens.css 声明）。 */
