@@ -274,15 +274,17 @@ interface FidelityReport {
    时用 `BigInt(value).toString()`（如 `...660` 的 `parsed` 是 `...656`），Infinity / 非整数保持 `String(value)`。
    检测规则、候选阈值、counts 全部不变——只改「解析后」的呈现口径，让显示串相同也能看出差异。
 2. **保真条多命中导航**（`#fidelityBar` 内）：命中 ≥2 条时显示「`‹` 1/N `›`」；`查看原文` / 上一处 / 下一处
-   都走 `jumpFidelityHit(index)`：更新计数与按钮禁用态 → 状态栏约 3s 解释 → 切原文 + `revealRepairOffset`
-   高亮对应行（与修复摘要 `at` 同一条链路）。单条命中零视觉变化；多条才出现导航。
-3. **精确差异提示**：跳任一处时状态栏给「失真：原文 X → 实际 Y」（上溢/下溢/键序有各自人话文案），
-   约 3s 后恢复常驻态（复用 #30 的 `showStatusHint`）。
-4. **预算**：`page.js` **47 → 48KB gz**（用户 2026-11-11 晚拍板；本次 +0.5：条内导航 + 精确对照状态栏）。
+   都走 `jumpFidelityHit(index)`：更新计数 → **条文案追加当前一处对照**（「· 第 i/N 处：原文 X → 实际 Y」）
+   → 切原文 + `revealRepairOffset` 高亮对应行（与修复摘要 `at` 同一条链路）。
+   **首尾循环**（2026-11-11 晚用户补充）：末条再点「下一处」回到第一条、第一条点「上一处」回到末条，两端按钮不禁用。
+   单条命中零视觉变化；多条才出现导航。
+3. **精确差异提示**：跳任一处时状态栏给「失真：原文 X → 实际 Y」（上溢/下溢/键序有各自人话文案）。
+   状态栏**常驻**（2026-11-11 晚用户反馈「右下角太不明显」）：不再 3s 自动消失，直到下一次跳转 / 换文档 / 切标签。
+4. **预算**：`page.js` **47 → 48KB gz**（用户 2026-11-11 晚拍板；本次 +0.6：条内导航/循环 + 条内常驻对照 + 常驻状态栏）。
 
 **验收**：单测新增「显示串相同但实际不同 → parsed 精确整数」回归（`tests/unit/core/fidelity.test.ts`）；
-`smoke-fidelity` **29 → 35/35**（新增 nav 可见/计数、逐处跳转行号、末处禁用 next、prev 回跳、状态栏精确差异 5 条
-+ 截图 `fidelity-nav.png`）；`page.js` 47.5/48、`page.css` 8.2、`worker.js` 61.1；深/亮截图
-`.spike/smoke/fidelity-nav-light.png`。
+`smoke-fidelity` **29 → 35/35**（nav 可见/计数与条内对照、逐处跳转行号、首尾循环、状态栏常驻、精确差异 5 条
++ 截图 `fidelity-nav.png`）；`page.js` 47.6/48、`page.css` 8.2、`worker.js` 61.1；深/亮截图
+`.spike/smoke/fidelity-nav-light.png`、`.spike/smoke/fidelity-hint-light.png`。
 
 **范围外（仍不做）**：命中明细列表/弹层；扫描检测规则与阈值；`literal` 仍是源文本片段（≤48 字符截断）。

@@ -475,6 +475,7 @@ function bindTab(tab: TabState): void {
   exprView = extras.exprView;
   searchOpts = { ...extras.searchOpts };
   rawTreeAnchor = extras.anchor;
+  clearStatusHint();
   // 表达式结果视图不跨标签自动激活：切回来时若左面板是表达式，由 setPanel('expression') 的
   // 既有恢复链路决定（见 switchTab）；这里一律先按「文档树」绑定会话。
   exprViewActive = false;
@@ -1574,10 +1575,10 @@ fidelityNotice.onAction(() => {
   jumpFidelityHit(fidelityIndex);
 });
 fidelityPrev.addEventListener('click', () => {
-  jumpFidelityHit(fidelityIndex - 1);
+  stepFidelityHit(-1);
 });
 fidelityNext.addEventListener('click', () => {
-  jumpFidelityHit(fidelityIndex + 1);
+  stepFidelityHit(1);
 });
 // 修复摘要的 `at` → 跳到原文对应行（#8 / ADR-0003 修订 §5）
 repairOps.addEventListener('click', (event: MouseEvent) => {
@@ -2572,6 +2573,7 @@ function resetFidelity(): void {
   fidelity = null;
   fidelityPending = false;
   fidelityIndex = 0;
+  clearStatusHint();
   fidelityNotice.hide();
   fidelityNotice.setActionVisible(false);
   fidelityPrev.hidden = true;
@@ -2626,11 +2628,12 @@ function renderFidelity(): void {
   fidelityNext.hidden = !nav;
   fidelityCount.hidden = !nav;
   if (nav) {
-    if (fidelityIndex > hitCount - 1) fidelityIndex = hitCount - 1;
-    if (fidelityIndex < 0) fidelityIndex = 0;
+    // 循环导航（2026-11-11 晚用户反馈）：首尾不禁用，到头再点回到另一端
+    if (fidelityIndex > hitCount - 1) fidelityIndex = 0;
+    if (fidelityIndex < 0) fidelityIndex = hitCount - 1;
     fidelityCount.textContent = `${fidelityIndex + 1}/${hitCount}`;
-    fidelityPrev.disabled = fidelityIndex <= 0;
-    fidelityNext.disabled = fidelityIndex >= hitCount - 1;
+    fidelityPrev.disabled = false;
+    fidelityNext.disabled = false;
   } else {
     fidelityIndex = 0;
     fidelityCount.textContent = '';
@@ -2647,7 +2650,10 @@ function renderFidelity(): void {
   if (report.counts.underflow > 0) parts.push(`数字下溢 ${report.counts.underflow} 处`);
   if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
   const tail = report.truncated ? `（仅列前 ${report.hits.length} 条）` : '';
-  fidelityNotice.show(`检测到 ${total} 处失真：${parts.join(' · ')}${tail}`);
+  // 条内常驻显示**当前一处**的「原文 → 实际」对照（2026-11-11 晚用户反馈：状态栏太不明显）
+  const current = hits[fidelityIndex];
+  const detail = current ? ` · 第 ${fidelityIndex + 1}/${hitCount} 处：${describeFidelityHit(current).replace(/^失真：/, '')}` : '';
+  fidelityNotice.show(`检测到 ${total} 处失真：${parts.join(' · ')}${tail}${detail}`);
 }
 
 /**
@@ -2672,8 +2678,16 @@ function jumpFidelityHit(index: number): void {
   fidelityIndex = Math.max(0, Math.min(Math.floor(index), hits.length - 1));
   renderFidelity();
   const hit = hits[fidelityIndex];
-  showStatusHint(describeFidelityHit(hit));
+  // 常驻差异提示（2026-11-11 晚用户反馈：3s 状态栏太不明显）——直到下一次跳转 / 换文档 / 切标签
+  setStatusHintSticky(describeFidelityHit(hit));
   void revealRepairOffset(hit.offset);
+}
+
+/** 循环步进（用户 2026-11-11 晚：首尾也要能继续走，末条的下一条回到第一条）。 */
+function stepFidelityHit(delta: number): void {
+  const hitCount = fidelity?.hits.length ?? 0;
+  if (hitCount === 0) return;
+  jumpFidelityHit((fidelityIndex + delta + hitCount) % hitCount);
 }
 
 /* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
@@ -2821,6 +2835,19 @@ function flashTreePath(path: string): void {
 let locateBusy = false;
 let statusHint: string | null = null;
 let statusHintTimer = 0;
+
+/** 常驻状态栏提示（保真对照用）：不自动消失，下一次跳转 / 换文档 / 切标签时清除。 */
+function setStatusHintSticky(text: string): void {
+  window.clearTimeout(statusHintTimer);
+  statusHint = text;
+  updateStatus();
+}
+
+/** 清掉常驻/临时状态栏提示（换文档、切标签时调用）。 */
+function clearStatusHint(): void {
+  window.clearTimeout(statusHintTimer);
+  statusHint = null;
+}
 
 /** 状态栏临时文案（ADR-0019 §4）：不新增提示条/对话框，约 3s 后恢复。 */
 function showStatusHint(text: string): void {

@@ -246,7 +246,13 @@ try {
     const status = () => document.getElementById('statusState')?.textContent ?? '';
     out.navVisible =
       !next().hidden && !prev().hidden && !document.getElementById('fidelityCount').hidden;
-    out.initial = { counter: cnt(), prevDisabled: prev().disabled, nextDisabled: next().disabled };
+    out.initial = {
+      counter: cnt(),
+      prevDisabled: prev().disabled,
+      nextDisabled: next().disabled,
+      barText: document.getElementById('fidelityText').textContent ?? '',
+      status: status(),
+    };
     out.hits = h.fidelityState().hits;
     // 逐条期望行号（offset → rawLocate）
     out.expected = [];
@@ -261,15 +267,20 @@ try {
       out.steps.push({
         counter: cnt(),
         flash: h.rawState().flash,
-        prevDisabled: prev().disabled,
-        nextDisabled: next().disabled,
+        barText: document.getElementById('fidelityText').textContent ?? '',
         status: status(),
       });
     }
-    out.atLast = { counter: cnt(), nextDisabled: next().disabled, status: status(), flash: h.rawState().flash };
+    // 循环：末条再点下一条 → 回到第一条；第一条点上一条 → 回到末条
+    next().click();
+    await sleep(320);
+    out.wrapNext = { counter: cnt(), flash: h.rawState().flash, status: status() };
     prev().click();
     await sleep(320);
-    out.afterPrev = { counter: cnt(), flash: h.rawState().flash, status: status() };
+    out.wrapPrev = { counter: cnt(), flash: h.rawState().flash, status: status() };
+    // 常驻状态栏：等 3.6s（原 3s 自动消失窗口已过）后对照仍在
+    await sleep(3600);
+    out.sticky = { status: status(), counter: cnt() };
     out.final = h.fidelityState();
     return { fidNav: out };
   })()`);
@@ -280,25 +291,43 @@ try {
   const expectedLines = nav.expected || [];
   check(
     'nav:visible-and-counter',
-    nav.navVisible === true && nav.initial?.counter === '1/5' && nav.initial?.prevDisabled === true && nav.initial?.nextDisabled === false,
+    nav.navVisible === true &&
+      nav.initial?.counter === '1/5' &&
+      nav.initial?.prevDisabled === false &&
+      nav.initial?.nextDisabled === false &&
+      /第 1\/5 处/.test(nav.initial?.barText ?? '') &&
+      /→/.test(nav.initial?.barText ?? ''),
     { navVisible: nav.navVisible, initial: nav.initial },
   );
   check(
     'nav:next-steps-jump-lines',
     navSteps.length === 4 &&
       JSON.stringify(navSteps.map((s) => s.counter)) === JSON.stringify(['2/5', '3/5', '4/5', '5/5']) &&
-      navSteps.every((s, k) => Number(s.flash) === expectedLines[k + 1]),
-    { counters: navSteps.map((s) => s.counter), flashes: navSteps.map((s) => s.flash), expectedLines },
+      navSteps.every((s, k) => Number(s.flash) === expectedLines[k + 1]) &&
+      /第 5\/5 处/.test(navSteps[3]?.barText ?? '') &&
+      /键顺序/.test(navSteps[3]?.barText ?? ''),
+    {
+      counters: navSteps.map((s) => s.counter),
+      flashes: navSteps.map((s) => s.flash),
+      expectedLines,
+      lastBar: navSteps[3]?.barText,
+    },
   );
   check(
-    'nav:last-disables-next',
-    nav.atLast?.counter === '5/5' && nav.atLast?.nextDisabled === true && /键顺序/.test(nav.atLast?.status ?? ''),
-    { atLast: nav.atLast },
+    'nav:wrap-around',
+    // 末条（5/5）再点下一条 → 1/5；第一条点上一条 → 5/5
+    nav.wrapNext?.counter === '1/5' &&
+      Number(nav.wrapNext?.flash) === expectedLines[0] &&
+      nav.wrapPrev?.counter === '5/5' &&
+      Number(nav.wrapPrev?.flash) === expectedLines[4] &&
+      /键顺序/.test(nav.wrapPrev?.status ?? ''),
+    { wrapNext: nav.wrapNext, wrapPrev: nav.wrapPrev, expectedLines },
   );
   check(
-    'nav:prev-back',
-    nav.afterPrev?.counter === '4/5' && Number(nav.afterPrev?.flash) === expectedLines[3] && /下溢/.test(nav.afterPrev?.status ?? ''),
-    { afterPrev: nav.afterPrev, expectFlash: expectedLines[3] },
+    'exact:status-sticky',
+    // 3.6s 后（超过原 3s 自动消失窗口）对照仍在（用户反馈：右下角太不明显 → 改常驻）
+    /键顺序/.test(nav.sticky?.status ?? '') && nav.sticky?.status === nav.wrapPrev?.status,
+    { sticky: nav.sticky },
   );
   check(
     'exact:status-explains-precision',
