@@ -365,19 +365,19 @@ export class RawView {
     num.className = 'raw-row__num';
     ln.appendChild(num);
 
-    // 行号 gutter 的跳树按钮（#30）：覆盖整个 gutter，hover 行时显示（不改变布局/gutter 宽度）
+    const code = document.createElement('span');
+    code.className = 'raw-row__code';
+
+    // 行尾浮条「跳到树视图」（#30 / 用户 2026-11-11 反馈修订）：与树行浮条同款 chip，
+    // sticky 贴原文视口右缘（长行横向滚动时也跟随）；行号保持可见、不被遮挡。
     const locate = document.createElement('button');
     locate.type = 'button';
     locate.className = 'raw-row__locate';
     locate.tabIndex = -1;
     locate.hidden = true;
     locate.textContent = '⇢';
-    ln.appendChild(locate);
 
-    const code = document.createElement('span');
-    code.className = 'raw-row__code';
-
-    el.append(ln, code);
+    el.append(ln, code, locate);
     host.appendChild(el);
 
     const slot: RawSlot = {

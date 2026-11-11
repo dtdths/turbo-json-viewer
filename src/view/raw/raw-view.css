@@ -81,33 +81,44 @@
 }
 
 /* 行文本：逐字（white-space: pre 保留缩进 / 尾随空白），不换行、不加省略号。 */
-/* 行号 gutter 内的「跳到树视图」按钮（#30 / ADR-0019）：覆盖整个 gutter、hover 行才出现；
-   不改变 gutter 宽度/行号对齐（数字被按钮底色盖住，移开即恢复）。图标-only + aria-label。 */
+/* 行尾浮条「跳到树视图」（#30 / ADR-0019；2026-11-11 用户反馈：从行号 gutter 改为树行浮条同款）。
+   与树视图观感一致（右上角 chip、hover 行才出现）；`sticky + right:8px` 让长行横向滚动时
+   按钮始终贴在原文视口右缘；行号不再被覆盖（`.raw-row__num` 保持可见）。 */
 .tjv-raw .raw-row__locate {
-  position: absolute;
-  inset: 0;
+  position: sticky;
+  right: 8px;
+  left: auto;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 0;
+  border: 1px solid var(--border, #232937);
+  border-radius: var(--radius-sm, 6px);
   padding: 0;
-  margin: 0;
+  background: var(--bg-elevated, #1a1f2b);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.35));
   font: inherit;
-  font-size: var(--text-mono, 12.5px);
+  font-size: var(--text-small);
   line-height: 1;
   color: var(--muted, #8b93a7);
-  background: var(--bg-panel, #11141b);
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
+  transition: opacity var(--dur-fast, 110ms) var(--ease-out, ease-out);
+  z-index: 2;
 }
-.tjv-raw .raw-row:hover .raw-row__locate {
+.tjv-raw .raw-row:hover .raw-row__locate,
+.tjv-raw .raw-row__locate:focus-visible {
   opacity: 1;
   pointer-events: auto;
 }
 .tjv-raw .raw-row__locate:hover {
   color: var(--text, #e7eaf0);
-  background: var(--bg-hover, rgba(255, 255, 255, 0.045));
 }
 .tjv-raw .raw-row__locate[hidden] { display: none; }
 

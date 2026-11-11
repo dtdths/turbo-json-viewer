@@ -40,6 +40,9 @@ const BIG_OBJ = {
 };
 const BIG_MIN = JSON.stringify(BIG_OBJ);
 const BIG_LINES = JSON.stringify(BIG_OBJ, null, 2).split('\n');
+/** 超宽行（源码行模式、横向滚动）：验证行尾浮条 sticky 贴视口右缘（#30 修正） */
+const WIDE = JSON.stringify({ big: 'x'.repeat(3000), small: 1 }, null, 2);
+
 /** 截断文档：修复后 plain 模式，摘要 ops 的 `at` 是原文本偏移 */
 const TRUNCATED = '{"a":1,"b":"hello wor';
 
@@ -268,10 +271,18 @@ try {
       // 行 3 = \`  "b": {\`（源码行模式）：gutter 按钮可锚定；点它 → 切树 + 选中 $.b
       const row = document.querySelector('.raw-row[data-line="3"]');
       const locateBtn = row && row.querySelector('.raw-row__locate');
+      const scroller = document.querySelector('.tjv-raw');
+      const sr = scroller.getBoundingClientRect();
+      const br = locateBtn ? locateBtn.getBoundingClientRect() : null;
       out.line3 = {
         text: row ? (row.querySelector('.raw-row__code').textContent ?? '') : null,
         buttonVisible: Boolean(locateBtn && !locateBtn.hidden),
         buttonLabel: locateBtn ? locateBtn.getAttribute('aria-label') : null,
+        // 行号仍可见（不再被按钮覆盖）；按钮在行尾、不在 gutter 里
+        numText: row ? (row.querySelector('.raw-row__num')?.textContent ?? null) : null,
+        insideGutter: Boolean(row?.querySelector('.raw-row__ln .raw-row__locate')),
+        // 未横滚时按钮右缘贴视口右缘（offset 8 + 边框/阴影 ≤ 20）
+        rightGap: br ? Math.round(sr.right - br.right) : null,
       };
       out.toTree = await h.rawLocateClick(3);
       await sleep(200);
@@ -291,6 +302,24 @@ try {
       await sleep(250);
       out.afterMenu = h.state();
       out.anchorAfterMenu = h.locateState();
+      // 超宽行 + 横向滚到最右：行尾浮条应 sticky 贴视口右缘（树行浮条同款体验）
+      await h.loadText(${JSON.stringify(WIDE)}, 'wide.json');
+      await sleep(350);
+      await h.setViewMode('raw');
+      await sleep(300);
+      const sc2 = document.querySelector('.tjv-raw');
+      sc2.scrollLeft = sc2.scrollWidth;
+      await sleep(220);
+      const wideRow = document.querySelector('.raw-row[data-line="2"]');
+      const wideBtn = wideRow?.querySelector('.raw-row__locate');
+      const wr = wideBtn ? wideBtn.getBoundingClientRect() : null;
+      const wsr = sc2.getBoundingClientRect();
+      out.wide = {
+        scrollLeft: Math.round(sc2.scrollLeft),
+        rightGap: wr ? Math.round(wsr.right - wr.right) : null,
+        buttonVisible: Boolean(wideBtn && !wideBtn.hidden),
+        numText: wideRow ? (wideRow.querySelector('.raw-row__num')?.textContent ?? null) : null,
+      };
       // 按组挂到 report.locate（Object.assign 语义：顶层 = 组名）
       return { locate: out };
     })()`,
@@ -444,10 +473,21 @@ const checks = {
     report.edited?.afterSearch?.state?.mode === 'tree',
 
   // 双向定位（#30 / ADR-0019）
-  'locate:gutter-button':
+  'locate:row-button':
     report.locate?.line3?.buttonVisible === true &&
     /"b"/.test(report.locate?.line3?.text ?? '') &&
-    /第 3 行/.test(report.locate?.line3?.buttonLabel ?? ''),
+    /第 3 行/.test(report.locate?.line3?.buttonLabel ?? '') &&
+    // 行号保持可见、按钮不在 gutter（2026-11-11 用户反馈：gutter 覆盖导致重叠/难发现）
+    report.locate?.line3?.numText === '3' &&
+    report.locate?.line3?.insideGutter === false &&
+    (report.locate?.line3?.rightGap ?? 999) <= 20 &&
+    (report.locate?.line3?.rightGap ?? -1) >= 0,
+  'locate:sticky-right-on-scroll':
+    (report.locate?.wide?.scrollLeft ?? 0) > 0 &&
+    report.locate?.wide?.buttonVisible === true &&
+    (report.locate?.wide?.rightGap ?? 999) <= 20 &&
+    (report.locate?.wide?.rightGap ?? -1) >= 0 &&
+    report.locate?.wide?.numText === '2',
   'locate:to-tree-selected':
     report.locate?.toTree?.clicked === true &&
     report.locate?.afterToTree?.selected === '$.b' &&

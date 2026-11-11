@@ -35,7 +35,7 @@
 
 ### 1. 交互与入口（#30 决策 1/2/3/6/7）
 
-- **原文侧**：行号 gutter hover 小按钮（sticky，长行/横滚也始终可见）；hover **整行任意位置**即出现；锚点 = 行首第一个非空白 token 所属节点；`}`、`]`、纯逗号、空行等**结构行不显示按钮**；title/aria 给行号（「在树视图中定位（第 N 行）」——目标路径需 worker 反查，hover 不预取，见「已知差距」）。
+- **原文侧**：**行尾浮条**「⇢」（与树行浮条同款 chip；`position: sticky; right: 8px` 贴**原文视口右缘**，长行横向滚动时跟随；hover 整行任意位置出现；**行号保持可见、不被遮挡**）。*2026-11-11 用户反馈修订：初版放在行号 gutter 并覆盖行号，出现「箭头与行号重叠、行号消失、第一次找不到入口」，故改为右缘浮条。*锚点 = 行首第一个非空白 token 所属节点；`}`、`]`、纯逗号、空行等**结构行不显示按钮**；title/aria 给行号（「在树视图中定位（第 N 行）」——目标路径需 worker 反查，hover 不预取，见「已知差距」）。
 - **树侧**：行尾浮条第三个动作（与复制 `⧉` / 编辑 `✎` 同款）+ 右键菜单项；根 / 容器 / 标量都可跳。
 - **视觉**：20px 单字形图标（原文侧 `⇢`、树侧 `⇠`）+ title/aria（「在树视图中定位」/「在原文中定位」）；hover 按钮 `tabIndex=-1` 仅鼠标快路径，键盘走右键菜单（ADR-0010 修订 + ADR-0015）。
 - **跳后反馈**复用现状：树侧展开祖先 + 选中 + 滚动 + `.is-changed` 900ms；原文侧滚动 + `.is-flash` 900ms。
@@ -134,7 +134,7 @@ export interface RawOffsetOfReply {
 
 | 选择器 / 属性 | 说明 |
 |---|---|
-| 原文行按钮 | `.raw-row__ln > button.raw-row__locate`（覆盖整个行号 gutter）、hover 整行显示、`tabIndex=-1`、图标 `⇢`、`aria-label="在树视图中定位（第 N 行）"`；结构行/plain 用 `hidden` 属性不渲染 |
+| 原文行浮条 | `button.raw-row__locate`（行的直接子项、行尾）、`position:sticky; right:8px` 贴视口右缘（横滚跟随）、hover 整行显示、`tabIndex=-1`、图标 `⇢`、`aria-label="在树视图中定位（第 N 行）"`；结构行/plain 用 `hidden` 属性不渲染；行号 `.raw-row__num` 始终可见 |
 | 树行浮条第三钮 | `button.row__action[data-action="raw"]`，图标 `⇠`，`aria-label="在原文中定位"`；表达式结果视图 / plain 由 app 关掉整列入口 |
 | 右键菜单项 | 树行菜单 `[data-act="locate-raw"]`「在原文中定位」；原文行菜单 `#rawCtxMenu [data-raw-act="locate-tree"]`「在树视图中定位」 |
 | busy / 失败 | 不阻塞按钮：状态栏行区显示「正在定位…」；失败/回退用状态栏 `statusState` 约 3s 临时文案 |
@@ -160,7 +160,7 @@ export interface RawOffsetOfReply {
 
 - **大文件首跳延迟（仓库实现实测，见 §8.1）**：树→原文 50MB≈238ms（LRU 未命中，1MB≈5ms / 10MB≈50ms）；原文→树首次懒建索引 50MB≈191–222ms（1MB≈5ms / 10MB≈51ms）。无取消，只能等 busy（拍板时预算「最坏 ~300ms」）。
 - **原文侧按钮 title 只到行号**（「在树视图中定位（第 N 行）」）：目标路径要 worker 反查，hover 不预取（避免 hover 触发扫描）；树侧按钮 `aria-label` 给动作名。
-- **原文侧 a11y 差距**：行号 gutter 按钮在 `aria-hidden` 的行号列内（鼠标快路径，`tabIndex=-1`）；原文视图没有行级键盘导航，因此原文行右键菜单实际靠鼠标触发——键盘等价入口要等「原文行级键盘导航」另开票一起补。
+- **原文侧 a11y 差距**：行尾浮条按钮 `tabIndex=-1`（鼠标快路径，与树行浮条同款）；原文视图没有行级键盘导航，因此原文行右键菜单实际靠鼠标触发——键盘等价入口要等「原文行级键盘导航」另开票一起补。
 - **编辑新增节点的树侧按钮不做逐行禁用**（逐行预扫描代价高）：保留按钮、点击后状态栏提示「该节点来自临时修改，原文中没有对应位置」；plain 模式整列入口关闭（`syncLocateRaw`，`meta.repair` 判定）。
 - 原文→树映射为 `path=null` 的行（结构行 / 空行）**不回退最近节点**（拍板要求「结构行不显示按钮」，浏览器侧用行首字符启发式隐藏；真实点击仍以 null 兜底）。
 - source 模式一行多值（如 `{"a":1,"b":2}`）只锚定行首第一个节点，其余值没有独立按钮。
@@ -195,7 +195,7 @@ export interface RawOffsetOfReply {
 - 单测 **899 → 929**：新增 `tests/unit/core/path-index.test.ts` 24 条（offset↔path、转义键/Unicode、深嵌套 300、重复键取最后一个、结构行 null、`cpEvery` 1/2/3/64/2048 结果一致、大文件内存 sanity、`tokenStartAt` source/pretty/plain）；契约新增 3 条 × 2 适配器 = 6 条（双向只读、plain 回 null、未知根 `NO_ROOT`、表达式根 `BAD_COMMAND`、容器开括号 `exact:false`、重复键最后一个）。
 - 锚点记忆在 `app/main.ts` 接线层（每标签 `TabExtras.anchor`）：`main.ts` 无单测 harness（与既有接线一致），由 `smoke-raw` 的 `locate:anchor-remembered` + `smoke-fidelity` 的 `locate:tree-to-raw-anchor` 两条浏览器断言覆盖。
 - dev hook **75 → 82**（`locateState / rawPathAt / rawOffsetOf / rawLocateClick / treeLocateClick / rawCtxOpen / rawCtxClick`），`tests/unit/app/dev-hook.test.ts` 逐字钉住。
-- 冒烟：`smoke-raw` **26 → 32/32**（+6：gutter 按钮与 aria、原文→树选中、锚点记忆、树→原文回跳、结构行无按钮、右键菜单闭环）；`smoke-fidelity` **24 → 29/29**（+4 痛点闭环 + 1 截图存在性）；**不新增第 16 套**。深/亮截图：`.spike/smoke/raw-locate.png`、`.spike/smoke/fidelity-locate.png`。
+- 冒烟：`smoke-raw` **26 → 33/33**（+7：行尾浮条与 aria/行号可见/不在 gutter、宽行横滚 sticky 贴右缘、原文→树选中、锚点记忆、树→原文回跳、结构行无按钮、右键菜单闭环）；`smoke-fidelity` **24 → 29/29**（+4 痛点闭环 + 1 截图存在性）；**不新增第 16 套**。深/亮截图：`.spike/smoke/raw-locate.png`、`.spike/smoke/fidelity-locate.png`。
 - 0 page 异常 / 0 console error（两套冒烟断言）。
 - 体积见「预算」节（`page.js` 47.0/47、`worker.js` 61.0、`page.css` 8.1、懒加载 145.6）。
 
