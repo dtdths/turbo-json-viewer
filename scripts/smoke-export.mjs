@@ -81,6 +81,7 @@ try {
       window.showSaveFilePicker = async (opts) => {
         window.__saveCalls.push({ name: (opts && opts.suggestedName) || null, text: null });
         if (window.__saveMode === 'cancel') throw new DOMException('cancelled', 'AbortError');
+        if (window.__saveMode === 'throw') throw new DOMException('blocked by policy', 'NotAllowedError');
         const name = window.__saveMode === 'custom' ? window.__saveCustomName : (opts && opts.suggestedName) || 'x.json';
         return {
           name,
@@ -280,6 +281,16 @@ try {
         chipName: document.getElementById('fileName')?.textContent ?? null,
         saveCalls: window.__saveCalls.slice(),
       };
+      // 系统框 API 存在但被策略拒绝（NotAllowedError）→ 回落普通下载，不中断、不改名
+      window.__saveCalls.length = 0;
+      window.__saveMode = 'throw';
+      h.exportChoose('file');
+      await sleep(300);
+      out.fallbackPhase = {
+        export: h.exportState(),
+        chipName: document.getElementById('fileName')?.textContent ?? null,
+        saveCalls: window.__saveCalls.slice(),
+      };
       return out;
     })()`,
   );
@@ -466,6 +477,11 @@ const checks = {
     report.cancelPhase?.chipName === '报告-2024' &&
     report.cancelPhase?.export?.lastAction?.name === '报告-2024.json' &&
     (report.cancelPhase?.saveCalls ?? []).length === 1,
+  'file:policy-blocked-fallback':
+    report.fallbackPhase?.chipName === '报告-2024' &&
+    report.fallbackPhase?.export?.lastAction?.mode === 'file' &&
+    report.fallbackPhase?.export?.lastAction?.name === '报告-2024.json' &&
+    (report.fallbackPhase?.saveCalls ?? []).length === 1,
 
   // 刷新后持久化
   'persist:mode':
