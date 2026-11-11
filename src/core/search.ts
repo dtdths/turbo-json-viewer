@@ -1,19 +1,23 @@
 /**
- * core/search — 全文档搜索（键名 + 字符串值）。
+ * core/search — 全文档搜索（键名 + **字符串值 + 数字值**）。
  *
  * 深度优先 walk 整棵值图，不建 search root（ir-spec §4.3：命中集合是视图状态）。
  * 默认大小写不敏感；命中上限默认 SEARCH_LIMIT（50,000），超过则 truncated。
  * 预览必须短（命中集可能 5 万条），见 row-model.shortPreview。
  *
+ * 数值匹配口径（2026-11-12 用户反馈修订，ADR-0014 修订）：数字（number / BigInt）按
+ * **树里显示的文本**匹配（number → `JSON.stringify`，BigInt → 十进制串），所以搜
+ * `297532588187238660` 能命中树里显示同串的大整数。布尔/null 仍不参与值匹配。
+ *
  * 正则模式（ADR-0014 §2.2–§2.4）：`opts.regex === true` 时 query 按 ECMAScript RegExp
  * 解释，`caseSensitive` 只决定 `i` flag；语法错误 / 超长 / 被灾难性回溯静态筛查拒绝
- * 一律抛 `CoreError({ code: 'BAD_PATTERN' })`，不产出命中。匹配目标仍是键名 + 字符串值。
+ * 一律抛 `CoreError({ code: 'BAD_PATTERN' })`，不产出命中。匹配目标 = 键名 + 字符串值 + 数字显示文本。
  */
 import { CoreError } from '../protocol/errors';
 import { SEARCH_LIMIT, SEARCH_PATTERN_MAX } from '../protocol/versions';
 import type { Hit, Path, SearchOpts } from '../protocol/types';
 import { appendIndex, appendKey, ROOT_PATH } from '../shared/path';
-import { isContainer, jsonKind, shortPreview } from './row-model';
+import { isContainer, jsonKind, scalarPreview, shortPreview } from './row-model';
 
 export interface SearchWalkOpts extends SearchOpts {
   /** 每 4096 个节点问一次；用于 cancelSearch / 新搜索抢占（骨架里同步 walk 不常用） */
@@ -27,6 +31,17 @@ export interface SearchWalkResult {
 }
 
 const CANCEL_CHECK_MASK = 4095;
+
+/**
+ * 「值搜索」用的文本：字符串 = 内容本身；数字 = **树里显示的文本**
+ * （number → JSON.stringify，BigInt → 十进制串）；布尔/null 不参与值匹配。
+ * 与 `row-model.scalarPreview` 同源，保证「搜到的 == 看到的」。
+ */
+function searchableValueText(node: unknown, kind: ReturnType<typeof jsonKind>): string | null {
+  if (kind === 'string') return node as string;
+  if (kind === 'number') return scalarPreview(node);
+  return null;
+}
 
 /** 灾难性回溯静态筛查的拒绝原因（ADR-0014 §2.4；core 只给规则、文案由 app 映射）。 */
 const CATASTROPHIC_BACKTRACK_MESSAGE = '该正则可能触发灾难性回溯';
@@ -226,10 +241,13 @@ export function searchDocument(value: unknown, query: string, opts: SearchWalkOp
     const kind = jsonKind(node);
     const keyIsName = !frame.idx && frame.path !== ROOT_PATH;
 
-    // 键名优先于值：一条正则同时命中键名与字符串值时，field 记为 key（与 slice 4 的判定顺序一致）
+    // 键名优先于值：一条正则同时命中键名与字符串/数字值时，field 记为 key（与 slice 4 的判定顺序一致）
     let field: Hit['field'] | null = null;
     if (keyIsName && matches(frame.key)) field = 'key';
-    else if (!keysOnly && kind === 'string' && matches(node as string)) field = 'value';
+    else {
+      const valueText = searchableValueText(node, kind);
+      if (!keysOnly && valueText !== null && matches(valueText)) field = 'value';
+    }
 
     if (field !== null) {
       hits.push({

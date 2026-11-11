@@ -84,7 +84,7 @@
 | Q9 | 性能接受度 | **接受** parse 2.8–4.4×、值图堆 2.1–4.1×；定稿前 Chrome 复测（§2.3） |
 | Q10 | 体积预算 | **`page.js` 48 / 懒加载 146 预算不动（0 增长目标）**；`worker.js` 记录到 ADR（预计 +8–12KB gz），不设硬预算 |
 | Q11 | parser 对拍 | **以 `JSON.parse` 为硬不变式**：语法接受面/重复键/`__proto__`/BOM/尾逗号/`-0`/深度逐例对拍 + 差分 fuzz；显式栈 |
-| Q12 | 搜索 | **不动**（数字仍不参与搜索），记为已知差距、需要时另票 |
+| Q12 | 搜索 | **不动**（数字仍不参与搜索），记为已知差距、需要时另票 → **2026-11-12 用户反馈后修订**：数字按显示文本参与搜索（ADR-0014 修订） |
 | Q13 | 交付流程 | 先 ADR + #32 评论 + 开实现票，然后 TDD 实现、分段提交、push 前问 |
 
 ## 4. 值模型契约
@@ -188,7 +188,7 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
 - **高精度小数无损**（`0.1234567890123456789` 仍静默丢精度、不检测）——另票。
 - **字面量字节级往返**（`1.50`、`-0.0`、`1e3` 的写法不保留）——原文视图承担逐字真相；strict 包装档已否决。
 - **整数样式键序无损**（需换成 Map/数组承载，破坏全仓消费者）——不做，保真条继续报。
-- **数字值搜索**（现状数字不参与搜索）——不做，另票。
+- ~~**数字值搜索**——不做，另票~~ → **2026-11-12 用户反馈后已实现**（数字按显示文本参与搜索；详见 ADR-0014 修订）。
 - **深嵌套导出/复制 >1 万层 RangeError**——现状已有，本 slice 不修。
 - **`BigInt()` 构造器不进表达式白名单**（`BigInt(number)` 会二次丢精度，容易误导）；`123n` 字面量足够。
 - **不提供设置开关**（Q8）。
@@ -226,8 +226,9 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
   - 表达式：`validate` 允许 `BigIntLiteral`；`walk.evalLiteral` 用 `raw` 走无损判定、允许 `123n`；同类型算术原生；混算/一元 `+`/`Math.*` → `EVAL_MIXED_NUMBER`；关系比较任一侧 BigInt 走原生；`display`/`toNumberValue`/`toPropertyKey`/`sanitize`/`kindOf` 补 BigInt；表达式内 `JSON.parse/stringify` 改用无损处理器；步数预算不变。
   - 保真：`fidelity.classifyNumber` 改用 `analyzeNumberLiteral`（整数精确 → 不报；超 cap/小数上溢 → `overflow`；小数下溢 → `underflow`），删 `precision`/`parsedExact`/本地 `normalizeDecimal`；`protocol/types.ts` 删 `FidelityCounts.precision` 与 `reason:'precision'`；`app/main.ts` 条文案去掉「大整数精度」。
   - `protocol/types.ts` 新增 `ExprErrorCode = 'EVAL_MIXED_NUMBER'` / `'EVAL_DIV_BY_ZERO'` + `shared/expression-copy.ts` 文案「超大整数不能进行该运算：{0}」/「除数为 0」。
-- **单测**：930 → **971**（`number-literal` 9、`lossless-json` 17（含 1000 例差分 fuzz 与语法拒绝面对拍、孤立代理项、**1,000,000 层深嵌套**、`__proto__`、重复键、`-0`、`1e400` 导出 401 位→再导入）、row-model/measure/search/outline BigInt 用例、表达式 BigInt 用例、fidelity 口径重写）。`npx tsc --noEmit` 干净。
-- **冒烟**：15 套串行全绿；受影响套件计数变化——`smoke-fidelity` **35/35**（fixture 按新口径重写：大整数/`1e400` 不再报、超 cap 才报 overflow；导航/循环/常驻对照/跳原文不变、与修复条并存仍绿）、`smoke-copy` **38 → 43**（树行/子树/根子树/原始值/键名精确十进制）、`smoke-export` **21 → 22**（导出剪贴板逐字含裸大整数）、`smoke-edit` +3（编辑器回填精确、no-op 不推版本、编辑后仍精确）、`smoke-expression` **45 → 52**（读/算术/混合关系/混算错误/数组过滤/字符串转换/JS 字面量语义/BigInt 除零）。
+- **单测**：930 → **979**（`number-literal` 9、`lossless-json` 17（含 1000 例差分 fuzz 与语法拒绝面对拍、孤立代理项、**1,000,000 层深嵌套**、`__proto__`、重复键、`-0`、`1e400` 导出 401 位→再导入）、row-model/measure/search/outline BigInt 用例、表达式 BigInt 用例、fidelity 口径重写）。`npx tsc --noEmit` 干净。
+- **搜索（2026-11-12 用户反馈修订）**：数字（number / BigInt）按**树里显示的文本**参与值搜索（`row-model.scalarPreview` 同源），布尔/null 不参与；`search-reference` 同步并补 7 条 parity 用例、`smoke-search` +4 检查（大整数可搜 / 普通数字 / bool-null 不命中 / 0 长任务）。详见 ADR-0014 修订。
+- **冒烟**：15 套串行全绿；受影响套件计数变化——`smoke-fidelity` **35/35**（fixture 按新口径重写：大整数/`1e400` 不再报、超 cap 才报 overflow；导航/循环/常驻对照/跳原文不变、与修复条并存仍绿）、`smoke-copy` **38 → 43**（树行/子树/根子树/原始值/键名精确十进制）、`smoke-export` **21 → 22**（导出剪贴板逐字含裸大整数）、`smoke-edit` +3（编辑器回填精确、no-op 不推版本、编辑后仍精确）、`smoke-expression` **45 → 52**（读/算术/混合关系/混算错误/数组过滤/字符串转换/JS 字面量语义/BigInt 除零）、`smoke-search` **97 → 101**（数字可搜）。
 - **体积**（`node build.mjs --analyze`）：`page.js` **47.6KB gz / 预算 48（未变，0 增长）**；懒加载 chunk 合计 **145.6KB gz / 预算 146（未变）**；`worker.js` 61.1 → **63.2KB gz（+2.1，无硬预算，记录）**；`page.css` 8.2 不变。
 - **性能 / Chrome 复测（2026-11-12，仓内 headless harness + `.spike/samples/50mb.json`）**：50MB `loadText` → 首行 **427ms**（仓库旧基线 150.2ms，**2.8×**，与 Node bench 的 2.80× 一致）；保真扫描 **256.6ms**（首帧后异步）、**0 个长任务**（解析在 Worker 内，不阻塞主线程）、0 异常 / 0 console error。10MB 首帧仍 9ms（`smoke-fidelity` 实测）。
   - **已知缺口（如实登记，未做假）**：Chrome 内 **worker 值图堆**未直接采样——CDP 对 dedicated worker 无稳定 attach 路径，现有 harness 只测了页面侧首帧/长任务；值图堆以 **Node bench 2.1×（+140.9MB @50MB）** 作对照。若后续要硬性核对 Chrome 堆，需给 harness 加 `Target.setAutoAttach` 或 Worker 内自报 `performance` 指标（另开票）。

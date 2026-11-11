@@ -54,9 +54,16 @@ describe('searchDocument — 命中规则', () => {
     expect(searchDocument({ arr: ['x'] }, '[0]').total).toBe(0);
   });
 
-  it('数字/布尔/null 不参与值匹配（只匹配字符串值）', () => {
-    const result = searchDocument({ n: 123, b: true, z: null }, '123');
-    expect(result.total).toBe(0);
+  it('数字按显示文本参与值匹配；布尔/null 不参与（ADR-0014 修订 2026-11-12）', () => {
+    expect(searchDocument({ n: 123, b: true, z: null }, '123')).toMatchObject({ total: 1 });
+    expect(searchDocument({ n: 123, b: true, z: null }, '123').hits[0]).toMatchObject({
+      path: '$.n',
+      field: 'value',
+      kind: 'number',
+      preview: '123',
+    });
+    expect(searchDocument({ n: 123, b: true, z: null }, 'true').total).toBe(0);
+    expect(searchDocument({ n: 123, b: true, z: null }, 'null').total).toBe(0);
   });
 
   it('字符串根文档按值命中（path=$、key=root）', () => {
@@ -171,8 +178,9 @@ describe('searchDocument — 正则模式：键优先 / 只匹配键名 + 字符
     expect(result.hits[0]).toMatchObject({ path: '$.abc', key: 'abc', field: 'key' });
   });
 
-  it('数字/布尔/null 仍不参与值匹配', () => {
-    expect(searchDocument({ n: 123, b: true, z: null }, '^123$', { regex: true }).total).toBe(0);
+  it('数字仍参与值匹配（按显示文本）；布尔/null 不参与', () => {
+    expect(searchDocument({ n: 123, b: true, z: null }, '^123$', { regex: true }).total).toBe(1);
+    expect(searchDocument({ n: 123, b: true, z: null }, '^true$', { regex: true }).total).toBe(0);
   });
 
   it('空查询不编译正则、直接返回空结果', () => {
@@ -270,16 +278,29 @@ describe('searchDocument — 正则模式：取消与 limit 不回归', () => {
 });
 
 describe('search — 无损数字（BigInt，ADR-0020）口径不变', () => {
-  it('数字值仍不参与搜索：大整数的十进制串不命中；键名/字符串值照常命中', () => {
+  it('大整数（用户 2026-11-12 反馈）：按显示文本可搜到；数字 kind 仍是 number', () => {
     const doc = { id: 297532588187238660n, note: '297532588187238660' };
-    // 值本身不搜（现状口径）；但字符串值命中
+    // BigInt 值与同串字符串值都命中（前序：id 在前）；树里显示什么就能搜到什么
     const byValue = searchDocument(doc, '297532588187238660', {});
-    expect(byValue.hits.map((h) => [h.path, h.field])).toEqual([['$.note', 'value']]);
+    expect(byValue.hits.map((h) => [h.path, h.field, h.kind])).toEqual([
+      ['$.id', 'value', 'number'],
+      ['$.note', 'value', 'string'],
+    ]);
+    // 命中预览 = 树里显示的十进制串（不是 null）
+    expect(byValue.hits[0]).toMatchObject({ preview: '297532588187238660', kind: 'number' });
     // 键名照常命中
     const byKey = searchDocument(doc, 'id', {});
     expect(byKey.hits.map((h) => [h.path, h.field])).toEqual([['$.id', 'key']]);
-    // 命中 kind 不出现 null（BigInt 归 number 类）
-    const byNote = searchDocument({ a: 1n, note: 'x' }, 'x', {});
-    expect(byNote.hits.every((h) => h.kind === 'string')).toBe(true);
+  });
+
+  it('普通数字按显示文本匹配（含指数/小数/-0 的显示口径）', () => {
+    expect(searchDocument({ a: 100 }, '100').hits[0]).toMatchObject({ path: '$.a', kind: 'number' });
+    expect(searchDocument({ a: 1e21 }, '1e+21').total).toBe(1); // 与 JSON.stringify 显示一致
+    expect(searchDocument({ a: 1.5 }, '1.5').total).toBe(1);
+    expect(searchDocument({ a: -0 }, '0').hits[0]).toMatchObject({ path: '$.a', preview: '0' });
+    expect(searchDocument([297532588187238660n], '297532588187238660').hits[0]).toMatchObject({
+      path: '$[0]',
+      kind: 'number',
+    });
   });
 });

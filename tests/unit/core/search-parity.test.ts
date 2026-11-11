@@ -75,6 +75,15 @@ const PARITY_CASES: ParityCase[] = [
   { name: 'regex: 空查询不编译', doc: MIXED_DOC, query: '', opts: { regex: true } },
   { name: 'regex: 语法错但 limit=0（先判 limit，不编译）', doc: MIXED_DOC, query: '(', opts: { regex: true, limit: 0 } },
   { name: 'regex + caseSensitive: 锚点', doc: OPTIONS_DOC, query: '^hotel$', opts: { regex: true, caseSensitive: true } },
+  // ---- 数字值按显示文本匹配（ADR-0014 修订 2026-11-12） ----
+  { name: 'number: 大整数十进制串', doc: { big: 297532588187238660n }, query: '297532588187238660' },
+  { name: 'number: 普通数字', doc: { n: 100, s: 'x100x' }, query: '100' },
+  { name: 'number: 指数显示文本', doc: { n: 1e21 }, query: '1e+21' },
+  { name: 'number: 小数显示文本', doc: { n: 1.5 }, query: '1.5' },
+  { name: 'number: -0 显示为 0', doc: { n: -0 }, query: '0' },
+  { name: 'number + regex', doc: { big: 297532588187238660n, n: 42 }, query: '^\\d+$', opts: { regex: true } },
+  { name: 'number + keysOnly 不命中值', doc: { n: 100 }, query: '100', opts: { keysOnly: true } },
+
   // ---- keysOnly ----
   { name: 'keysOnly: 只命中键名', doc: MIXED_DOC, query: 'alice', opts: { keysOnly: true } },
   { name: 'keysOnly + regex', doc: OPTIONS_DOC, query: '^hotel$', opts: { keysOnly: true, regex: true } },

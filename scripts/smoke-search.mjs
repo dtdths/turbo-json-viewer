@@ -723,6 +723,29 @@ async function pageStalePhase() {
   return out;
 }
 
+/** 数字值搜索（ADR-0014 修订 2026-11-12；用户反馈大整数搜不到）：按显示文本可搜，布尔/null 不参与。 */
+async function pageNumberSearchPhase() {
+  const out = {};
+  window.__smoke.reset();
+  await window.__tjv.loadText(
+    '{"product_flag_extend":297532588187238660,"note":"297532588187238660","n":100,"ok":true,"nil":null}',
+    'number-search.json',
+  );
+  await window.__smoke.settle(200);
+  out.big = await window.__tjv.search('297532588187238660');
+  await window.__smoke.settle(120);
+  out.bigDiag = window.__tjv.searchPanel();
+  out.num = await window.__tjv.search('100');
+  await window.__smoke.settle(120);
+  out.numDiag = window.__tjv.searchPanel();
+  out.bool = await window.__tjv.search('true');
+  await window.__smoke.settle(120);
+  out.nil = await window.__tjv.search('null');
+  await window.__smoke.settle(120);
+  out.longTasks = window.__smoke.take();
+  return out;
+}
+
 /* ------------------------------------------------------------- main script */
 
 const report = {
@@ -862,6 +885,32 @@ try {
   if (!ready) {
     warn('setup:not-ready', {
       hint: 'dist 可能未构建/未冻结：先跑 `node build.mjs`；HTTP 页面需暴露 window.__tjv（非扩展）',
+    });
+  }
+
+  /* ---- 0) 数字值搜索（ADR-0014 修订 2026-11-12） ---- */
+  const numberPhase = ready ? await runPhase('number-search', pageNumberSearchPhase) : null;
+  if (numberPhase) {
+    report.numberSearch = numberPhase;
+    check(
+      'number:bigint-searchable',
+      numberPhase.big?.ok === true &&
+        numberPhase.big?.total === 2 &&
+        numberPhase.bigDiag?.counts?.value === 2,
+      { total: numberPhase.big?.total, counts: numberPhase.bigDiag?.counts },
+    );
+    check(
+      'number:plain-number-searchable',
+      numberPhase.num?.total === 1 && numberPhase.numDiag?.counts?.value === 1,
+      { total: numberPhase.num?.total, counts: numberPhase.numDiag?.counts },
+    );
+    check(
+      'number:bool-null-not-searched',
+      numberPhase.bool?.total === 0 && numberPhase.nil?.total === 0,
+      { bool: numberPhase.bool?.total, nil: numberPhase.nil?.total },
+    );
+    check('number:no-long-task', (numberPhase.longTasks || []).every((t) => t < 50), {
+      longTasks: numberPhase.longTasks,
     });
   }
 

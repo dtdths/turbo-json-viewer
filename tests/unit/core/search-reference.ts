@@ -8,7 +8,8 @@
  *
  * 已对齐的边界口径（与 core 逐条一致，见 parity 测试）：
  *   - 空 query / 非法 limit（`!Number.isFinite || <= 0`）先于正则编译 → 直接空结果、不抛错；
- *   - 键名命中优先于字符串值命中；数组下标（`isIndex`）与根（`isRoot`）不参与键名匹配；
+ *   - 键名命中优先于值命中；数组下标（`isIndex`）与根（`isRoot`）不参与键名匹配；
+ *   - 值命中 = 字符串内容 / 数字的**显示文本**（number → JSON.stringify，BigInt → 十进制串）；布尔/null 不参与；
  *   - `truncated = 命中总数 >= limit`（**恰好等于 limit 时也为 true**，core 现状口径）；
  *   - `total` 是截断后的命中数（`hits.length`），不是全量命中数。
  *
@@ -67,6 +68,8 @@ function kindOf(node: unknown): JsonKind {
       return 'string';
     case 'number':
       return 'number';
+    case 'bigint':
+      return 'number'; // 无损数字（ADR-0020）：BigInt 归 number 类
     case 'boolean':
       return 'boolean';
     case 'object':
@@ -121,6 +124,15 @@ function compileMatcher(query: string, opts: ReferenceOpts): (text: string) => b
     caseSensitive ? text.includes(needle) : text.toLowerCase().includes(needle);
 }
 
+/** 值搜索文本（与 core 同口径、独立实现）：字符串原文 / 数字显示文本；布尔/null → null。 */
+function referenceValueText(entry: ReferenceEntry): string | null {
+  if (entry.kind === 'string') return entry.node as string;
+  if (entry.kind === 'number') {
+    return typeof entry.node === 'bigint' ? (entry.node as bigint).toString() : JSON.stringify(entry.node) ?? String(entry.node);
+  }
+  return null;
+}
+
 export function referenceSearch(value: unknown, query: string, opts: ReferenceOpts = {}): ReferenceResult {
   const limit = opts.limit ?? SEARCH_LIMIT;
   const keysOnly = opts.keysOnly ?? false;
@@ -135,7 +147,10 @@ export function referenceSearch(value: unknown, query: string, opts: ReferenceOp
     const keyIsName = !entry.isIndex && !entry.isRoot;
     let field: ReferenceHit['field'] | null = null;
     if (keyIsName && matches(entry.key)) field = 'key';
-    else if (!keysOnly && entry.kind === 'string' && matches(entry.node as string)) field = 'value';
+    else if (!keysOnly) {
+      const valueText = referenceValueText(entry);
+      if (valueText !== null && matches(valueText)) field = 'value';
+    }
     if (field !== null) all.push({ path: entry.path, key: entry.key, kind: entry.kind, field });
   }
 
