@@ -1,6 +1,6 @@
 # ADR-0009：多文档标签 —— 一个 Worker、每标签一个 doc 根、`closeRoot` 显式释放
 
-- 状态：Accepted（设计定稿 2026-10-30，**未实现**）
+- 状态：**Implemented**（设计定稿 2026-10-30；实现 2026-11-11，见文末「实现结果」）
 - 日期：2026-10-30
 - 依据：`docs/design/direction.md`（C 工作台；§11 标签条例外修订）、ADR-0001（Worker 常驻 / 行窗口 / 多视图根）、ADR-0002（行模型 / 身份）、`CONTEXT.md`（工作区 / 文档标签）
 - 相关票：#18（多文档工作区与标签页，本 ADR 的票）、#11（导入层 / 最近文档）、#1（架构地图）、#9（查看器操作语义）
@@ -81,10 +81,47 @@
 | 标签条常驻（含单文档） | 单文档是主场景，常驻条违反 `direction.md`「数据为主角、界面后退」 |
 | 标签条放左侧活动栏 | 与「活动栏 = 模式切换、工具栏 = 文档动作」的归属规则冲突（`direction.md` §2） |
 
-## 待办（实现期）
+## 实现结果（2026-11-11）
 
-1. 协议：`closeRoot`、`load` 多根回包；`protocol/versions.ts` 常量（标签上限 8、标签条高 32）。
-2. 核心：`RootStore.close`（或补 `release`）、`DocService.load` 不覆盖、`closeRoot` 处理在途窗口/搜索。
-3. 视图模型：`WorkspaceState`/`TabState`；`RowWindowSource`/`SearchState` 实例化位置从模块级挪进 `TabState`。
-4. 视图：`TabStrip`（32px、≥2 显示、`role=tablist`/`aria-selected`）；工具栏「导入」在有活动标签时仍替换，`＋` 新标签。
-5. 验收：8 标签切换窗口延迟（切回可能 stale → 1 帧重取）、`closeRoot` 后堆回落、标签条对树视口高度的影响；扩展 smoke 增补「开 2 标签 / 切标签保留各自展开态 / 关标签释放根」用例。
+原「待办」全部落地：协议 `closeRoot` + `load` 回带 `doc:N` + `MAX_DOC_TABS=8`/`TAB_STRIP_HEIGHT=32`；
+core `RootStore.close` + `DocService.load` 不覆盖 + `closeRoot` 释放旁路状态；viewmodel `WorkspaceState`/`TabState`
+（runtime 工厂注入）；view `TabStrip`（32px、≥2 显示、`role=tablist` + roving tabindex）；app 工作区接线与 `smoke-workspace`。
+
+### 实现期拍板（设计没写死、由实现决定的部分）
+
+1. **doc 根 id** = `doc:${++nextDocId}`（单调不复用）；`DOC_ROOT_ID` **直接删除**（不做兼容别名——全仓只有 core 与一处测试引用）。
+2. **`closeRoot` 语义收口**：未知根回 `{closed:false}` 不抛；已知根先删 `parentRootId === 它` 的 expression 子根，
+   再释放编辑历史 / 节点数缓存 / 搜索抢占 seq，最后 `RootStore.close`。在途窗口/搜索**不主动取消**，由页面按 rootId 丢弃。
+3. **搜索抢占 seq 改成按根**（`Map<RootId, number>`）：每个标签的 `SearchState.seq` 都从 1 起，共用全局 number 会让
+   B 标签的 seq=1 被 A 标签的 seq=5 当成过期（多标签致命 bug）。这是设计阶段没看到的实现期必改点。
+4. **两套坐标**：标签 id `tab:N`（页面侧、单调不复用）≠ doc 根 `doc:N`（Worker 侧）。UI 动作用标签 id，回包路由/`closeRoot` 用 rootId。
+5. **每标签独立状态的完整清单**（§3 只列了 rootId/runtime/selected/meta，实现时补全）：`DocSession` 版本字段（切走时存档）、
+   行窗口 adapter、搜索状态机、**编辑状态机**（「已修改 N 处」/undo 可用性）、原文窗口 adapter + 原文索引元信息、
+   保真报告、表达式结果视图（切走先回文档树、结果保留，重进左面板「表达式」时恢复）、树滚动位置。
+6. **替换当前标签 = 先成功 `load` 新根，再对旧根发 `closeRoot`**：新文档解析失败时原标签不会被掏空。
+7. **单文档下的「新标签」入口**（§4 写「⌘O 新标签模式」但没写具体形态）：标签条在 1 个文档时按 §1 隐藏，
+   所以入口层（导入 / 文件 chip / ⌘O）里加**「在新标签中打开」切换链接**，并加 `⌘⇧O` 直达；拖到标签条空白
+   因此只在 ≥2 标签时可达（如实记录）。「导入 / 文件 chip / ⌘O」的默认语义仍是**替换当前标签**（覆盖警示照旧）。
+8. **关标签丢弃未导出修改**：弹浏览器 `confirm`（用户 2026-11-11 拍板）；标签条**不加**「已修改」小点（同拍板，守 §1「文件名 + ×」口径），
+   活动标签的「已修改 N 处」徽标照旧。
+9. **内存提示**：第 2+ 个标签、且单份 ≥50 MB 或工作区合计 ≥50 MB 时给一次性 toast（5s），不阻断导入。
+
+### 验收结果（本机实测 2026-11-11）
+
+- `npm run check`：tsc + **893 单测（34 文件）全绿** + build（#18 新增 53 条：workspace-state 30 / root-store 9 / doc-service 7 / 契约 4 / dev-hook 3，840 → 893）。
+- **15 套真机冒烟串行全绿**（新增第 15 套 `smoke-workspace` **42/42**；其余 14 套计数不变：search 97、extension-search 56、outline 53、expression 45、copy 38、raw 26、settings 25、fidelity 24、expand 21、export 21、edit 14、repair 14 + `smoke`/`smoke:ext` 打 OK）。
+  `smoke-workspace` 覆盖：单文档零视觉变化（标签条 hidden、布局高度 0、树视口不变）/ 入口层「替换 ⇄ 新标签」切换与 `＋` /
+  32px 与 `role=tablist`/`aria-selected` / 每标签独立展开态·滚动·选中·搜索（含面板输入框回填）/ **表达式结果视图不跨标签串味且切回可恢复** / 替换标签后另一标签不受影响 /
+  关活动标签相邻接管、关最后回空态 / 软上限 8（`＋` 禁用 + title）/ 第 2 份大文档内存提示（小文档不提示）/ 深亮两套截图。
+- 体积（minify gz）：`page.js` **41.0 → 44.6KB**（预算 45，**未超、未修订预算**）、`worker.js` **58.7** 不变、
+  `page.css` 7.8 → **8.0**、懒加载 chunk 合计 145.4 → **145.6KB**（预算 146）。标签条与工作区代码在首屏 `page.js`，未进懒加载。
+- 截图：`.spike/smoke/workspace-{two-tabs,light,empty}.png`。
+
+### 已知差距 / 本轮不做
+
+- **拖放按落点分流**（标签条空白 vs 文档视图）只有代码与手测，**没有自动化覆盖**（headless 里造 DataTransfer 不可靠）。
+- **watchdog 重载后工作区丢失**（`restartAfterWatchdog` 走页面重载；会话恢复本就不在 v1，ADR §4 明确不做）。
+- **标签顺序拖拽排序**未做（设计没要求）；满 8 提示用按钮 `title`，无额外弹窗。
+- `loadId` 抢占仍是**全局**的：页面已串行化导入（入口层 busy 锁），并发导入会互相 CANCELLED（记录在案）。
+- **closeRoot 后堆回落**只有单测层面的「真丢引用」，没有 `performance.memory` 级实测（Worker 堆不在主线程 API 可见范围）。
+- 表达式结果视图切标签不自动重进（切走回文档树、结果按标签保留；再点左面板「表达式」即恢复）。

@@ -216,7 +216,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 每步都以 `prototype/p1` 的 bench 脚本作为回归入口，不另造测量口径。
 
-## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件 + 保真提示 + 技术债 T2 + 子树批量展开/收起 + 窗口状态机收口 + 一条根变更路径 + app 回包落地 + 测试钩子移出 + 展开态 path 口径；2026-11-10 搜索语义单一 oracle + 菜单交互收口（ADR-0015）；2026-11-10 视觉口径与组件统一（#21 / ADR-0016）；2026-11-10 响应式断点 ≤1320（#25 / ADR-0017）；2026-11-10 搜索结果双击复制（#26 / ADR-0010 + ADR-0011 修订）；2026-11-10 表达式视图（#27 / ADR-0018））
+## 11. 实现进度（2026-10-29 slice 1–4；2026-11-02 展开/收起 + 复制；2026-11-03 行尾浮条 + 截断修复 + 设置 + 导出方式 + 原始文本视图 + 大纲面板；2026-11-09 搜索选项 Aa/正则 + 导入体积提示 + 树/展开小件 + 保真提示 + 技术债 T2 + 子树批量展开/收起 + 窗口状态机收口 + 一条根变更路径 + app 回包落地 + 测试钩子移出 + 展开态 path 口径；2026-11-10 搜索语义单一 oracle + 菜单交互收口（ADR-0015）；2026-11-10 视觉口径与组件统一（#21 / ADR-0016）；2026-11-10 响应式断点 ≤1320（#25 / ADR-0017）；2026-11-10 搜索结果双击复制（#26 / ADR-0010 + ADR-0011 修订）；2026-11-10 表达式视图（#27 / ADR-0018）；2026-11-11 多文档工作区标签（#18 / ADR-0009））
 
 | 步 | 状态 | 证据 / 备注 |
 |---|---|---|
@@ -246,6 +246,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.16 响应式断点 ≤1320（#25 / ADR-0017，2026-11-10） | ✅ | `src/view/styles/tokens.css` 末尾加 `@media (max-width: 1320px) { :root { --left-panel-w: 300px; --rail-w: 284px; --tree-max: 980px } }`（**零 JS**：ADR-0016 已把三值 token 化并被 `.side--left`/`.rail`/`.tree` 引用；空态居中 `calc(var(--left-panel-w)/2)` 自动跟随，实测 1200px 卡片中心 784 → 774 = 可见区中心）；`docs/design/tokens.css` 同步；**收益实测很小**（如实记录）：面板关时树 +9（1319）/ +16（1200），面板+右栏都在时 **+36**；`--tree-max` 980 只在窗口 **1312–1320** 真正封顶（惰性，照规格保留）；**单测 722 → 724**（+2 `visual-contract` 静态断点契约：默认档 320/300/1280 + 断点档 300/284/980）；冒烟 `smoke-settings` **21 → 23**（新 phase：viewport 1200 断言 300/284/树 568，回 1440 断言 320/300），其余 12 套计数不变；1440 口径的 `sideWidth=320` 断言不变 | 用户可见：≤1320 窗口里树宽 +16~36px（**观感变化细微**，如实记录）；**无行为变化**；窄屏自动收起右栏**未做**（属行为变化，另议）；`page.css` 7.2 → **7.3KB gz**，`page.js` / `worker.js` 不变 |
 | 6.17 搜索结果双击复制（#26 / ADR-0010 + ADR-0011 修订，2026-11-10） | ✅ | 搜索结果行**双击 = 复制该命中节点**（单击仍是跳转，语义不变）；新增**第 10 项设置** `searchCopyFormat`（标签「搜索结果双击复制」，4 格式 segmented、**默认路径**，与行尾浮条的 `defaultCopyFormat` 相互独立）；命中 `field=key/value` **不区分**，统一按 `hit.path` 复制「该节点」；`click` 处理里 `event.detail > 1` 吞掉双击第二击（依据真实 CDP 鼠标实测：双击幂等、末帧像素差 0.03%、0 长任务，但会多一次 `expandTo` + 一次 `window` 请求且「已渲染」行池 61 → 50；**不用时间窗去重**——人双击 150–300ms 会漏）；失败路径：`BAD_COMMAND`（容器无原始值 / 根无键名）→ 不复制 + toast「该节点不支持当前复制格式；可在设置里更换」，`TOO_LARGE` 沿用「引导用导出」；**本轮不做**发现性提示 / 右键菜单 / 键盘入口（用户 2026-11-10 拍板）；**单测 724 → 725**（+1 `settings-state` 默认/合法/非法回落）；冒烟 `smoke-search` **94 → 97**（默认路径剪贴板逐字读回 / 子树 JSON / 不适用格式 toast）、`smoke-settings` **23 → 24**（第 10 项设置三态 + 重启恢复同步 10 项），其余 11 套计数不变 | 用户可见：搜索结果行双击即复制（默认规范路径、toast 反馈），**单击/跳转不变**；设置面板 9 → 10 行；已知差距：无键盘复制入口（a11y）、无发现性提示（Q4=C）、「双击第二击被吞」只有实测证据未进冒烟；`page.js` 33.7 → **33.9KB gz**（+0.2） |
 | 6.18 表达式视图（#27 / ADR-0018，2026-11-10） | ✅ | `src/core/expression/{whitelist,parse,validate,walk,engine,complete,locate}.ts`（**acorn 只进 worker**：单表达式子集 + default-deny 白名单 + 手写 walker；预算三刹车 时间/步数`max(base,k×N)`/结果上限；10 错误码 + 行列定位；缺失字段分级 + 拼写纠错；origins → 结果行回原路径）+ `doc-service` 的 `eval/complete/exprLocate`（结果根 `expr:N`、LRU 3、换文档丢弃）+ `protocol` 三命令/类型/`EXPR_BUDGETS` + 第 11 项设置 `advBudget`（宽松/标准/严格）+ `view/panels/expression-{panel,editor,bar}.ts`（CM6 懒加载、自写轻量上色、autocomplete source、Enter/Shift-Enter、示例/历史/严格模式/行内错误）+ `main.ts` 接线（模式切换、结果视图 = 树区换根、点结果行跳回、导出/复制结果、stale 条 + 重新执行、`3×maxTime` 看门狗）+ `dev-hook` 11 个表达式钩子；**单测 725 → 840**（+115：引擎/补全/locate 114 + 设置 1）；**冒烟 14 套全绿**（新增 `smoke-expression` **45/45**；`smoke-settings` 24 → 25）；**体积**：`page.js` 33.9 → **41.0KB gz**（预算 45）、`worker.js` 15.3 → **58.7KB**（acorn+walker）、`page.css` 7.3 → **7.8**、懒加载 132.1 → **145.4KB**（+13.2 来自 `@codemirror/autocomplete`；**预算 140 → 146 经用户 2026-11-10 拍板 A**，显式记录） | 用户可见：活动栏第 4 模式「表达式」；写 JS 子集过滤/投影 → 结果作为可展开树查看、点行跳回原文档、导出/复制结果 JSON；预算超限给确定错误码、结果超限截断带标记、文档改动后 stale 提示；**只读**（结果不可编辑、不改原文）；已知差距：看门狗触发后需重新导入（页面重载）、补全只到根级字段（类型感知 → #28）、截断只及最终结果根 |
+| 6.19 多文档工作区标签（#18 / ADR-0009，2026-11-11） | ✅ | `protocol`：`closeRoot { rootId }`（**幂等**，未知根回 `closed:false`）+ `load` 回带 `doc:N` + `MAX_DOC_TABS=8`/`TAB_STRIP_HEIGHT=32`；`core`：`RootStore.close`、`DocService.load` **不覆盖**（doc 根 id 单调不复用）、`closeRoot` 连带丢弃 `parentRootId` 指向它的 expr 根并释放编辑历史/节点数缓存/搜索 seq、**搜索抢占 seq 改按根**（`Map<rootId,seq>`，多标签致命点）；`viewmodel`：新增 `workspace-state.ts`（`WorkspaceState`/`TabState`，runtime 工厂注入「行窗口/原文窗口/搜索/编辑」每标签一份，软上限 8 不淘汰、关活动标签右邻→左邻）；`view`：新增 `tab-strip.{ts,css}` + `#tabStrip`（32px = `TAB_STRIP_HEIGHT` 写 inline、**≥2 文档才显示**（单文档 hidden 零高度零视觉变化）、`role=tablist`/`aria-selected`、roving tabindex/←→/Home/End、重绘归还焦点、零新增颜色 token）；`app`：切标签 = 换 adapter + 重挂订阅 + 恢复会话/选中/滚动/搜索（含输入框）/大纲/提示条，**回包按 rootId 丢弃**（`isActiveDocRoot` 前置门）、入口层「替换 ⇄ 在新标签中打开」+ `⌘⇧O` + `＋`、拖到标签条空白 = 新标签、关标签先 `closeRoot`（有未导出修改先 confirm）、关最后回空态、第 2+ 份大文档内存提示、dev hook **69 → 75**；**单测 840 → 893**（+53：workspace-state 30 / root-store 9 / doc-service 7 / 契约 4 / dev-hook 3）；**冒烟 15 套全绿**（新增 `smoke-workspace` **42/42**；其余 14 套计数不变）；体积 `page.js` 41.0 → **44.6KB gz**（预算 45，**未超未修订**）、`page.css` 7.8 → **8.0**、懒加载 145.4 → **145.6**（预算 146）、`worker.js` 58.7 不变 | 用户可见：≥2 个文档时工具栏下方出现 32px 标签条（文件名 + × + ＋），切标签保留各自的展开/选中/滚动/搜索态；导入仍替换当前标签，`⌘⇧O`/入口层可开新标签；关标签释放 Worker 根、关最后一个回空态；满 8 个禁用 ＋；已知差距：拖放落点分流无自动化覆盖、标签不能拖拽排序、watchdog 重载后工作区丢失（与单文档时代一致） |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
 **产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **41.0KB gz**（预算 45；slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取）、T2 技术债清理 +0.4（`view/highlight` 共用写入器 + `focusTree`/拖放区接线）、slice 6.7 子树菜单 +0.3、窗口状态机收口 +0.4、app 回包落地 +0.4、测试钩子移出 +1.1、搜索语义单一 oracle +0.0（`tests/`/`scripts/` 不进 bundle）、菜单交互收口 +0.7（抽 `view/menu` + `shared/menu`，两段菜单净减）、6.17 搜索结果双击复制 +0.2、**6.18 表达式视图 +7.1**）、`worker.js` **58.7KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数）/ T2 `core/measure` 下界预扫 +0.3 / slice 6.7 `toggleSubtree` +0.3 / 展开态 path 口径 +0.1、**6.18 表达式引擎 acorn+walker +43.4**）、`page.css` **7.8KB gz**（T2 +0.0、6.7 +0.0、6.15 视觉口径 -0.1、ADR-0017 响应式断点 +0.1、**6.18 表达式面板/结果条/上色器 +0.5**）；懒加载 chunk 合计 **145.4KB gz ≤146**（编辑器相关，仅首次打开 CM6/表达式编辑器时加载；`page.js` 内不含 CM6；6.18 +13.3 中 **13.2 来自 `@codemirror/autocomplete`**——预算 140 → 146 经用户 2026-11-10 拍板 A，见 ADR-0018「预算修订」）；构建 ~68ms。
@@ -430,21 +431,25 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 - - ~~**响应式断点未实现**（2026-11-10 / #21 明确排除，属布局行为）~~ → **已实现**（2026-11-10 / #25 + ADR-0017：`direction.md` §3 的「≤1320px 左面板 300 / 右栏 284 / 树 980」落成纯 CSS token 覆盖；`smoke-settings` 新增窄窗口断言，1440 口径 `sideWidth=320` 不变。**注意**：① 收益实测只有树 +16~36px；② `--tree-max` 980 仅在窗口 1312–1320 真正封顶（惰性）；③ **窄屏自动收起右栏仍未做**，属行为变化，与 `UiState.railCollapsed` 持久化语义有关，另议）。**最近文档**仍归 #11（空态只做构图，不列历史）。**`.ndjson` 接受但不解析**：`#fileInput` 的 `accept` 含 `.ndjson`，解析器是严格 JSON（必 `PARSE` 失败）——只记差距，未在视觉 slice 改代码。
 - **严格 JSON only**（边界，非 bug）：完整 JSON 只是多了尾逗号（`{"a":{"b":1,}}`）或用了单引号/裸键/注释时仍报 `PARSE`——截断修复只处理 EOF 形态、不擅自删原文符号；是否支持 JSON5 子集/尾逗号容错见 **#20**（待拍板）。
 
-## 12. 未实现设计（多文档工作区标签，#18）
+## 12. 多文档工作区标签（#18，已实现 2026-11-11）
 
-> 设计已定、**尚未实现**。两项后续需求中「全部展开 / 收起 + 自适应展开」**已于 2026-11-02 实现**（见 §11 slice 4.5）；
-> 本节只剩「多文档标签」。决策记录：#18；术语：`CONTEXT.md`（工作区 / 文档标签）；决策：ADR-0009。
+> 设计定稿 2026-10-30（ADR-0009），实现 2026-11-11；验收数字见 §11 的 **6.19** 行与 ADR-0009「实现结果」。
+> 术语：`CONTEXT.md`（工作区 / 文档标签 / 标签条）。ADR-0009 §1 的标签条视觉例外（32px、≥2 才显示）已按 `direction.md` §11 落地。
 
-| 层 | 计划改动 | 现状 |
-|---|---|---|
-| `protocol` | 新增 `closeRoot { rootId }`；`load` 回带 `doc:N`；`versions.ts` 加标签上限（8）与标签条高（32）常量 | 18 条命令（15 + `expandAll`/`collapseAll`/`copyNode`），无关闭根；`load` 写死 `DOC_ROOT_ID` |
-| `core` | `RootStore` doc 根释放（`release`/`close` 收口）；`DocService.load` 不覆盖已有根 | `load` 写死 `DOC_ROOT_ID`；doc 根无释放路径 |
-| `viewmodel` | 新增 `WorkspaceState` / `TabState`；`RowWindowSource` / `SearchState` 按标签实例化 | 各一份模块级实例（`main.ts`） |
-| `view` | 新增 `TabStrip`（32px、≥2 文档才显示、`role=tablist`） | 无 |
-| `app` | 导入层区分「替换当前标签 / 新标签」；拖放按落点分流；关闭标签 → `closeRoot` | 导入层已实现（在 `main.ts`） |
+| 层 | 落地 |
+|---|---|
+| `protocol` | 新增 `closeRoot { rootId }`（**幂等**，回 `{rootId, closed}`）；`load` 回包 `rootId` = `doc:N`；`versions.ts` 加 `MAX_DOC_TABS=8` / `TAB_STRIP_HEIGHT=32` |
+| `core` | `RootStore.close`；`DocService.load` **不覆盖**（每次 load 一个新 doc 根，id 单调不复用）；`closeRoot` 连带丢弃 `parentRootId` 指向它的 expression 根，并释放该根的编辑历史 / 节点数缓存 / 搜索抢占 seq；**搜索抢占 seq 改按根**（`Map<rootId, seq>`） |
+| `viewmodel` | 新增 `src/viewmodel/workspace-state.ts`：`WorkspaceState` / `TabState`，runtime 工厂注入（`rowSource` / `rawSource` / `searchState` / `editState` 每标签一份）；标签 id `tab:N` 单调不复用；软上限 8、满则 `add` 返回 null 不淘汰；关活动标签右邻→左邻→空态；纯 TS 零 DOM、30 单测 |
+| `view` | 新增 `src/view/tab-strip.{ts,css}` + `page.html` 的 `#tabStrip` 容器：32px（高度单一真相 = `TAB_STRIP_HEIGHT` 写 inline）、**≥2 文档才显示**（单文档 hidden 零高度零视觉变化）、`role=tablist` + `aria-selected`、roving tabindex、←/→/Home/End、重绘后归还焦点；CSS 全用既有 token、零新增颜色/阴影 |
+| `app` | 工作区接线：切标签 = 换 adapter 引用 + 重挂三份订阅 + 恢复会话/选中/滚动/搜索（含面板输入框）/大纲/提示条；**所有回包按 `rootId` 路由丢弃**（`isActiveDocRoot`）；入口层「替换 ⇄ 在新标签中打开」+ `⌘⇧O` 直达 + 标签条 `＋`；拖到标签条空白 = 新标签、拖到文档视图 = 替换（暂存确认）；关标签先 `closeRoot`（有未导出修改先 `confirm`）、关最后回空态；第 2+ 份大文档内存提示 toast；dev hook **69 → 75** 成员、新增第 15 套冒烟 `smoke-workspace` **42/42** |
 
-**实现期重点风险**：同一 `doc` rootId + 版本重置为 1 时，迟到回包只靠 `seq`/`loadSeq` 兜底（单文档的模块级守卫）——多标签必须改成「rootId 不复用 + 按 rootId 路由/丢弃回包」；
-8 × 50MB 标签 ≈ 584MB Worker 堆（软上限 8 与内存提示的来源）；切回旧标签的窗口可能 stale → 1 帧重取。
+**关键不变式（改这块必看）**：doc 根 id **单调不复用** + 页面按 `rootId` 丢弃迟到回包 + **每标签独立 seq**——三者合起来取代了单文档时代「靠 rootId/版本号巧合」的 stale 判定；
+`isActiveDocRoot(reply.rootId)` 是所有回包落地的前置门。切标签**不关根、不重解析**（只换订阅目标）；关标签**必须**发 `closeRoot`，否则 73MB 级 Worker 堆不还。
+
+**看门狗 / 重载**：watchdog 仍走页面重载（惰性重建 core，见 ADR-0018 §6），重载后工作区丢失——与单文档时代一致，会话恢复不在 v1（ADR-0009 §4）。
+
+**已知差距**：拖放落点分流无自动化覆盖；标签不能拖拽排序；满 8 只有按钮 `title` 提示；`loadId` 抢占仍是全局的（页面串行化导入）；`closeRoot` 后堆回落只有单测层面证据。
 
 **视觉调整（#21，已收口 2026-11-10）**：用户要求「后续功能实现后再统一做视觉调整」。功能 slice 期间不掺视觉改动；
 功能冻结后按 #21 的清单集中成一个视觉 slice 做（设置面板 / 导出分体按钮 / 修复条 / toast tone / 行尾浮条 / 活动栏图标 /
