@@ -41,7 +41,12 @@ import type {
 } from '../protocol/messages';
 import { ROOT_PATH } from '../shared/path';
 import type {
+  CompleteReply,
+  EvalReply,
+  ExprCompletion,
+  ExprLocateReply,
   FidelityReport,
+  JsonKind,
   OutlineReply,
   Path,
   RawLocateReply,
@@ -51,18 +56,21 @@ import type {
   RootId,
   RowWindow,
 } from '../protocol/types';
-import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES } from '../protocol/versions';
+import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
 import { EditHistory } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { scanFidelity } from './fidelity';
 import { jsonSizeLowerBoundChars } from './measure';
-import { jsonKind, RowModel, type ReplaceResult } from './row-model';
+import { childCountOf, isContainer, jsonKind, RowModel, type ReplaceResult } from './row-model';
 import { outlinePage } from './outline';
-import { DOC_ROOT_ID, RootStore, type Root, type RootSource } from './root-store';
+import { DOC_ROOT_ID, RootStore, type ExprRootMeta, type Root, type RootSource } from './root-store';
 import { buildRawIndex, type RawTextIndex } from './raw-text';
 import { searchDocument } from './search';
+import { evaluateExpression, countDocumentNodes } from './expression/engine';
+import { getCompletions } from './expression/complete';
+import { locateOriginalPath } from './expression/locate';
 
 type Cmd<K extends Command['t']> = Extract<Command, { t: K }>;
 
@@ -104,6 +112,13 @@ export class DocService {
    * 用 WeakMap 而不是 Root 字段：文档替换 = 旧根被丢弃 → 缓存随根一起可回收，无需清理代码。
    */
   private readonly fidelityCache = new WeakMap<Root, FidelityReport>();
+  /** 表达式根 id 序号（`expr:1`、`expr:2`…；LRU 由 RootStore 收口） */
+  private nextExprId = 0;
+  /**
+   * 文档节点数缓存（表达式步数预算用，ADR-0018 §3）：键 = doc 根 id，
+   * 值 = { docRevision, count }——编辑推进 docRevision 后自动失效重算；首求值才计算（不拖慢导入）。
+   */
+  private readonly nodeCountCache = new Map<RootId, { docRevision: number; count: number }>();
   private latestLoadId = -1;
   private latestSearchSeq = -1;
   private closed = false;
@@ -185,6 +200,12 @@ export class DocService {
         return this.rawSource(cmd);
       case 'fidelity':
         return this.fidelity(cmd);
+      case 'eval':
+        return this.evalExpression(cmd);
+      case 'complete':
+        return this.complete(cmd);
+      case 'exprLocate':
+        return this.exprLocate(cmd);
       case 'getTrail':
       case 'profile':
         throw new CoreError({ code: 'BAD_COMMAND', message: NOT_IMPLEMENTED });
@@ -245,9 +266,12 @@ export class DocService {
         lastUsedAt: now,
       };
       this.roots.put(root);
+      // 新文档：上一份文档的表达式结果根全部作废（它们引用旧值图；保留会指向已死数据）
+      this.dropExpressionRoots();
       // 新文档：丢弃上一份文档的编辑历史（rootId 复用同一 DOC_ROOT_ID）——否则 ⌘Z / reset 会
       // 把旧文档的条目应用到新文档（值图被静默改写）；历史是「打开时状态」的撤销记录，换根即失效。
       this.histories.delete(root.rootId);
+      this.nodeCountCache.delete(root.rootId);
       return {
         rootId: root.rootId,
         docRevision: root.docRevision,
@@ -699,6 +723,134 @@ export class DocService {
     }
     this.fidelityCache.set(root, report);
     return { rootId: root.rootId, docRevision: root.docRevision, report };
+  }
+
+  /* ------------------------- 表达式视图（#12 / #27 / ADR-0018） ------------------------- */
+
+  /** eval / complete 只接受**文档根**（表达式根不能再求值；`$` 恒指整份文档）。 */
+  private requireDocRoot(rootId: RootId): Root {
+    const root = this.roots.require(rootId);
+    if (root.kind !== 'doc' && root.kind !== 'repaired') {
+      throw new CoreError({
+        code: 'BAD_COMMAND',
+        message: `expression commands require a document root, got ${root.rootId} (${root.kind})`,
+      });
+    }
+    return root;
+  }
+
+  /**
+   * 文档节点数（步数预算的基数）：**首次求值才惰性计算**，按 (rootId, docRevision) 缓存；
+   * 编辑推进 docRevision 后自动失效。50MB ≈3M 节点，估 30–60ms（ADR-0018 §3 已知差距）。
+   */
+  private docNodeCount(root: Root): number {
+    const cached = this.nodeCountCache.get(root.rootId);
+    if (cached !== undefined && cached.docRevision === root.docRevision) return cached.count;
+    const count = countDocumentNodes(root.rowModel.value);
+    this.nodeCountCache.set(root.rootId, { docRevision: root.docRevision, count });
+    return count;
+  }
+
+  /**
+   * 求值（ADR-0018 §3/§4）：doc 根 → 预算（档位 × 节点数）→ 引擎（parse/validate/walk）→
+   * 成功才创建 `expr:N` 结果根（元素引用原节点，不复制；LRU 3 由 RootStore 收口）。
+   * 引擎级失败是**正常回包**（`{ok:false,error}`），不抛 CoreError。
+   */
+  private evalExpression(cmd: Cmd<'eval'>): EvalReply {
+    const docRoot = this.requireDocRoot(cmd.rootId);
+    const budget = exprBudget(cmd.budget, this.docNodeCount(docRoot));
+    const outcome = evaluateExpression(cmd.text, docRoot.rowModel.value, {
+      strict: cmd.strict,
+      budget,
+    });
+    if (!outcome.ok) return { ok: false, error: outcome.error };
+
+    const rootId: RootId = `expr:${++this.nextExprId}`;
+    const rowModel = new RowModel(outcome.value);
+    const now = Date.now();
+    const expr: ExprRootMeta = {
+      text: cmd.text,
+      strict: cmd.strict,
+      budget: cmd.budget,
+      truncated: outcome.truncated,
+      skipped: outcome.skipped,
+      ms: outcome.ms,
+      steps: outcome.steps,
+      seq: cmd.seq,
+      origins: outcome.origins,
+    };
+    const root: Root = {
+      rootId,
+      kind: 'expression',
+      value: outcome.value,
+      rowModel,
+      docRevision: docRoot.docRevision,
+      rowVersion: 1,
+      parentRootId: docRoot.rootId,
+      createdAt: now,
+      lastUsedAt: now,
+      expr,
+    };
+    const evicted = this.roots.put(root);
+    // 被 LRU 淘汰的根：通知页面（页面若还看着它会话视图会自动回文档树；见 ADR-0018 §4）
+    for (const victim of evicted) {
+      this.emit({ t: 'stale', rootId: victim.rootId, why: 'expression root evicted (LRU 3)' });
+    }
+    return {
+      ok: true,
+      rootId,
+      docRevision: docRoot.docRevision,
+      rowVersion: root.rowVersion,
+      totalRows: rowModel.totalRows,
+      count: isContainer(outcome.value) ? childCountOf(outcome.value) : 0,
+      kind: outcome.kind,
+      ms: outcome.ms,
+      steps: outcome.steps,
+      truncated: outcome.truncated,
+      skipped: outcome.skipped,
+    };
+  }
+
+  /**
+   * 静态补全（ADR-0018 §2/§3）：数据源在 worker（根级顶层字段 + 全局白名单 + 方法字典），
+   * 只读、不推版本、不缓存。`pos` 夹到文本范围（CM6 的 `context.pos`）。
+   */
+  private complete(cmd: Cmd<'complete'>): CompleteReply {
+    const docRoot = this.requireDocRoot(cmd.rootId);
+    const value = docRoot.rowModel.value;
+    const rootKeys: string[] = [];
+    const rootKinds: Record<string, JsonKind> = {};
+    if (isContainer(value) && !Array.isArray(value)) {
+      const object = value as Record<string, unknown>;
+      for (const key of Object.keys(object)) {
+        rootKeys.push(key);
+        rootKinds[key] = jsonKind(object[key]);
+      }
+    }
+    const pos = clampInt(cmd.pos, 0, cmd.text.length);
+    return { items: getCompletions(cmd.text, pos, { rootKeys, rootKinds }) };
+  }
+
+  /**
+   * 结果行 → 原文档路径（ADR-0018 §4.3）：来源映射只在 worker 保留（`Root.expr.origins`），
+   * 页面按需查询（多一次 round-trip ≈1–2ms）。只读、不推版本。
+   */
+  private exprLocate(cmd: Cmd<'exprLocate'>): ExprLocateReply {
+    const root = this.roots.require(cmd.rootId);
+    if (root.kind !== 'expression' || root.expr === undefined) {
+      throw new CoreError({
+        code: 'BAD_COMMAND',
+        message: `exprLocate requires an expression root, got ${root.rootId} (${root.kind})`,
+      });
+    }
+    return { path: locateOriginalPath(root.rowModel.value, root.expr.origins, cmd.path) };
+  }
+
+  /** 换文档：释放上一份文档的全部表达式结果根（引用已死；LRU 邻接状态一并清理）。 */
+  private dropExpressionRoots(): void {
+    for (const rootId of this.roots.ids()) {
+      if (this.roots.get(rootId)?.kind === 'expression') this.roots.delete(rootId);
+    }
   }
 
   private historyOf(rootId: RootId): EditHistory {

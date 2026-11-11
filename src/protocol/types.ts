@@ -80,6 +80,88 @@ export interface DocumentProfile {
   nodeCount: number;
 }
 
+/* ------------------------- 表达式视图（#12 / #27 / ADR-0018） ------------------------- */
+
+/** 高级预算档位（设置面板第 11 项，ADR-0018 §6）；标准为默认。 */
+export type ExprBudgetLevel = 'loose' | 'standard' | 'strict';
+
+/**
+ * 表达式引擎错误码（ADR-0018 §2 / §5）。**引擎只给 code + params**，文案在外层
+ * （`app/expression-copy.ts`），中英对照表见 #12 spec §7。
+ */
+export type ExprErrorCode =
+  | 'PARSE_ERR_SYNTAX'
+  | 'PARSE_ERR_ROOT_SHAPE'
+  | 'STATIC_ERR_NODE'
+  | 'STATIC_ERR_CALL'
+  | 'EVAL_SHAPE_ERROR'
+  | 'EVAL_UNKNOWN_FIELD'
+  | 'EVAL_STEP_LIMIT'
+  | 'EVAL_TIME_LIMIT'
+  | 'EVAL_ILLEGAL_CALL'
+  | 'RESULT_TRUNCATED';
+
+/** 引擎错误（用户可改表达式重试 → 走**正常回包**，不是 CoreError）。 */
+export interface ExprError {
+  code: ExprErrorCode;
+  /** 文案参数（节点类型 / 方法名 / 字段名 / 预算数值等；约定见 ADR-0018 §5.3） */
+  params?: (string | number)[];
+  /** 表达式文本内的 1-based 行列（parse 错误取 acorn loc；运行时取当前 AST 节点 loc） */
+  line?: number;
+  column?: number;
+  /** `EVAL_UNKNOWN_FIELD` 的拼写纠错候选（最多 3 条） */
+  candidates?: string[];
+}
+
+/**
+ * 求值成功回包：结果是一个新的视图根 `expr:N`（元素**引用**原文档节点，不复制；ADR-0018 §4）。
+ * 页面拿 `rootId + rowVersion + totalRows` 直接 `rowSource.setRoot()`。
+ */
+export interface EvalSuccess {
+  ok: true;
+  rootId: RootId;
+  /** 执行时的文档版本；与当前 docRevision 不一致 = stale（不自动重跑） */
+  docRevision: Rev;
+  rowVersion: Rev;
+  totalRows: number;
+  /** 结果顶层子项数（标量 = 0） */
+  count: number;
+  kind: JsonKind;
+  /** 求值耗时（worker 内 ms：parse + validate + walk） */
+  ms: number;
+  steps: number;
+  /** true = 结果（或中间容器）被预算截断；导出/复制带标记 */
+  truncated: boolean;
+  /** 严格模式关闭时，元素内部缺字段被跳过（省略）的条数；严格模式恒 0 */
+  skipped: number;
+}
+
+/** 求值回包（`eval`）。引擎级失败是正常回包；根不存在等协议错误仍抛 CoreError。 */
+export type EvalReply = EvalSuccess | { ok: false; error: ExprError };
+
+/** 静态补全项（CM6 `@codemirror/autocomplete` 形态；数据源在 worker）。 */
+export interface ExprCompletion {
+  label: string;
+  kind: 'field' | 'method' | 'global' | 'keyword';
+  /** 插入文本；缺省 = label */
+  insertText?: string;
+  /** 右侧说明（如「根字段 · array」/「array 方法」） */
+  detail?: string;
+}
+
+/** 补全回包（`complete`）。 */
+export interface CompleteReply {
+  items: ExprCompletion[];
+}
+
+/**
+ * 结果行 → 原文档路径（`exprLocate`）：映射只在 worker 保留，按需查询。
+ * `null` = 该行是计算值（无来源）或在结果中不可定位。
+ */
+export interface ExprLocateReply {
+  path: Path | null;
+}
+
 /** 修复状态（ADR-0004 §6 / 修订 2026-11-03）：none=原文本可解析、repaired=已语法闭合、unrepairable=非 EOF 形态 */
 export type RepairStatus = 'none' | 'repaired' | 'unrepairable';
 

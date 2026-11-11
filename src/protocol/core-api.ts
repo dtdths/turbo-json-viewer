@@ -23,8 +23,12 @@ import type {
   TrailReply,
 } from './messages';
 import type {
+  CompleteReply,
   CopyFormat,
   DocumentProfile,
+  EvalReply,
+  ExprBudgetLevel,
+  ExprLocateReply,
   OutlineReply,
   Path,
   RawLocateReply,
@@ -80,6 +84,33 @@ export interface OutlineRequest {
   count: number;
 }
 
+/* ------------------------- 表达式视图请求（ADR-0018） ------------------------- */
+
+/** 求值请求（#27 / ADR-0018 §3）：作用根恒为整份文档（`$`），不接受选中节点根。 */
+export interface EvalRequest {
+  rootId: RootId;
+  /** 页面侧序号（丢弃迟到回包用） */
+  seq: number;
+  text: string;
+  /** 严格模式：元素内部缺字段直接报错（会话级，不进设置持久化） */
+  strict: boolean;
+  /** 预算档位（设置第 11 项） */
+  budget: ExprBudgetLevel;
+}
+
+/** 静态补全请求：`pos` 是表达式文本内的 UTF-16 偏移（CM6 `context.pos`）。 */
+export interface CompleteRequest {
+  rootId: RootId;
+  text: string;
+  pos: number;
+}
+
+/** 结果行 → 原文档路径（映射只在 worker 保留）。 */
+export interface ExprLocateRequest {
+  rootId: RootId;
+  path: Path;
+}
+
 export interface CoreApi {
   load(req: LoadRequest): Promise<LoadReply>;
   cancelLoad(loadId: number): void;
@@ -128,6 +159,14 @@ export interface CoreApi {
   profile(rootId: RootId): Promise<DocumentProfile>;
   stats(rootId: RootId): Promise<StatsReply>;
 
+  /* -------------------- 表达式视图（#12 / #27 / ADR-0018） -------------------- */
+  /** 求值：成功时创建 / 复用 `expr:N` 结果根（元素引用原文档节点，LRU 3）。 */
+  eval(req: EvalRequest): Promise<EvalReply>;
+  /** 静态补全（全局白名单 + 根级顶层字段 + 方法字典；数据源在 worker）。 */
+  complete(req: CompleteRequest): Promise<CompleteReply>;
+  /** 结果行 → 原文档路径（路径映射只在 worker 保留，按需查询）。 */
+  exprLocate(req: ExprLocateRequest): Promise<ExprLocateReply>;
+
   /** core → 主线程的异步事件（progress/repair/stale/error） */
   on(listener: (event: CoreEvent) => void): () => void;
   close(): void;
@@ -169,6 +208,9 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     getTrail: (req) => send({ t: 'getTrail', ...req }),
     profile: (rootId) => send({ t: 'profile', rootId }),
     stats: (rootId) => send({ t: 'stats', rootId }),
+    eval: (req) => send({ t: 'eval', ...req }),
+    complete: (req) => send({ t: 'complete', ...req }),
+    exprLocate: (req) => send({ t: 'exprLocate', ...req }),
     on: (listener) => (subscribe ? subscribe(listener) : () => undefined),
     close: () => undefined,
   };

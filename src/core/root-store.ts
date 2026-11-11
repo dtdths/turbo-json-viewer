@@ -5,7 +5,8 @@
  * 修复文档根（repaired）也走同一张表。行模型/窗口/搜索都以 rootId 为坐标。
  */
 import { CoreError } from '../protocol/errors';
-import type { DocumentMeta, RootId } from '../protocol/types';
+import type { DocumentMeta, ExprBudgetLevel, RootId } from '../protocol/types';
+import type { EvalOrigins } from './expression/types';
 import type { RawTextIndex } from './raw-text';
 import type { RowModel } from './row-model';
 
@@ -25,6 +26,26 @@ export interface RootSource {
   index?: RawTextIndex;
 }
 
+/**
+ * 表达式结果根的元信息（#12 / ADR-0018 §4）。
+ *
+ * `origins` 是结果 → 原文档路径的来源映射，**只在 worker 内存在**（WeakMap 不跨线程）；
+ * `exprLocate` 据此按需把结果行路径翻译成原文档路径（页面侧不存 ~10MB 路径表）。
+ */
+export interface ExprRootMeta {
+  /** 求值文本（历史/诊断用） */
+  text: string;
+  strict: boolean;
+  budget: ExprBudgetLevel;
+  truncated: boolean;
+  skipped: number;
+  ms: number;
+  steps: number;
+  /** 页面侧请求序号（迟到回包丢弃用；core 只回显） */
+  seq: number;
+  origins: EvalOrigins;
+}
+
 export interface Root {
   rootId: RootId;
   kind: RootKind;
@@ -40,6 +61,8 @@ export interface Root {
   meta?: DocumentMeta;
   /** 导入时保留的源文本（ADR-0003 修订 §2）：**临时修改不改变它**；无值图的根没有 */
   source?: RootSource;
+  /** 表达式结果根元信息（只有 kind='expression' 有） */
+  expr?: ExprRootMeta;
   createdAt: number;
   lastUsedAt: number;
 }

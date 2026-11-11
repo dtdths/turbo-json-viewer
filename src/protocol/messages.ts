@@ -3,9 +3,13 @@
  * Command 是唯一跨线程写入口；CoreApi 是同一批操作的领域门面。
  */
 import type {
+  CompleteReply,
   CopyFormat,
   DocumentMeta,
   DocumentProfile,
+  EvalReply,
+  ExprBudgetLevel,
+  ExprLocateReply,
   FidelityReport,
   Hit,
   JsonKind,
@@ -72,7 +76,20 @@ export type Command =
   | { t: 'rawLocate'; rootId: RootId; offset: number }
   | { t: 'rawSource'; rootId: RootId; maxBytes?: number }
   /* 保真提示（#23 / ADR-0003 修订 2026-11-09）：只读、不推版本，首帧后由 app 显式调用 */
-  | { t: 'fidelity'; rootId: RootId };
+  | { t: 'fidelity'; rootId: RootId }
+  /* 表达式视图（#12 / #27 / ADR-0018）：求值 / 静态补全 / 结果行定位回原文档。
+   * eval 是**唯一**会创建视图根（expr:N）的命令；complete / exprLocate 只读。 */
+  | {
+      t: 'eval';
+      rootId: RootId;
+      /** 页面侧序号：只用于丢弃迟到回包（eval 同步执行，core 只回显） */
+      seq: number;
+      text: string;
+      strict: boolean;
+      budget: ExprBudgetLevel;
+    }
+  | { t: 'complete'; rootId: RootId; text: string; pos: number }
+  | { t: 'exprLocate'; rootId: RootId; path: Path };
 
 export interface LoadReply {
   rootId: RootId;
@@ -187,6 +204,9 @@ export interface ReplyByKind {
   rawLocate: RawLocateReply;
   rawSource: RawSourceReply;
   fidelity: FidelityReply;
+  eval: EvalReply;
+  complete: CompleteReply;
+  exprLocate: ExprLocateReply;
 }
 
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];

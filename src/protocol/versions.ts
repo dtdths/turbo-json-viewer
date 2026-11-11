@@ -1,6 +1,7 @@
 /**
  * protocol/versions — 版本号语义与协议常量。
  */
+import type { ExprBudgetLevel } from './types';
 
 /** 固定行高（px）；唯一允许进入逻辑层的视觉参数之一 */
 export const ROW_HEIGHT = 24;
@@ -26,6 +27,56 @@ export const ADAPTIVE_EXPAND_ROWS = 500;
 export const COPY_INDENT = 2;
 /** 复制：子树 JSON 字节上限（与编辑器 5MB 守卫同口径；超限引导用「导出」，不静默截断） */
 export const COPY_MAX_BYTES = 5 * 1024 * 1024;
+
+/* --------------------- 表达式视图（#12 / #27 / ADR-0018） --------------------- */
+
+/** 表达式文本上限（字符） */
+export const EXPR_TEXT_MAX = 4096;
+/** 表达式 AST 深度上限（防解析器递归 + 解释器栈） */
+export const EXPR_AST_DEPTH_MAX = 128;
+/** 求值时间检查点间隔（步） */
+export const EXPR_TIME_CHECK_EVERY = 4096;
+/** 看门狗倍数：主线程等 `3 × maxTime` 仍无回包则 terminate worker（ADR-0018 §6） */
+export const EXPR_WATCHDOG_FACTOR = 3;
+/** 补全请求 debounce（ms，页面侧） */
+export const EXPR_COMPLETE_DEBOUNCE = 150;
+/** 会话级历史条数（不持久化） */
+export const EXPR_HISTORY_MAX = 20;
+/** 示例条数：文档顶层字段动态 3 条 + 通用语法 2 条（无文档只给通用 2 条） */
+export const EXPR_EXAMPLES_DOC = 3;
+export const EXPR_EXAMPLES_GENERIC = 2;
+
+/** 一档预算：时间为主刹车，步数是兜底，结果尺寸是内存/渲染护栏。 */
+export interface ExprBudgetSpec {
+  maxTimeMs: number;
+  /** 步数 = max(stepBase, stepPerNode × 文档节点数) */
+  stepBase: number;
+  stepPerNode: number;
+  /** 结果 / 中间容器的元素（或字符串长度）上限；超过即截断（带标记） */
+  maxResult: number;
+}
+
+/** 三档预算（#12 spec §3；数值待 #15 真机压测微调，修订需显式拍板——ADR-0013 先例）。 */
+export const EXPR_BUDGETS: Record<ExprBudgetLevel, ExprBudgetSpec> = {
+  loose: { maxTimeMs: 1000, stepBase: 2_000_000, stepPerNode: 100, maxResult: 500_000 },
+  standard: { maxTimeMs: 500, stepBase: 1_000_000, stepPerNode: 50, maxResult: 200_000 },
+  strict: { maxTimeMs: 200, stepBase: 500_000, stepPerNode: 20, maxResult: 50_000 },
+};
+
+/** 把档位 + 文档节点数换算成一次求值的实际预算（步数 = max(base, k×N)）。 */
+export function exprBudget(level: ExprBudgetLevel, nodeCount: number): ExprBudgetSpec & { level: ExprBudgetLevel; maxSteps: number } {
+  const spec = EXPR_BUDGETS[level];
+  const nodes = Number.isFinite(nodeCount) && nodeCount > 0 ? Math.floor(nodeCount) : 0;
+  return { ...spec, level, maxSteps: Math.max(spec.stepBase, spec.stepPerNode * nodes) };
+}
+
+/** 看门狗时限：`3 × maxTimeMs`（ADR-0018 §6）。 */
+export function exprWatchdogMs(level: ExprBudgetLevel): number {
+  return EXPR_BUDGETS[level].maxTimeMs * EXPR_WATCHDOG_FACTOR;
+}
+
+/** 结果为标量时的等价展示：顶层子项数 */
+export const EXPR_SCALAR_COUNT = 0;
 
 /* --------------------- 原始文本视图（ADR-0003 修订） --------------------- */
 

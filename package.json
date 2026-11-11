@@ -20,7 +20,8 @@
     "check": "npm run typecheck && npm test && npm run build",
     "smoke:raw": "node scripts/smoke-raw.mjs",
     "smoke:fidelity": "node scripts/smoke-fidelity.mjs",
-    "smoke:outline": "node scripts/smoke-outline.mjs"
+    "smoke:outline": "node scripts/smoke-outline.mjs",
+    "smoke:expression": "node scripts/smoke-expression.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -30,6 +31,7 @@
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
+    "acorn": "^8.19.0",
     "codemirror": "^6.0.2"
   }
 }
