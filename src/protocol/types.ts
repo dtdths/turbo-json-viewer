@@ -306,6 +306,36 @@ export interface RawLocateReply {
   totalLines: number;
 }
 
+/**
+ * 原文行 → 树节点（#30 / ADR-0019 双向定位）。
+ *
+ * `line` 是 1-based **显示行号**（夹取到 `[1, totalLines]` 后的回显）。`path=null` = 该行
+ * 没有节点锚点（结构行 `}`/`]`/`,`、空行，或 plain 模式）；`exact=false` = 命中的是容器
+ * 开括号（源码行模式下键在上一行、`{`/`[` 单独一行），path 仍是该容器节点。
+ * 只读、不推任何版本；plain 模式（截断修复后的源文本）没有可靠的路径映射 → `path=null`。
+ */
+export interface RawPathAtReply {
+  rootId: RootId;
+  line: number;
+  path: Path | null;
+  exact: boolean;
+}
+
+/**
+ * 树节点 → 原文行（#30 / ADR-0019 双向定位）。
+ *
+ * `offset` 是节点**锚点**的源文本 UTF-16 偏移：对象成员 = 键起点，数组元素 / 根 = 值起点。
+ * `line` 由行索引反查（1-based）。`offset=null` = 源文本里没有这个路径（临时修改新增的节点，
+ * 或 plain 模式）。重复键（`JSON.parse` 只留最后一个）取**最后一个**源位置。
+ * 只读、不推任何版本。
+ */
+export interface RawOffsetOfReply {
+  rootId: RootId;
+  path: Path;
+  offset: number | null;
+  line: number | null;
+}
+
 /** 整份源文本（原文视图「复制原文」用；超 maxBytes 由 core 抛 TOO_LARGE） */
 export interface RawSourceReply {
   text: string;

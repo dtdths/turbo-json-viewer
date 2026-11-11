@@ -53,6 +53,11 @@ const RAW_DOC = { a: 1, b: [true, null], c: { d: 'x' } };
 const RAW_TEXT = JSON.stringify(RAW_DOC, null, 2);
 const RAW_LINES = RAW_TEXT.split('\n');
 
+/** 双向定位 fixture：键与容器开括号分行（验证 exact=false 的容器开括号命中）。 */
+const SPLIT_TEXT = '{\n  "c":\n    {\n      "d": 1\n    }\n}';
+/** 双向定位 fixture：重复键（JSON.parse 只留最后一个）。 */
+const DUP_KEY_TEXT = '{\n  "k": 1,\n  "k": 2\n}';
+
 /** 保真 fixture：整数键重排 + 大整数精度流失（counts = number 1 / keyOrder 1）。 */
 const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1234567890123456789}';
 
@@ -399,6 +404,92 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       const tooLarge = await errorOf(h.api.rawSource({ rootId: loaded.rootId, maxBytes: source.bytes - 1 }));
       expect(tooLarge.code).toBe('TOO_LARGE');
       expect(tooLarge.bytes).toBe(source.bytes);
+    });
+
+    /* --------------------------- 双向定位（#30） --------------------------- */
+
+    it('rawPathAt / rawOffsetOf：双向定位只读、plain 回 null、未知根 / 表达式根错误', async () => {
+      const loaded = await load(RAW_TEXT);
+      const before = await h.api.stats(loaded.rootId);
+
+      // 原文→树：行 1 = 根 `{`；键所在行 → 成员路径
+      expect(await h.api.rawPathAt({ rootId: loaded.rootId, line: 1 })).toEqual({
+        rootId: loaded.rootId,
+        line: 1,
+        path: '$',
+        exact: true,
+      });
+      const lineA = RAW_LINES.indexOf('  "a": 1,') + 1;
+      expect(await h.api.rawPathAt({ rootId: loaded.rootId, line: lineA })).toMatchObject({
+        line: lineA,
+        path: '$.a',
+        exact: true,
+      });
+      // 结构行（`],` / `}`）没有节点锚点 → null
+      expect((await h.api.rawPathAt({ rootId: loaded.rootId, line: RAW_LINES.indexOf('  ],') + 1 })).path).toBeNull();
+      expect((await h.api.rawPathAt({ rootId: loaded.rootId, line: RAW_LINES.length })).path).toBeNull();
+      // 行号夹取后再回显
+      expect((await h.api.rawPathAt({ rootId: loaded.rootId, line: 0 })).line).toBe(1);
+      expect((await h.api.rawPathAt({ rootId: loaded.rootId, line: 99999 })).line).toBe(RAW_LINES.length);
+
+      // 树→原文：锚点 = 键起点 / 数组元素值起点；行号由行索引反查
+      expect(await h.api.rawOffsetOf({ rootId: loaded.rootId, path: '$' })).toEqual({
+        rootId: loaded.rootId,
+        path: '$',
+        offset: 0,
+        line: 1,
+      });
+      expect(await h.api.rawOffsetOf({ rootId: loaded.rootId, path: '$.b[0]' })).toEqual({
+        rootId: loaded.rootId,
+        path: '$.b[0]',
+        offset: RAW_TEXT.indexOf('true'),
+        line: RAW_LINES.indexOf('    true,') + 1,
+      });
+      expect((await h.api.rawOffsetOf({ rootId: loaded.rootId, path: '$.zz' })).offset).toBeNull();
+
+      // 只读：不推 docRevision / rowVersion
+      expect(await h.api.stats(loaded.rootId)).toEqual(before);
+
+      // plain（截断修复后的源文本，行结构与值图不对应）→ 两向都 null，不抛错
+      const repaired = await load(TRUNCATED_TEXT, 2);
+      expect(await h.api.rawPathAt({ rootId: repaired.rootId, line: 1 })).toMatchObject({ path: null, exact: false });
+      expect(await h.api.rawOffsetOf({ rootId: repaired.rootId, path: '$' })).toMatchObject({
+        offset: null,
+        line: null,
+      });
+
+      // 未知根 → NO_ROOT
+      expect((await errorOf(h.api.rawPathAt({ rootId: 'doc:999', line: 1 }))).code).toBe('NO_ROOT');
+      // 表达式根没有源文本 → BAD_COMMAND
+      const evaluated = await h.api.eval({
+        rootId: loaded.rootId,
+        seq: 1,
+        text: '$.a',
+        strict: false,
+        budget: 'standard',
+      });
+      if (evaluated.ok) {
+        expect((await errorOf(h.api.rawOffsetOf({ rootId: evaluated.rootId, path: '$' }))).code).toBe('BAD_COMMAND');
+      }
+    });
+
+    it('rawPathAt：容器开括号独占一行 → exact=false（仍映射该容器）', async () => {
+      const loaded = await load(SPLIT_TEXT);
+      const braceLine = SPLIT_TEXT.split('\n').indexOf('    {') + 1;
+      expect(await h.api.rawPathAt({ rootId: loaded.rootId, line: braceLine })).toMatchObject({
+        path: '$.c',
+        exact: false,
+      });
+    });
+
+    it('rawOffsetOf：重复键取最后一个源位置（与 JSON.parse 生效值一致）', async () => {
+      const loaded = await load(DUP_KEY_TEXT);
+      expect((await h.api.rawOffsetOf({ rootId: loaded.rootId, path: '$.k' })).offset).toBe(
+        DUP_KEY_TEXT.lastIndexOf('"k"'),
+      );
+      // 两处重复键所在行都映射到同一树路径
+      expect((await h.api.rawPathAt({ rootId: loaded.rootId, line: 2 })).path).toBe('$.k');
+      expect((await h.api.rawPathAt({ rootId: loaded.rootId, line: 3 })).path).toBe('$.k');
     });
 
     /* ------------------------------- 保真 ------------------------------- */

@@ -322,6 +322,60 @@ export class RawTextIndex {
     return this.locatePretty(pos);
   }
 
+  /**
+   * 1-based 显示行 → 行首第一个 token 的源文本偏移（双向定位 #30 / ADR-0019）。
+   * 空行 / 纯空白行 → null；plain 模式 → null（行结构与修复后值图不对应，调用方先看 mode）。
+   * 源码行：本行起点跳空白；pretty：从最近检查点重走到该行，取 LineRec.start（= 键/值/开括号起点）。
+   */
+  tokenStartAt(line: number): number | null {
+    this.build();
+    if (this.mode === 'plain') return null;
+    const total = this.lineCount;
+    if (total <= 0 || !Number.isFinite(line)) return null;
+    const target = clampInt(Math.floor(line) - 1, 0, total - 1);
+    if (this.mode === 'source') return this.tokenStartSource(target);
+    return this.tokenStartPretty(target);
+  }
+
+  private tokenStartSource(line0: number): number | null {
+    const text = this.text;
+    const n = this.chars;
+    const cp = this.cp;
+    const best = this.bisectCp(2, 0, line0);
+    let line = cp[best * 2];
+    let pos = cp[best * 2 + 1];
+    while (line < line0) {
+      const nl = text.indexOf('\n', pos);
+      if (nl < 0) return null;
+      pos = nl + 1;
+      line++;
+    }
+    const nl = text.indexOf('\n', pos);
+    const end = nl < 0 ? n : nl;
+    const first = this.lex.skipWs(text, pos);
+    return first < end ? first : null;
+  }
+
+  private tokenStartPretty(line0: number): number | null {
+    const cp = this.cp;
+    const best = this.bisectCp(3, 0, line0);
+    const fromLine = cp[best * 3];
+    let hit = -1;
+    walkPretty(
+      this.lex,
+      this.text,
+      cp[best * 3 + 1],
+      cp[best * 3 + 2],
+      (rec, li) => {
+        if (li < line0) return;
+        if (li === line0) hit = rec.start;
+        return false;
+      },
+      fromLine,
+    );
+    return hit >= 0 ? hit : null;
+  }
+
   /* ------------------------------ 构建 ------------------------------ */
 
   private buildSource(): void {

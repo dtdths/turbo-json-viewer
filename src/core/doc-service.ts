@@ -57,12 +57,14 @@ import type {
   Path,
   RawLocateReply,
   RawMeta,
+  RawOffsetOfReply,
+  RawPathAtReply,
   RawSourceReply,
   RawWindow,
   RootId,
   RowWindow,
 } from '../protocol/types';
-import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget } from '../protocol/versions';
+import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget, RAW_PATH_CACHE_SIZE } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
 import { EditHistory } from './edit-history';
@@ -73,6 +75,7 @@ import { childCountOf, isContainer, jsonKind, RowModel, type ReplaceResult } fro
 import { outlinePage } from './outline';
 import { RootStore, type ExprRootMeta, type Root, type RootSource } from './root-store';
 import { buildRawIndex, type RawTextIndex } from './raw-text';
+import { SourcePathIndex } from './path-index';
 import { searchDocument } from './search';
 import { evaluateExpression, countDocumentNodes } from './expression/engine';
 import { getCompletions } from './expression/complete';
@@ -118,6 +121,13 @@ export class DocService {
    * 用 WeakMap 而不是 Root 字段：文档替换 = 旧根被丢弃 → 缓存随根一起可回收，无需清理代码。
    */
   private readonly fidelityCache = new WeakMap<Root, FidelityReport>();
+  /**
+   * 双向定位（#30 / ADR-0019）：源文本 path↔offset 索引按**根对象身份**惰性构建。
+   * WeakMap → 文档替换 / 关闭即随旧根回收，无需显式清理；只依赖源文本、不受临时编辑影响。
+   */
+  private readonly pathIndexCache = new WeakMap<Root, SourcePathIndex>();
+  /** 树→原文（path→offset）结果缓存：每根 LRU(RAW_PATH_CACHE_SIZE)；null 也缓存（避免反复全扫） */
+  private readonly offsetCache = new WeakMap<Root, Map<Path, number | null>>();
   /** 表达式根 id 序号（`expr:1`、`expr:2`…；LRU 由 RootStore 收口） */
   private nextExprId = 0;
   /**
@@ -219,6 +229,10 @@ export class DocService {
         return this.rawLocate(cmd);
       case 'rawSource':
         return this.rawSource(cmd);
+      case 'rawPathAt':
+        return this.rawPathAt(cmd);
+      case 'rawOffsetOf':
+        return this.rawOffsetOf(cmd);
       case 'fidelity':
         return this.fidelity(cmd);
       case 'eval':
@@ -754,6 +768,70 @@ export class DocService {
       });
     }
     return { text: source.text, bytes };
+  }
+
+  /* --------------------------- 双向定位（#30 / ADR-0019） --------------------------- */
+
+  /** 源文本结构索引（path↔offset）：首次双向定位命令才构建（50MB ≈ 一次词法扫描 + 检查点）。 */
+  private pathIndexOf(root: Root): SourcePathIndex {
+    let index = this.pathIndexCache.get(root);
+    if (!index) {
+      index = new SourcePathIndex(this.requireSource(root).text);
+      this.pathIndexCache.set(root, index);
+    }
+    return index;
+  }
+
+  /**
+   * 原文显示行 → 树节点路径（ADR-0019 §3）：锚点 = 行首第一个 token 所属节点。
+   * plain 模式（截断修复后的源文本，行结构与值图不对应）→ `path=null`，不建索引。
+   */
+  private rawPathAt(cmd: Cmd<'rawPathAt'>): RawPathAtReply {
+    const root = this.roots.require(cmd.rootId);
+    this.requireSource(root);
+    const index = this.rawIndexOf(root);
+    const line = clampInt(cmd.line, 1, Math.max(1, index.totalLines));
+    if (index.mode === 'plain') return { rootId: root.rootId, line, path: null, exact: false };
+    const offset = index.tokenStartAt(line);
+    if (offset === null) return { rootId: root.rootId, line, path: null, exact: false };
+    const hit = this.pathIndexOf(root).pathAtOffset(offset);
+    return { rootId: root.rootId, line, path: hit?.path ?? null, exact: hit?.exact ?? false };
+  }
+
+  /**
+   * 树节点路径 → 原文锚点偏移 + 行号（ADR-0019 §3）：重复键取**最后一个**源位置
+   * （与 `JSON.parse` 生效值一致）。源文本没有该路径（临时修改新增 / plain）→ null。
+   * 结果按根做 LRU 缓存：同一节点来回对照第二次起 0ms（树→原文是单趟扫描，见 ADR §2）。
+   */
+  private rawOffsetOf(cmd: Cmd<'rawOffsetOf'>): RawOffsetOfReply {
+    const root = this.roots.require(cmd.rootId);
+    this.requireSource(root);
+    const index = this.rawIndexOf(root);
+    if (index.mode === 'plain') {
+      return { rootId: root.rootId, path: cmd.path, offset: null, line: null };
+    }
+    let cache = this.offsetCache.get(root);
+    if (!cache) {
+      cache = new Map<Path, number | null>();
+      this.offsetCache.set(root, cache);
+    }
+    const cached = cache.get(cmd.path);
+    let offset: number | null;
+    if (cached !== undefined || cache.has(cmd.path)) {
+      offset = cached as number | null;
+      // LRU：命中挪到队尾
+      cache.delete(cmd.path);
+      cache.set(cmd.path, offset);
+    } else {
+      offset = this.pathIndexOf(root).offsetOfPath(cmd.path);
+      cache.set(cmd.path, offset);
+      if (cache.size > RAW_PATH_CACHE_SIZE) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
+    }
+    if (offset === null) return { rootId: root.rootId, path: cmd.path, offset: null, line: null };
+    return { rootId: root.rootId, path: cmd.path, offset, line: index.locate(offset) };
   }
 
   /* ------------------------------ 保真提示 ------------------------------ */

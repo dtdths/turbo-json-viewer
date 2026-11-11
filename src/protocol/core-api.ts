@@ -34,6 +34,8 @@ import type {
   Path,
   RawLocateReply,
   RawMeta,
+  RawOffsetOfReply,
+  RawPathAtReply,
   RawSourceReply,
   RawWindow,
   Rev,
@@ -155,6 +157,16 @@ export interface CoreApi {
   rawLocate(req: { rootId: RootId; offset: number }): Promise<RawLocateReply>;
   /** 整份源文本（复制原文）；超过 maxBytes 抛 TOO_LARGE。 */
   rawSource(req: { rootId: RootId; maxBytes?: number }): Promise<RawSourceReply>;
+  /**
+   * 原文显示行 → 树节点路径（#30 / ADR-0019 双向定位）：只读、不推版本。
+   * plain 模式（截断修复后的源文本）没有可靠映射 → `path=null`；`exact=false` = 命中容器开括号。
+   */
+  rawPathAt(req: { rootId: RootId; line: number }): Promise<RawPathAtReply>;
+  /**
+   * 树节点路径 → 原文锚点偏移 + 行号（#30 / ADR-0019）：只读、不推版本。
+   * 源文本没有该路径（临时修改新增节点 / plain 模式）→ `offset=null`；重复键取最后一个源位置。
+   */
+  rawOffsetOf(req: { rootId: RootId; path: Path }): Promise<RawOffsetOfReply>;
 
   /**
    * 保真扫描（#23 / ADR-0003 修订 2026-11-09）：只读、不推版本，首帧后由 app 显式调用。
@@ -212,6 +224,8 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     rawWindow: (req) => send({ t: 'rawWindow', ...req }),
     rawLocate: (req) => send({ t: 'rawLocate', ...req }),
     rawSource: (req) => send({ t: 'rawSource', ...req }),
+    rawPathAt: (req) => send({ t: 'rawPathAt', ...req }),
+    rawOffsetOf: (req) => send({ t: 'rawOffsetOf', ...req }),
     fidelity: (req) => send({ t: 'fidelity', ...req }),
     getTrail: (req) => send({ t: 'getTrail', ...req }),
     profile: (rootId) => send({ t: 'profile', rootId }),

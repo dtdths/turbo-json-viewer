@@ -94,6 +94,13 @@ export const RAW_MAX_LINE_LENGTH = 4096;
 /** 单行显示上限（字符；防 DOM 巨行）：超出截断显示，复制原文不受此限 */
 export const RAW_LINE_DISPLAY_MAX = 4096;
 
+/* --------------------- 双向定位（#30 / ADR-0019） --------------------- */
+
+/** 源文本 path↔offset 索引：每 N 个节点一个检查点（帧链 + 祖先键栈） */
+export const RAW_PATH_CP_NODES = 2048;
+/** 树→原文（path→offset）结果缓存：每个根保留最近 N 个路径（LRU） */
+export const RAW_PATH_CACHE_SIZE = 512;
+
 /* --------------------- 大纲面板（ADR-0013） --------------------- */
 
 /** 大纲分页：默认每页子项数（「加载更多」每次取一页） */
