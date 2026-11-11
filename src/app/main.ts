@@ -8,6 +8,7 @@ import '../view/tree/tree.css';
 import '../view/panels/search-panel.css';
 import '../view/panels/outline-panel.css';
 import '../view/panels/settings-panel.css';
+import '../view/panels/expression-panel.css';
 import '../view/raw/raw-view.css';
 
 import { createWorkerCore } from './transport/worker-transport';
@@ -21,12 +22,29 @@ import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
 import { OutlinePanel } from '../view/panels/outline-panel';
 import { CoreError } from '../protocol/errors';
-import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
+import {
+  EXPR_BUDGETS,
+  EXPR_EXAMPLES_DOC,
+  EXPR_EXAMPLES_GENERIC,
+  LARGE_DOC_WARN_BYTES,
+  exprWatchdogMs,
+} from '../protocol/versions';
 import { ROOT_PATH } from '../shared/path';
-import type { CopyFormat, DocumentMeta, FidelityReport, RawMeta, Row } from '../protocol/types';
+import type {
+  CopyFormat,
+  DocumentMeta,
+  EvalReply,
+  EvalSuccess,
+  ExprBudgetLevel,
+  ExprCompletion,
+  FidelityReport,
+  JsonKind,
+  RawMeta,
+  Row,
+} from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
-import { DocSession, type LandingPlan } from './doc-session';
-import { installDevHook, type DevHookDeps } from './dev-hook';
+import { DocSession, type LandingPlan, type SessionState } from './doc-session';
+import { installDevHook, type DevHookDeps, type ExpressionHookState } from './dev-hook';
 import { EditState } from '../viewmodel/edit-state';
 import { SubtreeEditor } from '../view/panels/subtree-editor';
 import { SettingsState, type SettingsKey } from '../viewmodel/settings-state';
@@ -38,6 +56,9 @@ import {
 } from '../viewmodel/export-state';
 import { SettingsPanel } from '../view/panels/settings-panel';
 import { NoticeBar } from '../view/panels/notice-bar';
+import { ExpressionPanel } from '../view/panels/expression-panel';
+import { ExpressionBar } from '../view/panels/expression-bar';
+import { EXPR_COPY, exprErrorText } from '../shared/expression-copy';
 import { createMenu } from '../view/menu';
 import { createViewStateStore } from './storage';
 
@@ -90,6 +111,8 @@ const searchHost = el('searchPanel');
 const panelTitle = el('panelTitle');
 const settingsHost = el('settingsPanel');
 const outlineHost = el('outlinePanel');
+const expressionHost = el('expressionPanel');
+const exprBarRoot = el('exprBar');
 const selPath = el('selPath');
 const selMeta = el('selMeta');
 const repairBar = el('repairBar');
@@ -138,6 +161,10 @@ const tree = new TreeView(treeHost, {
     void toggleNode(path, open);
   },
   onSelect: (path: string) => setSelection(path),
+  // 表达式结果视图（ADR-0018 §1）：鼠标点击结果行 = 跳回原文档对应节点（键盘移动不触发）
+  onRowClick: (path: string) => {
+    if (exprViewActive) void jumpFromExpressionRow(path);
+  },
   onEdit: (path: string) => {
     void openEditor(path);
   },
@@ -285,6 +312,11 @@ let ctxPath: string | null = null;
 function applyLanding(plan: LandingPlan): void {
   const rootId = plan.state.rootId;
   if (!rootId) return;
+  // 表达式视图内的展开/折叠会推进 expr 根的 rowVersion：同步视图态（重进表达式模式时用）
+  if (exprViewActive && exprView && rootId === exprView.rootId) {
+    exprView.rowVersion = plan.state.rowVersion;
+    exprView.totalRows = plan.state.totalRows;
+  }
   rowSource.setRoot(
     { rootId, rowVersion: plan.state.rowVersion, totalRows: plan.state.totalRows },
     plan.scroll.kind === 'top' ? { scrollTopPx: 0 } : {},
@@ -351,6 +383,344 @@ function applySettings(): void {
 
 settings.subscribe(() => applySettings());
 applySettings();
+
+/* ---------------- 表达式视图（#12 / #27 / ADR-0018） ---------------- */
+
+/**
+ * 表达式结果视图态。`exprView` = **最近一次成功结果**的元信息（会话内保留，换文档即清）；
+ * `exprViewActive` = 树区当前是否显示该结果根（「切文档树模式即回」后仍保留，重进表达式模式可恢复）。
+ * 结果根本体在 worker 的 RootStore 里（LRU 3），页面只持坐标，不持文档。
+ */
+interface ExprViewState {
+  rootId: string;
+  docRevision: number;
+  rowVersion: number;
+  totalRows: number;
+  count: number;
+  kind: JsonKind;
+  ms: number;
+  steps: number;
+  truncated: boolean;
+  skipped: number;
+  text: string;
+  strict: boolean;
+  budget: ExprBudgetLevel;
+  seq: number;
+}
+
+let exprView: ExprViewState | null = null;
+let exprViewActive = false;
+/** 进入表达式视图前的文档会话（返回文档树时原样 restore；表达式视图不改文档根版本） */
+let docSessionBeforeExpr: SessionState | null = null;
+/** 求值序号：迟到回包丢弃（与 search 同口径） */
+let exprSeq = 0;
+let exprRunning = false;
+/** 最近一次成功执行的表达式文本（「重新执行」用；面板被改过则以面板当前文本为准） */
+let exprLastText = '';
+
+const expressionBar = new ExpressionBar(exprBarRoot);
+
+const expressionPanel = new ExpressionPanel(expressionHost, {
+  onRun: (text, strict) => {
+    void runExpression(text, strict);
+  },
+  onComplete: (text, pos) => requestCompletions(text, pos),
+  onTextChange: () => {
+    // 输入变化即清旧错误（不让上一次的行内错误误导）
+    expressionPanel.setError(null);
+  },
+  onStrictChange: () => {
+    /* 严格模式是会话级、面板自持；执行时从面板读 */
+  },
+});
+
+expressionBar.onBack(() => {
+  backToDocTree();
+  setPanel('doc');
+});
+expressionBar.onRerun(() => {
+  void runExpression(expressionPanel.getText() || exprLastText, expressionPanel.getStrict());
+});
+expressionBar.onClose(() => {
+  // 结果视图没有「只关条」的语义（关掉条会让人以为结果消失了）→ 等价「返回文档树」
+  backToDocTree();
+  setPanel('doc');
+});
+
+/** 文档根 id（表达式视图激活时 `session.rootId` 是 expr 根，不能用它求值/补全）。 */
+function documentRootId(): string | null {
+  if (exprViewActive) return docSessionBeforeExpr?.rootId ?? null;
+  return session.rootId;
+}
+
+/** 当前文档版本的唯一口径（表达式视图激活时取进入前的文档会话）。 */
+function currentDocRevision(): number {
+  if (exprViewActive && docSessionBeforeExpr) return docSessionBeforeExpr.docRevision;
+  return session.docRevision;
+}
+
+/** 结果是否过期：文档改过（docRevision 不匹配）→ stale banner + 「重新执行」，**不自动重跑**。 */
+function exprIsStale(): boolean {
+  return exprView !== null && !exprViewActive && exprView.docRevision !== currentDocRevision();
+}
+
+/** 引擎错误码 → 中文文案（唯一来源 shared/expression-copy.ts）。 */
+function showExpressionError(error: { message: string; line?: number; column?: number }): void {
+  expressionPanel.setError(error);
+  expressionPanel.setStatus('');
+}
+
+/** 执行一次表达式（面板「执行」/ Enter / 结果条「重新执行」共用）。 */
+async function runExpression(textArg?: string, strictArg?: boolean): Promise<void> {
+  if (exprRunning) return;
+  const rootId = documentRootId();
+  if (!rootId) {
+    showToast('请先导入文档，再执行表达式', 2500, 'error');
+    return;
+  }
+  const text = (textArg ?? expressionPanel.getText()).trim();
+  const strict = strictArg ?? expressionPanel.getStrict();
+  if (!text) {
+    expressionPanel.setError(null);
+    expressionPanel.setStatus('');
+    return;
+  }
+  const budget = settings.get('advBudget');
+  const seq = ++exprSeq;
+  exprRunning = true;
+  expressionPanel.setRunning(true);
+  expressionPanel.setError(null);
+  expressionPanel.setStatus(EXPR_COPY.running);
+  try {
+    const reply = await evalWithWatchdog({ rootId, seq, text, strict, budget });
+    if (seq !== exprSeq) return; // 迟到回包（又执行了一次）
+    if (!reply.ok) {
+      showExpressionError({
+        message: exprErrorText(reply.error),
+        line: reply.error.line,
+        column: reply.error.column,
+      });
+      // 保留上一份结果视图（错误只作用于输入，不清已经跑出来的结果）
+      return;
+    }
+    exprLastText = text;
+    expressionPanel.addHistory(text);
+    enterExpressionView(reply, text, strict, budget);
+  } catch (error) {
+    // watchdog 触发时页面会重载；其余错误照常提示
+    if (CoreError.from(error).code !== 'CLOSED') showError(error);
+  } finally {
+    if (seq === exprSeq) {
+      exprRunning = false;
+      expressionPanel.setRunning(false);
+    }
+  }
+}
+
+/**
+ * 求值 + 主线程硬看门狗（ADR-0018 §6）：`3 × maxTime` 仍无回包 → terminate + 页面重载。
+ * 预算正常（引擎三刹车）时永不触发；这是「引擎自身 bug 导致真卡死」的最后兜底。
+ */
+async function evalWithWatchdog(req: {
+  rootId: string;
+  seq: number;
+  text: string;
+  strict: boolean;
+  budget: ExprBudgetLevel;
+}): Promise<EvalReply> {
+  const timeoutMs = exprWatchdogMs(req.budget);
+  return await new Promise<EvalReply>((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      restartAfterWatchdog();
+      reject(new Error('expression watchdog fired'));
+    }, timeoutMs);
+    core.eval(req).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** watchdog 触发：终止 worker → 标记重载提示 → 重载页面（文档必须重新导入；沿用 ReDoS 差距）。 */
+function restartAfterWatchdog(): void {
+  try {
+    workerCore.close();
+  } catch {
+    /* 已死 */
+  }
+  try {
+    sessionStorage.setItem(EXPR_WATCHDOG_FLAG, '1');
+  } catch {
+    /* 隐私模式 */
+  }
+  location.reload();
+}
+
+/** 结果成为树区当前视图根（复用 DocSession 的落地链路；文档根会话先存档）。 */
+function enterExpressionView(
+  reply: EvalSuccess,
+  text: string,
+  strict: boolean,
+  budget: ExprBudgetLevel,
+): void {
+  const wasActive = exprViewActive;
+  // 结果视图只有树形态：当前在原文视图时先切回树视图（此时 exprViewActive 仍为 false，
+  // 走不到 setViewMode 顶部的「离开表达式 → 回文档树」守卫）
+  if (!wasActive && isRawView()) void setViewMode('tree');
+  if (!wasActive) docSessionBeforeExpr = session.snapshot;
+  exprView = {
+    rootId: reply.rootId,
+    docRevision: reply.docRevision,
+    rowVersion: reply.rowVersion,
+    totalRows: reply.totalRows,
+    count: reply.count,
+    kind: reply.kind,
+    ms: reply.ms,
+    steps: reply.steps,
+    truncated: reply.truncated,
+    skipped: reply.skipped,
+    text,
+    strict,
+    budget,
+    seq: exprSeq,
+  };
+  exprViewActive = true;
+  const plan = session.land(reply, { kind: 'expression' });
+  applyLanding(plan);
+  renderExpressionBar();
+  expressionPanel.setStatus(EXPR_COPY.status(reply.count, Math.round(reply.ms)));
+  updateStatus();
+}
+
+/** 结果条文案/态（正常 / stale / 截断 + 跳过）。 */
+function renderExpressionBar(stale = false): void {
+  if (!exprView || !exprViewActive) {
+    expressionBar.hide();
+    return;
+  }
+  expressionBar.show({
+    rootId: exprView.rootId,
+    count: exprView.count,
+    ms: exprView.ms,
+    truncated: exprView.truncated,
+    skipped: exprView.skipped,
+    maxResult: EXPR_BUDGETS[exprView.budget].maxResult,
+    stale,
+  });
+}
+
+/** 返回文档树：恢复进入表达式视图前的文档会话；结果根保留在 worker LRU（可重进恢复）。 */
+function backToDocTree(opts: { silent?: boolean } = {}): void {
+  if (!exprViewActive) return;
+  exprViewActive = false;
+  expressionBar.hide();
+  const saved = docSessionBeforeExpr;
+  docSessionBeforeExpr = null;
+  if (saved) {
+    session.restore(saved);
+    const state = session.snapshot;
+    if (state.rootId) {
+      rowSource.setRoot(
+        { rootId: state.rootId, rowVersion: state.rowVersion, totalRows: state.totalRows },
+        { scrollTopPx: 0 },
+      );
+      tree.scrollToPx(0);
+      rowSource.requestWindow();
+    }
+  }
+  tree.setSelected(null);
+  setSelection(null);
+  updateStatus();
+  if (!opts.silent) focusTree();
+}
+
+/** 表达式结果行 → 原文档节点（点结果行；ADR-0018 §1/§4.3）。 */
+async function jumpFromExpressionRow(path: string): Promise<void> {
+  if (!exprView || !exprViewActive) return;
+  try {
+    const reply = await core.exprLocate({ rootId: exprView.rootId, path });
+    if (reply.path === null) {
+      showToast(EXPR_COPY.noSource, 2500, 'error');
+      return;
+    }
+    const target = reply.path;
+    backToDocTree({ silent: true });
+    setPanel('doc');
+    await jumpToPath(target);
+  } catch (error) {
+    showError(error);
+  }
+}
+
+/** 静态补全：worker 数据源；异常降级为空列表（补全不能打断输入）。 */
+async function requestCompletions(text: string, pos: number): Promise<ExprCompletion[]> {
+  const rootId = documentRootId();
+  if (!rootId) return [];
+  try {
+    const reply = await core.complete({ rootId, text, pos });
+    return reply.items;
+  } catch {
+    return [];
+  }
+}
+
+/** 示例（ADR-0018 §1）：文档顶层字段动态 3 条 + 通用 2 条；无文档只给通用 2 条。 */
+async function buildExpressionExamples(): Promise<string[]> {
+  const generic = [EXPR_EXAMPLES_GENERIC_LIST[0], EXPR_EXAMPLES_GENERIC_LIST[1]];
+  const rootId = documentRootId();
+  if (!rootId) return generic;
+  try {
+    const items = await requestCompletions('', 0);
+    const fields = items.filter((item) => item.kind === 'field');
+    const picks: string[] = [];
+    for (const field of fields) {
+      if (picks.length >= EXPR_EXAMPLES_DOC) break;
+      const isArray = (field.detail ?? '').includes('array');
+      picks.push(isArray ? `$.${field.label}.slice(0, 5)` : `$.${field.label}`);
+    }
+    if (picks.length < EXPR_EXAMPLES_DOC) picks.push('$');
+    return [...picks.slice(0, EXPR_EXAMPLES_DOC), ...generic];
+  } catch {
+    return generic;
+  }
+}
+
+/** 通用语法示例（ADR-0018 §1）：永远可执行，不需要文档特定字段。 */
+const EXPR_EXAMPLES_GENERIC_LIST = [
+  `$?.missing_field ?? 'fallback'`,
+  `typeof $ === 'object' ? 'object' : typeof $`,
+];
+
+/** 刷新面板示例（打开面板 / 换文档时调用）。 */
+function refreshExpressionExamples(): void {
+  void buildExpressionExamples().then((items) => expressionPanel.setExamples(items));
+}
+
+/** watchdog 重载后的提示标记（sessionStorage 在重载后仍可读）。 */
+const EXPR_WATCHDOG_FLAG = 'tjv.expr.watchdog';
+
+function consumeWatchdogFlag(): void {
+  try {
+    if (sessionStorage.getItem(EXPR_WATCHDOG_FLAG) !== '1') return;
+    sessionStorage.removeItem(EXPR_WATCHDOG_FLAG);
+    showToast(EXPR_COPY.watchdog, 6000, 'error');
+  } catch {
+    /* 隐私模式 */
+  }
+}
 
 /* ---------------- import layer（文档入口层） ---------------- */
 
@@ -482,6 +852,13 @@ async function importFile(file: File): Promise<void> {
 
 function onLoaded(reply: LoadReply): void {
   const rid = reply.rootId;
+  // 换文档：表达式结果视图整体作废（旧根引用旧值图；worker 侧也随新 load 丢弃）
+  exprView = null;
+  if (exprViewActive) {
+    exprViewActive = false;
+    expressionBar.hide();
+    docSessionBeforeExpr = null;
+  }
   // 换文档 = document 意图：版本字段 / 回顶 / 清选中都由落地计划统一（executor 内）
   const plan = session.land(reply, { kind: 'document' });
   meta = reply.meta;
@@ -520,6 +897,8 @@ function onLoaded(reply: LoadReply): void {
   // 新文档：重置大纲并加载根页（面板此刻可能未打开，数据先备好）
   void outlineState.open(rid);
   setPanel('doc');
+  // 新文档：表达式示例按新顶层字段重算（面板未打开也先备好）
+  refreshExpressionExamples();
   focusTree();
   void setViewMode(settings.uiState().viewMode === 'raw' ? 'raw' : 'tree', { persist: false });
 }
@@ -778,6 +1157,11 @@ function markSearchStale(): boolean {
 }
 
 async function openEditor(path: string): Promise<void> {
+  // 表达式结果只读（ADR-0018 §1）：结果根不是文档，禁编辑入口（F2 / 双击 / 右键「编辑」）
+  if (exprViewActive) {
+    showToast(EXPR_COPY.readonly, 2000, 'error');
+    return;
+  }
   if (!session.rootId || subtreeEditor.isOpen()) return;
   try {
     const reply = await core.getNodeJson({ rootId: session.rootId, path });
@@ -825,6 +1209,7 @@ async function applyEditText(text: string): Promise<void> {
 }
 
 async function undoEdit(): Promise<boolean> {
+  if (exprViewActive) return false;
   if (!session.rootId) return false;
   try {
     const reply = await core.undo(session.rootId);
@@ -839,6 +1224,7 @@ async function undoEdit(): Promise<boolean> {
 }
 
 async function redoEdit(): Promise<boolean> {
+  if (exprViewActive) return false;
   if (!session.rootId) return false;
   try {
     const reply = await core.redo(session.rootId);
@@ -854,6 +1240,7 @@ async function redoEdit(): Promise<boolean> {
 
 /** 重置全部临时修改（反向撤销到打开时状态）；skipConfirm 供 dev hook 用。 */
 async function resetEdits(skipConfirm = false): Promise<boolean> {
+  if (exprViewActive) return false;
   if (!session.rootId || !editState.dirty) return false;
   if (!skipConfirm && !confirmReset()) return false;
   try {
@@ -946,13 +1333,23 @@ async function runExportMode(mode: ExportMode): Promise<void> {
   else await exportDoc();
 }
 
+/** 当前导出文件名：表达式结果视图导出 = `<原名>-expr-N.json`（与文档导出区分，ADR-0018 §4）。 */
+function currentExportName(): string | null {
+  if (!meta) return null;
+  if (exprViewActive && exprView) {
+    const base = meta.name.replace(/\.json$/i, '');
+    return `${base}-${exprView.rootId.replace(':', '-')}.json`;
+  }
+  return exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
+}
+
 /** 文件导出（既有行为）：Blob + `<a download>`，文件名带 -edited / -truncated-repaired。 */
 async function exportDoc(): Promise<void> {
   if (!session.rootId || !meta) return;
   setExportButtonsDisabled(true);
   try {
     const { text, bytes } = await core.exportDoc(session.rootId, 2);
-    const name = exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired');
+    const name = currentExportName() ?? 'document.json';
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -987,7 +1384,9 @@ async function copyDocJson(): Promise<void> {
     }
     const copied = await writeClipboard(reply.text);
     exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied };
-    if (copied) showToast('已复制：JSON', 2000, 'success');
+    // 截断结果必须带标记（ADR-0018 §4：截断不能静默发生）
+    const suffix = exprViewActive && exprView?.truncated ? '（结果已截断）' : '';
+    if (copied) showToast(`已复制：JSON${suffix}`, 2000, 'success');
     else showToast('复制失败：请改用「导出 JSON 文件」', 4000, 'error');
   } catch (error) {
     showError(error);
@@ -1058,7 +1457,8 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
   const subtreeHint = '含该节点自身；不含更上层';
   setCtxItemDisabled('expand-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
-  setCtxItemDisabled('edit', false);
+  // 表达式结果只读（ADR-0018 §1）：结果根上的编辑入口一律禁用（复制四格式照常可用）
+  setCtxItemDisabled('edit', exprViewActive, '表达式结果只读');
   ctxMenuController.open({ kind: 'point', x, y });
 }
 
@@ -1180,20 +1580,30 @@ function setSelection(path: string | null): void {
   outlineState.setSelected(path);
   selPath.textContent = path ?? '—';
   selPath.title = path ?? '';
-  selMeta.textContent = path ? 'F2 / 双击编辑' : '';
+  // 表达式结果视图：选中行 = 「点一下跳回原文档」，不给编辑暗示（ADR-0018 §1）
+  selMeta.textContent = path ? (exprViewActive ? '点击行跳回原文档' : 'F2 / 双击编辑') : '';
   updateStatus();
 }
 
 /* ---------------- search ---------------- */
 
-const PANEL_TITLES: Record<'doc' | 'search' | 'outline' | 'settings', string> = {
+const PANEL_TITLES: Record<
+  'doc' | 'search' | 'outline' | 'settings' | 'expression',
+  string
+> = {
   doc: '文档',
   search: '搜索',
   outline: '大纲',
   settings: '设置',
+  expression: EXPR_COPY.panelTitle,
 };
 
-function setPanel(panel: 'doc' | 'search' | 'outline' | 'settings'): void {
+type PanelId = 'doc' | 'search' | 'outline' | 'settings' | 'expression';
+
+/** 左面板模式（ADR-0011 §2 持久化；expression = ADR-0018 §1）。 */
+function setPanel(panel: PanelId): void {
+  // 离开表达式模式 → 树区回文档树（结果根保留在 worker LRU；重进表达式模式可恢复最近结果）
+  if (panel !== 'expression' && exprViewActive) backToDocTree({ silent: true });
   document.body.dataset.panel = panel;
   panelTitle.textContent = PANEL_TITLES[panel];
   const buttons = document.querySelectorAll<HTMLElement>('.actbtn[data-panel-btn]');
@@ -1211,6 +1621,35 @@ function setPanel(panel: 'doc' | 'search' | 'outline' | 'settings'): void {
     outlinePanel.focus();
   }
   if (panel === 'settings') settingsPanel.focus();
+  if (panel === 'expression') {
+    // 结果视图只在树形态下有意义（原文视图下恢复结果根会看不见）→ 先切回树
+    if (!exprViewActive && isRawView()) void setViewMode('tree');
+    void expressionPanel.mount();
+    expressionPanel.focus();
+    refreshExpressionExamples();
+    // 恢复最近一次结果视图（会话内 LRU；stale 时结果条变警告色 + 「重新执行」）
+    if (exprView) {
+      const stale = exprView.docRevision !== session.docRevision;
+      exprViewActive = true;
+      docSessionBeforeExpr = session.snapshot;
+      session.restore({
+        rootId: exprView.rootId,
+        docRevision: exprView.docRevision,
+        rowVersion: exprView.rowVersion,
+        totalRows: exprView.totalRows,
+      });
+      const state = session.snapshot;
+      rowSource.setRoot(
+        { rootId: exprView.rootId, rowVersion: state.rowVersion, totalRows: state.totalRows },
+        { scrollTopPx: 0 },
+      );
+      tree.scrollToPx(0);
+      rowSource.requestWindow();
+      renderExpressionBar(stale);
+      expressionPanel.setStatus(EXPR_COPY.status(exprView.count, Math.round(exprView.ms)));
+      updateStatus();
+    }
+  }
   // 布局态持久化（ADR-0011 §2）：下次启动恢复
   settings.setUi({ panel });
 }
@@ -1219,7 +1658,10 @@ document.querySelectorAll<HTMLElement>('[data-panel-btn]').forEach((button) => {
   button.addEventListener('click', () => {
     const panel = button.dataset.panelBtn;
     // 点击当前已激活的模式 → 回到文档视图（与「关闭面板」一致）
-    const next = panel === 'search' || panel === 'outline' || panel === 'settings' ? panel : 'doc';
+    const next: PanelId =
+      panel === 'search' || panel === 'outline' || panel === 'settings' || panel === 'expression'
+        ? panel
+        : 'doc';
     setPanel(document.body.dataset.panel === next ? 'doc' : next);
   });
 });
@@ -1612,6 +2054,14 @@ function renderRawChrome(): void {
  */
 async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {}): Promise<void> {
   if (!session.rootId) return;
+  // 表达式视图只有树形态：切原文 = 先回文档树（原文永远指文档源文本，表达式根没有源文本）
+  if (exprViewActive) {
+    backToDocTree({ silent: true });
+    if (mode === 'tree') {
+      updateStatus();
+      return;
+    }
+  }
   const changed = mode !== (isRawView() ? 'raw' : 'tree');
   document.body.dataset.view = mode;
   viewTreeBtn.classList.toggle('is-active', mode === 'tree');
@@ -1714,6 +2164,11 @@ function updateStatus(): void {
   statusSize.textContent = `${formatBytes(meta.bytes)} · v${session.docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
+  // 表达式结果视图：状态栏明确「这不是文档」（ADR-0018 §1）
+  if (exprViewActive && exprView) {
+    statusState.textContent = `表达式结果 ${exprView.rootId} · 只读 · 原文件不变`;
+    return;
+  }
   // 修复角标独立于修复条显隐：数据仍不完整，状态栏要一直能看出来
   const repaired = meta.repair?.status === 'repaired';
   const repairedTag = repaired ? '已修复截断 · ' : '';
@@ -1915,7 +2370,54 @@ function buildDevHookDeps(): DevHookDeps {
       clickExportMain: () => exportBtn.click(),
       clipboardMaxBytes: () => CLIPBOARD_MAX_BYTES,
     },
+    // 表达式视图（#27 / ADR-0018 §9）：模块句柄 + 真实入口
+    expression: {
+      panel: expressionPanel,
+      bar: expressionBar,
+      view: () => exprView,
+      active: () => exprViewActive,
+      stale: () => exprIsStale(),
+      budget: () => settings.get('advBudget'),
+      statusState: () => statusState.textContent ?? '',
+      entries: {
+        open: async () => {
+          setPanel('expression');
+          await expressionPanel.mount();
+          refreshExpressionExamples();
+        },
+        setText: (text) => expressionPanel.setText(text),
+        run: async () => {
+          await runExpression(expressionPanel.getText(), expressionPanel.getStrict());
+        },
+        runText: async (text) => {
+          expressionPanel.setText(text);
+          await runExpression(text, expressionPanel.getStrict());
+        },
+        complete: async (text, pos) => {
+          const current = text ?? expressionPanel.getText();
+          return requestCompletions(current, pos ?? current.length);
+        },
+        setStrict: (strict) => {
+          expressionPanel.setStrict(strict);
+        },
+        back: () => {
+          backToDocTree({ silent: true });
+          setPanel('doc');
+        },
+        rerun: async () => {
+          await runExpression(expressionPanel.getText() || exprLastText, expressionPanel.getStrict());
+        },
+        locate: async (path) => {
+          if (!exprView) return { path: null };
+          const target = path ?? selected;
+          if (!target) return { path: null };
+          return core.exprLocate({ rootId: exprView.rootId, path: target });
+        },
+        setBudget: (level) => settings.set('advBudget', level),
+      },
+    },
   };
 }
 
+consumeWatchdogFlag();
 if (!isExtension) installDevHook(buildDevHookDeps());

@@ -44,7 +44,17 @@ describe('settings-state — 默认值与校验', () => {
       exportMode: 'file',
       repairTruncated: true,
       adaptiveExpand: true,
+      advBudget: 'standard',
     });
+  });
+
+  it('advBudget：默认标准 / 合法保留 / 非法回落（#27 / ADR-0018 §7）', () => {
+    expect(DEFAULT_SETTINGS.advBudget).toBe('standard');
+    expect(normalizeSettings({}).advBudget).toBe('standard');
+    expect(normalizeSettings({ advBudget: 'loose' }).advBudget).toBe('loose');
+    expect(normalizeSettings({ advBudget: 'strict' }).advBudget).toBe('strict');
+    expect(normalizeSettings({ advBudget: 'custom' }).advBudget).toBe('standard');
+    expect(normalizeSettings({ advBudget: 1 }).advBudget).toBe('standard');
   });
 
   it('选项集合固定：行高 4 档 / 缩进 3 档 / 复制缩进 0-2-4', () => {

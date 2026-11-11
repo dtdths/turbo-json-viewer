@@ -15,6 +15,8 @@ import type { CoreApi } from '../protocol/core-api';
 import type {
   CopyFormat,
   DocumentMeta,
+  ExprBudgetLevel,
+  ExprCompletion,
   FidelityReport,
   JsonKind,
   RawLocateReply,
@@ -34,11 +36,13 @@ import type { RawView } from '../view/raw/raw-view';
 import type { SearchPanel } from '../view/panels/search-panel';
 import type { OutlinePanel } from '../view/panels/outline-panel';
 import type { SubtreeEditor } from '../view/panels/subtree-editor';
+import type { ExpressionPanel } from '../view/panels/expression-panel';
+import type { ExpressionBar } from '../view/panels/expression-bar';
 import type { NoticeBar } from '../view/panels/notice-bar';
 import type { ExportMode } from '../viewmodel/export-state';
 
 /** 面板 id（与 `UiState.panel` 同域）。 */
-export type PanelId = 'none' | 'doc' | 'search' | 'outline' | 'settings';
+export type PanelId = 'none' | 'doc' | 'search' | 'outline' | 'settings' | 'expression';
 
 /** 最近一次导出动作（dev hook / 验收用；不保留文本）。 */
 export interface ExportLastAction {
@@ -191,6 +195,53 @@ export interface ExportHookState {
   clipboardMaxBytes: number;
 }
 
+/** 表达式视图快照（#27 / ADR-0018 §9）：面板态 + 结果视图态 + 结果条态。 */
+export interface ExpressionHookState {
+  /** 左面板模式（body[data-panel]） */
+  panel: PanelId | null;
+  /** 面板是否可见（= panel === 'expression'） */
+  panelOpen: boolean;
+  text: string;
+  strict: boolean;
+  running: boolean;
+  status: string;
+  error: string | null;
+  examples: string[];
+  history: string[];
+  /** 最近一次成功结果；null = 本会话还没有结果 */
+  view: {
+    rootId: string;
+    docRevision: number;
+    rowVersion: number;
+    totalRows: number;
+    count: number;
+    kind: JsonKind;
+    ms: number;
+    steps: number;
+    truncated: boolean;
+    skipped: number;
+    text: string;
+    strict: boolean;
+    budget: ExprBudgetLevel;
+  } | null;
+  /** 树区当前是否显示结果根 */
+  active: boolean;
+  /** 结果是否 stale（文档已修改，未自动重跑） */
+  stale: boolean;
+  bar: {
+    hidden: boolean;
+    text: string;
+    stale: boolean;
+    truncated: boolean;
+    rerunVisible: boolean;
+    backVisible: boolean;
+  };
+  /** 当前高级预算档位（设置第 11 项） */
+  budget: ExprBudgetLevel;
+  /** 状态栏文本（诊断） */
+  statusState: string;
+}
+
 /** 钩子成员类型（= 冒烟脚本消费的契约；也是 `createDevHook` 的返回类型）。 */
 export interface DevHook {
   loadText(text: string, name?: string): Promise<void>;
@@ -272,6 +323,26 @@ export interface DevHook {
     | null
   >;
   rawCopy(): Promise<{ toast: string } & RawHookState>;
+
+  /* ---- 表达式视图（#27 / ADR-0018 §9） ---- */
+  expressionState(): ExpressionHookState;
+  /** 打开表达式面板（走真实 setPanel）；含懒加载编辑器挂载后的快照。 */
+  expressionOpen(): Promise<ExpressionHookState>;
+  expressionSetText(text: string): ExpressionHookState;
+  /** 走真实「执行」按钮（Enter 等价），等执行结束后快照。 */
+  expressionRun(): Promise<ExpressionHookState>;
+  expressionRunText(text: string): Promise<ExpressionHookState>;
+  /** 静态补全（text/pos 缺省 = 面板当前文本末尾）。 */
+  expressionComplete(text?: string, pos?: number): Promise<ExprCompletion[]>;
+  expressionSetStrict(strict: boolean): ExpressionHookState;
+  /** 返回文档树（走结果条「返回文档树」）。 */
+  expressionBack(): ExpressionHookState;
+  /** 重新执行上一次成功文本（走结果条「重新执行」）。 */
+  expressionRerun(): Promise<ExpressionHookState>;
+  /** 结果行路径 → 原文档路径（核心映射在 worker）。 */
+  expressionLocate(path?: string): Promise<{ path: string | null }>;
+  /** 设置高级预算档位（= 设置第 11 项）。 */
+  expressionSetBudget(level: ExprBudgetLevel): { changed: boolean } & ExpressionHookState;
 
   /** 允许按名探测（冒烟脚本 `Object.keys` / `typeof hook[k]`）。 */
   [key: string]: unknown;
@@ -372,6 +443,38 @@ export interface DevHookDeps {
     openExportMenu(): void;
     clickExportMain(): void;
     clipboardMaxBytes(): number;
+  };
+
+  /* ---- 表达式视图（#27 / ADR-0018 §9）：模块句柄 + app 真实入口 ---- */
+  expression: {
+    panel: ExpressionPanel;
+    bar: ExpressionBar;
+    /** 应用层「最近一次结果」快照（null = 本会话还没有结果） */
+    view(): ExpressionHookState['view'];
+    /** 树区当前是否显示结果根 */
+    active(): boolean;
+    /** 结果是否 stale（文档已修改，未自动重跑） */
+    stale(): boolean;
+    /** 当前高级预算档位（设置第 11 项） */
+    budget(): ExprBudgetLevel;
+    /** 状态栏文本（诊断） */
+    statusState(): string;
+    entries: {
+      /** 打开表达式面板（真实 setPanel + 编辑器挂载） */
+      open(): Promise<void>;
+      setText(text: string): void;
+      /** 走真实「执行」按钮 */
+      run(): Promise<void>;
+      runText(text: string): Promise<void>;
+      complete(text?: string, pos?: number): Promise<ExprCompletion[]>;
+      setStrict(strict: boolean): void;
+      /** 返回文档树（真实结果条按钮） */
+      back(): void;
+      /** 重新执行上一次成功文本（真实结果条按钮） */
+      rerun(): Promise<void>;
+      locate(path?: string): Promise<{ path: string | null }>;
+      setBudget(level: ExprBudgetLevel): boolean;
+    };
   };
 }
 
@@ -534,6 +637,28 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       jumpVisible: !ui.fidelityJump.hidden,
       viewMode: deps.viewModeAttr() === 'raw' ? 'raw' : 'tree',
       statusRows: ui.statusRows.textContent ?? '',
+    };
+  };
+
+  /** 表达式视图快照（#27 / ADR-0018 §9）：面板态 + 结果视图态 + 结果条态。 */
+  const expressionHookState = (): ExpressionHookState => {
+    const panelState = deps.expression.panel.state();
+    return {
+      panel: (document.body.dataset.panel as PanelId | undefined) ?? null,
+      panelOpen: document.body.dataset.panel === 'expression',
+      text: panelState.text,
+      strict: panelState.strict,
+      running: panelState.running,
+      status: panelState.status,
+      error: panelState.error,
+      examples: panelState.examples,
+      history: panelState.history,
+      view: deps.expression.view(),
+      active: deps.expression.active(),
+      stale: deps.expression.stale(),
+      bar: deps.expression.bar.state(),
+      budget: deps.expression.budget(),
+      statusState: deps.expression.statusState(),
     };
   };
 
@@ -823,6 +948,43 @@ export function createDevHook(deps: DevHookDeps): DevHook {
         if ((ui.toast.textContent ?? '') !== before) break;
       }
       return { toast: ui.toast.hidden ? '' : (ui.toast.textContent ?? ''), ...rawHookState() };
+    },
+
+    // ---- 表达式视图 dev hook（#27 / ADR-0018 §9）----
+    expressionState: () => expressionHookState(),
+    expressionOpen: async () => {
+      await deps.expression.entries.open();
+      return expressionHookState();
+    },
+    expressionSetText: (text: string) => {
+      deps.expression.entries.setText(text);
+      return expressionHookState();
+    },
+    expressionRun: async () => {
+      await deps.expression.entries.run();
+      return expressionHookState();
+    },
+    expressionRunText: async (text: string) => {
+      await deps.expression.entries.runText(text);
+      return expressionHookState();
+    },
+    expressionComplete: (text?: string, pos?: number) => deps.expression.entries.complete(text, pos),
+    expressionSetStrict: (strict: boolean) => {
+      deps.expression.entries.setStrict(strict);
+      return expressionHookState();
+    },
+    expressionBack: () => {
+      deps.expression.entries.back();
+      return expressionHookState();
+    },
+    expressionRerun: async () => {
+      await deps.expression.entries.rerun();
+      return expressionHookState();
+    },
+    expressionLocate: (path?: string) => deps.expression.entries.locate(path),
+    expressionSetBudget: (level: ExprBudgetLevel) => {
+      const changed = deps.expression.entries.setBudget(level);
+      return { changed, ...expressionHookState() };
     },
   };
 }

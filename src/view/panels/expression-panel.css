@@ -1,0 +1,243 @@
+/* ==========================================================================
+   view/panels/expression-panel — 表达式面板 + 结果区常驻条（#27 / ADR-0018 §1 §8）
+   视觉 token 全部来自 view/styles/tokens.css（不新增颜色 / 字号档）；
+   外框（.panel / .side / .noticebar / .btn / .iconbtn）在 shell.css。
+   DOM 契约（#exprEditor / #exprRun / #exprStrict / #exprStatus / #exprError /
+   #exprExamples / #exprHistory / #exprBar*）冒烟脚本依赖，不要改名。
+   ========================================================================== */
+
+/* ---------------- 左面板显隐（与既有 panel 同一机制） ---------------- */
+
+body[data-panel="expression"] .side--left {
+  display: flex;
+}
+/* 表达式面板激活时，其它左面板内容让位 */
+body[data-panel="expression"] .panel--search,
+body[data-panel="expression"] .panel--outline,
+body[data-panel="expression"] .panel--settings {
+  display: none;
+}
+body:not([data-panel="expression"]) .panel--expression {
+  display: none;
+}
+
+.panel--expression {
+  gap: var(--sp-3);
+  padding: 10px 12px 12px;
+  overflow: hidden;
+}
+
+/* ---------------- CM6 输入区 ---------------- */
+
+.expr__editor {
+  position: relative;
+  flex: 1 1 140px;
+  min-height: 120px;
+  max-height: 160px;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.expr__editor:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.expr__editor .cm-editor {
+  height: 100%;
+}
+.expr__editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.expr__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--sp-4);
+  color: var(--faint);
+  font-size: var(--text-caption);
+  text-align: center;
+}
+
+/* 轻量正则上色（expression-editor.ts 的 Decoration.mark 类名） */
+.cm-expr-string {
+  color: var(--syntax-string);
+}
+.cm-expr-number {
+  color: var(--syntax-number);
+}
+.cm-expr-keyword {
+  color: var(--syntax-boolean);
+}
+.cm-expr-comment {
+  color: var(--syntax-null);
+  font-style: italic;
+}
+
+/* ---------------- 操作行：执行 / 严格模式 / 状态 ---------------- */
+
+.expr__ops {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.expr__run {
+  flex: 0 0 auto;
+  height: 28px;
+}
+.expr__strict {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--text-caption);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.expr__checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.expr__status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.expr__status[hidden] {
+  display: none;
+}
+
+/* ---------------- 行内错误 ---------------- */
+
+.expr__error {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-xs);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.expr__error[hidden] {
+  display: none;
+}
+
+/* ---------------- 示例 / 历史 ---------------- */
+
+.expr__lists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.expr__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.expr__section[hidden] {
+  display: none;
+}
+.expr__section-title {
+  padding: 0 var(--sp-2) var(--sp-1);
+  color: var(--faint);
+  font-size: var(--text-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* 示例 / 历史按钮：单行省略，全文进 title（完整文本悬停可看） */
+.expr-example,
+.expr-history-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  color: var(--syntax-key);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expr-history-item {
+  color: var(--text-2);
+}
+.expr-example:hover,
+.expr-history-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---------------- 结果区常驻条 #exprBar（位于树上方，撑满宽度） ----------------
+   正常 = 中性色；stale = 整条警告色（ADR-0018 §1）；截断只把图标染成警告色。
+   条显示时 .tree-wrap 由「横向居中」切成「纵向列」：条 32px、树让出 32px 继续滚动。 */
+
+#exprBar {
+  flex: 0 0 var(--repairbar-h);
+  width: 100%;
+}
+
+.exprbar {
+  background: var(--bg-panel-2);
+  border-bottom-color: var(--border);
+  color: var(--text-2);
+}
+.exprbar .noticebar__icon {
+  color: var(--accent);
+}
+.exprbar .noticebar__text {
+  color: var(--text-2);
+}
+.exprbar[data-stale="1"] {
+  background: var(--warn-bg);
+  border-bottom-color: var(--warn-border);
+}
+.exprbar[data-stale="1"] .noticebar__icon,
+.exprbar[data-stale="1"] .noticebar__text {
+  color: var(--warn);
+}
+.exprbar[data-truncated="1"] .noticebar__icon {
+  color: var(--warn);
+}
+.exprbar .noticebar__close {
+  color: var(--muted);
+}
+
+.tree-wrap:has(#exprBar:not([hidden])) {
+  flex-direction: column;
+  justify-content: flex-start;
+  min-height: 0;
+}
+.tree-wrap:has(#exprBar:not([hidden])) > .tree {
+  flex: 1 1 auto;
+  align-self: center;
+}

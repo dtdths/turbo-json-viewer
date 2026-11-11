@@ -2,7 +2,7 @@
  * view/panels/settings-panel — 设置面板的 DOM 层（ADR-0011 §1 / §4）。
  *
  * 边界：
- *   - 自建 9 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
+ *   - 自建 11 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
  *   - 控件状态只从 `Settings` 快照同步；用户改动经 `opts.onChange` 上抛，由 app 调
  *     `SettingsState.set()`，再经订阅回到 `render()`。本模块不读写存储、不碰主题/CSS 变量。
  *
@@ -12,6 +12,7 @@
  */
 import {
   COPY_INDENT_OPTIONS,
+  EXPR_BUDGET_OPTIONS,
   INDENT_OPTIONS,
   ROW_HEIGHT_OPTIONS,
   type Settings,
@@ -26,7 +27,6 @@ export interface SettingsPanelOptions {
 
 /** 10 项设置的任一值（= 各字段类型的联合） */
 type SettingValue = Settings[SettingsKey];
-
 interface SegItem {
   value: SettingValue;
   label: string;
@@ -90,6 +90,14 @@ const COPY_INDENT_ITEMS: readonly SegItem[] = [...COPY_INDENT_OPTIONS]
 const EXPORT_MODE_ITEMS: readonly SegItem[] = [
   { value: 'file', label: EXPORT_MODE_LABELS.file },
   { value: 'clipboard', label: EXPORT_MODE_LABELS.clipboard },
+];
+
+/** 表达式高级预算（#12 / ADR-0018 §7）：预设档位、不可自定义数值，标准为默认。
+ *  取值集合与 `EXPR_BUDGET_OPTIONS` 同源（normalizeSettings 会校验非法值回落默认）。 */
+const EXPR_BUDGET_ITEMS: readonly SegItem[] = [
+  { value: EXPR_BUDGET_OPTIONS[0], label: '宽松' },
+  { value: EXPR_BUDGET_OPTIONS[1], label: '标准' },
+  { value: EXPR_BUDGET_OPTIONS[2], label: '严格' },
 ];
 
 /* ---------------- helpers ---------------- */
@@ -158,6 +166,11 @@ export class SettingsPanel {
         key: 'adaptiveExpand',
         label: '小文档自动全部展开',
         hint: '≤500 行，关闭后保持默认折叠',
+      }),
+      this.buildSegRow({
+        key: 'advBudget',
+        label: '高级预算',
+        items: EXPR_BUDGET_ITEMS,
       }),
     );
   }

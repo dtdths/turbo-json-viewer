@@ -9,7 +9,7 @@ import { createDevHook, type DevHookDeps } from '../../../src/app/dev-hook';
 import { DocSession } from '../../../src/app/doc-session';
 import { CoreError } from '../../../src/protocol/errors';
 
-/** 58 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
+/** 69 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
 const HOOK_MEMBERS = [
   'loadText', 'scrollToPx', 'togglePath', 'expandAll', 'collapseAll', 'state',
   'search', 'searchNext', 'searchPrev', 'searchJump', 'searchMarkStale', 'setSearchFilter',
@@ -24,6 +24,10 @@ const HOOK_MEMBERS = [
   'fidelityState', 'fidelityJump', 'fidelityClose',
   'rawState', 'setViewMode', 'rawScrollTo', 'rawWindowText', 'rawLocate', 'rawRevealAt',
   'rawRepairAt', 'rawCopyText', 'rawCopy',
+  // #27 / ADR-0018 §9：表达式视图（11 个）
+  'expressionState', 'expressionOpen', 'expressionSetText', 'expressionRun', 'expressionRunText',
+  'expressionComplete', 'expressionSetStrict', 'expressionBack', 'expressionRerun', 'expressionLocate',
+  'expressionSetBudget',
 ].sort();
 
 function fakeElement(over: Record<string, unknown> = {}): HTMLElement {
@@ -133,6 +137,31 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
       contextMenu: { menu: fakeElement(), items: () => [], show: () => {}, rowElement: () => null },
       clipboardText: async () => null,
     },
+    expression: {
+      panel: {
+        state: () => ({ text: '', strict: false, running: false, status: '', error: null, examples: [], history: [] }),
+      },
+      bar: {
+        state: () => ({ hidden: true, text: '', stale: false, truncated: false, rerunVisible: false, backVisible: false }),
+      },
+      view: () => null,
+      active: () => false,
+      stale: () => false,
+      budget: () => 'standard',
+      statusState: () => '',
+      entries: {
+        open: async () => {},
+        setText: () => {},
+        run: async () => {},
+        runText: async () => {},
+        complete: async () => [],
+        setStrict: () => {},
+        back: () => {},
+        rerun: async () => {},
+        locate: async () => ({ path: null }),
+        setBudget: () => false,
+      },
+    },
     ui: {
       statusRows: fakeElement({ textContent: '0 行' }),
       editBadge: fakeElement({ hidden: true, textContent: '已修改 0 处' }),
@@ -168,7 +197,7 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
 }
 
 describe('dev hook — API 契约与纯快照组装', () => {
-  it('成员表逐字保持（58 个，顺序无关）', () => {
+  it('成员表逐字保持（69 个，顺序无关）', () => {
     const hook = createDevHook(fakeDeps());
     expect(Object.keys(hook).sort()).toEqual(HOOK_MEMBERS);
     for (const key of HOOK_MEMBERS) expect(typeof hook[key]).toBe('function');

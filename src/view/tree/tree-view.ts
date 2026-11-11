@@ -25,6 +25,11 @@ export interface TreeViewOptions {
   onScroll(scrollTopPx: number): void;
   onToggle(path: string, open: boolean): void;
   onSelect(path: string): void;
+  /**
+   * 鼠标点击行（caret / 项数标 / 行尾浮条除外）。与 `onSelect` 的区别：键盘移动**不**触发。
+   * 表达式结果视图用它做「点结果行跳回原文档」（ADR-0018 §1），避免方向键移动也触发跳转。
+   */
+  onRowClick?(path: string): void;
   /** 编辑意图（slice 5）：行双击 / F2。不提供时该入口静默不可用。 */
   onEdit?(path: string): void;
   /** 行右键（slice 5 / ADR-0010）：app 负责弹菜单；上报路径、屏幕坐标与**该行数据**（菜单启用态用）。 */
@@ -102,6 +107,7 @@ export class TreeView {
     }
     if (target.closest('.row__actions')) return;
     this.opts.onSelect(path);
+    this.opts.onRowClick?.(path);
   };
 
   private readonly onKeyDownBound = (event: KeyboardEvent): void => {

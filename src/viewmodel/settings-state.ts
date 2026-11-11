@@ -6,7 +6,7 @@
  *
  * 红线：只存本地（chrome.storage.local / localStorage 兜底），永不存文档内容。
  */
-import type { CopyFormat } from '../protocol/types';
+import type { CopyFormat, ExprBudgetLevel } from '../protocol/types';
 import { normalizeExportMode, type ExportMode } from './export-state';
 
 export type SettingsKey =
@@ -19,7 +19,8 @@ export type SettingsKey =
   | 'searchCopyFormat'
   | 'exportMode'
   | 'repairTruncated'
-  | 'adaptiveExpand';
+  | 'adaptiveExpand'
+  | 'advBudget';
 
 export interface Settings {
   theme: 'dark' | 'light';
@@ -41,12 +42,14 @@ export interface Settings {
   repairTruncated: boolean;
   /** 小文档加载即全展开 */
   adaptiveExpand: boolean;
+  /** 表达式高级预算档位（第 11 项；ADR-0018 §7）：宽松 / 标准（默认）/ 严格 */
+  advBudget: ExprBudgetLevel;
 }
 
 /** 布局态（主题之外的工作区 UI 状态，ADR-0011 §2） */
 export interface UiState {
-  /** 左面板模式；`none` = 左面板关闭（大纲面板 = ADR-0013） */
-  panel: 'none' | 'doc' | 'search' | 'outline' | 'settings';
+  /** 左面板模式；`none` = 左面板关闭（大纲面板 = ADR-0013；表达式 = ADR-0018） */
+  panel: 'none' | 'doc' | 'search' | 'outline' | 'settings' | 'expression';
   /** 右侧工作区折叠 */
   railCollapsed: boolean;
   /** 视图模式（ADR-0003 修订 2026-11-03）：树视图 / 原始文本视图 */
@@ -59,6 +62,8 @@ export const UI_STORAGE_KEY = 'tjv.ui.v1';
 export const ROW_HEIGHT_OPTIONS = [20, 22, 24, 26] as const;
 export const INDENT_OPTIONS = [12, 16, 20] as const;
 export const COPY_INDENT_OPTIONS = [0, 2, 4] as const;
+/** 表达式预算档位（顺序 = 面板展示顺序；标准为默认） */
+export const EXPR_BUDGET_OPTIONS = ['loose', 'standard', 'strict'] as const;
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
@@ -71,6 +76,7 @@ export const DEFAULT_SETTINGS: Settings = {
   exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
+  advBudget: 'standard',
 };
 
 export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, viewMode: 'tree' };
@@ -111,6 +117,9 @@ export function normalizeSettings(raw: unknown): Settings {
     exportMode: normalizeExportMode(bag.exportMode),
     repairTruncated: pickBoolean(bag.repairTruncated, DEFAULT_SETTINGS.repairTruncated),
     adaptiveExpand: pickBoolean(bag.adaptiveExpand, DEFAULT_SETTINGS.adaptiveExpand),
+    advBudget: (EXPR_BUDGET_OPTIONS as readonly string[]).includes(bag.advBudget as string)
+      ? (bag.advBudget as Settings['advBudget'])
+      : DEFAULT_SETTINGS.advBudget,
   };
 }
 
@@ -120,7 +129,12 @@ export function normalizeUiState(raw: unknown): UiState {
   const panel = bag.panel;
   return {
     panel:
-      panel === 'none' || panel === 'doc' || panel === 'search' || panel === 'outline' || panel === 'settings'
+      panel === 'none' ||
+      panel === 'doc' ||
+      panel === 'search' ||
+      panel === 'outline' ||
+      panel === 'settings' ||
+      panel === 'expression'
         ? panel
         : DEFAULT_UI_STATE.panel,
     railCollapsed: pickBoolean(bag.railCollapsed, DEFAULT_UI_STATE.railCollapsed),

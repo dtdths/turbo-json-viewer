@@ -39,6 +39,7 @@ export type LandingIntent =
   | { kind: 'subtree' } // 整棵子树展开 / 收起
   | { kind: 'expandAll' } // 全部展开 / 收起（回顶）
   | { kind: 'edit' } // 值图编辑（replaceNode / undo / redo / reset）
+  | { kind: 'expression' } // 表达式结果（expr:N）成为当前视图根（回顶 + 清选中）
   | { kind: 'jump'; path: string; row: number }; // expandTo 跳转（居中 + 选中）
 
 /** 滚动策略（目标 px 已算好；执行器只照做）。 */
@@ -122,11 +123,20 @@ export class DocSession {
       reapplyHits: intent.kind === 'subtree' || intent.kind === 'expandAll',
       refreshOutline: edit,
       markSearchStale: edit,
-      clearSelection: intent.kind === 'document',
+      clearSelection: intent.kind === 'document' || intent.kind === 'expression',
       selectPath: intent.kind === 'jump' ? intent.path : undefined,
       flashPath: edit ? reply.changedPath : undefined,
       history: edit ? reply.history : undefined,
     };
+  }
+
+  /**
+   * 还原一份会话快照（表达式视图返回文档树用，ADR-0018 §1）：
+   * 表达式结果根是**视图层临时切换**，文档根的 rootId/docRevision/rowVersion/totalRows 原样恢复，
+   * 不重新走 `land()`（避免把 expr 根的 rowVersion 写进文档会话）。
+   */
+  restore(state: SessionState): void {
+    this.state = { ...state };
   }
 }
 
@@ -138,6 +148,8 @@ function scrollPlanFor(
   delta: number,
 ): ScrollPlan {
   if (intent.kind === 'document' || intent.kind === 'expandAll') return { kind: 'top' };
+  // 表达式结果：新视图根从顶部开始（用户正在看结果的第一屏）
+  if (intent.kind === 'expression') return { kind: 'top' };
 
   if (intent.kind === 'jump') {
     const viewportPx = ctx.viewportPx;
