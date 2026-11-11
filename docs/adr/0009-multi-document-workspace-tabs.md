@@ -109,11 +109,11 @@ core `RootStore.close` + `DocService.load` 不覆盖 + `closeRoot` 释放旁路�
 ### 验收结果（本机实测 2026-11-11）
 
 - `npm run check`：tsc + **893 单测（34 文件）全绿** + build（#18 新增 53 条：workspace-state 30 / root-store 9 / doc-service 7 / 契约 4 / dev-hook 3，840 → 893）。
-- **15 套真机冒烟串行全绿**（新增第 15 套 `smoke-workspace` **42/42**；其余 14 套计数不变：search 97、extension-search 56、outline 53、expression 45、copy 38、raw 26、settings 25、fidelity 24、expand 21、export 21、edit 14、repair 14 + `smoke`/`smoke:ext` 打 OK）。
+- **15 套真机冒烟串行全绿**（新增第 15 套 `smoke-workspace` **45/45**；其余 14 套计数不变：search 97、extension-search 56、outline 53、expression 45、copy 38、raw 26、settings 25、fidelity 24、expand 21、export 21、edit 14、repair 14 + `smoke`/`smoke:ext` 打 OK）。
   `smoke-workspace` 覆盖：单文档零视觉变化（标签条 hidden、布局高度 0、树视口不变）/ 入口层「替换 ⇄ 新标签」切换与 `＋` /
-  32px 与 `role=tablist`/`aria-selected` / 每标签独立展开态·滚动·选中·搜索（含面板输入框回填）/ **表达式结果视图不跨标签串味且切回可恢复** / 替换标签后另一标签不受影响 /
+  32px 与 `role=tablist`/`aria-selected` / 每标签独立展开态·滚动·选中·搜索（含面板输入框回填）/ **表达式结果视图不跨标签串味、结果根上照常展开/全部展开（ADR-0018 §1）、在结果视图里导入不污染标签存档** / 替换标签后另一标签不受影响 /
   关活动标签相邻接管、关最后回空态 / 软上限 8（`＋` 禁用 + title）/ 第 2 份大文档内存提示（小文档不提示）/ 深亮两套截图。
-- 体积（minify gz）：`page.js` **41.0 → 44.6KB**（预算 45，**未超、未修订预算**）、`worker.js` **58.7** 不变、
+- 体积（minify gz）：`page.js` **41.0 → 44.9KB**（预算 45，**未超、未修订预算**）、`worker.js` **58.7** 不变、
   `page.css` 7.8 → **8.0**、懒加载 chunk 合计 145.4 → **145.6KB**（预算 146）。标签条与工作区代码在首屏 `page.js`，未进懒加载。
 - 截图：`.spike/smoke/workspace-{two-tabs,light,empty}.png`。
 
@@ -122,6 +122,7 @@ core `RootStore.close` + `DocService.load` 不覆盖 + `closeRoot` 释放旁路�
 - **拖放按落点分流**（标签条空白 vs 文档视图）只有代码与手测，**没有自动化覆盖**（headless 里造 DataTransfer 不可靠）。
 - **watchdog 重载后工作区丢失**（`restartAfterWatchdog` 走页面重载；会话恢复本就不在 v1，ADR §4 明确不做）。
 - **标签顺序拖拽排序**未做（设计没要求）；满 8 提示用按钮 `title`，无额外弹窗。
-- `loadId` 抢占仍是**全局**的：页面已串行化导入（入口层 busy 锁），并发导入会互相 CANCELLED（记录在案）。
+- `loadId` 抢占仍是**全局**的（不是按标签）：页面用入口层 busy 拒绝并发 paste/drop，并把被作废的 load 回包
+  用 `closeRoot` 释放（不留孤儿根）；真要做并发导入需按标签排队，另行设计。
 - **closeRoot 后堆回落**只有单测层面的「真丢引用」，没有 `performance.memory` 级实测（Worker 堆不在主线程 API 可见范围）。
 - 表达式结果视图切标签不自动重进（切走回文档树、结果按标签保留；再点左面板「表达式」即恢复）。
