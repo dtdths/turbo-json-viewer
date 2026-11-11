@@ -26,6 +26,8 @@ export interface RowContext {
   searchTerm?: string;
   typeColumn: boolean;
   showActions: boolean;
+  /** 是否显示「在原文中定位」按钮（#30 / ADR-0019）：表达式结果视图 / plain 模式不显示 */
+  locateRaw: boolean;
 }
 
 export interface RowRenderer {
@@ -92,15 +94,27 @@ function createChevron(): SVGSVGElement {
   return svg;
 }
 
-function createAction(action: 'copy' | 'edit'): HTMLButtonElement {
+const ACTION_LABEL: Record<'copy' | 'edit' | 'raw', string> = {
+  copy: '复制子树 JSON',
+  edit: '编辑此节点 JSON',
+  raw: '在原文中定位',
+};
+
+const ACTION_GLYPH: Record<'copy' | 'edit' | 'raw', string> = {
+  copy: '⧉',
+  edit: '✎',
+  raw: '⇠',
+};
+
+function createAction(action: 'copy' | 'edit' | 'raw'): HTMLButtonElement {
   const el = document.createElement('button');
   el.type = 'button';
   // 鼠标快路径：不进 Tab 序列（键盘用户走 F2 编辑 / 右键菜单），见 ADR-0010 修订
   el.tabIndex = -1;
   el.className = 'row__action';
   el.dataset.action = action;
-  el.setAttribute('aria-label', action === 'copy' ? '复制子树 JSON' : '编辑此节点 JSON');
-  el.textContent = action === 'copy' ? '⧉' : '✎';
+  el.setAttribute('aria-label', ACTION_LABEL[action]);
+  el.textContent = ACTION_GLYPH[action];
   return el;
 }
 
@@ -124,6 +138,7 @@ interface RowSlot {
   readonly preview: HTMLSpanElement;
   readonly type: HTMLSpanElement;
   readonly actions: HTMLSpanElement;
+  readonly locateRaw: HTMLButtonElement;
   visible: boolean;
 }
 
@@ -246,6 +261,9 @@ export class DomRowPool implements RowRenderer {
     actions.className = 'row__actions';
     actions.appendChild(createAction('copy'));
     actions.appendChild(createAction('edit'));
+    // 「在原文中定位」（#30 / ADR-0019）：没有源文本的根（表达式结果）/ plain 模式按 ctx 隐藏
+    const locateRaw = createAction('raw');
+    actions.appendChild(locateRaw);
 
     el.append(guides, caret, keyEl, colon, value, count, preview, type, actions);
     host.appendChild(el);
@@ -262,6 +280,7 @@ export class DomRowPool implements RowRenderer {
       preview,
       type,
       actions,
+      locateRaw,
       visible: false,
     };
     this.slots.push(slot);
@@ -335,6 +354,7 @@ export class DomRowPool implements RowRenderer {
     slot.type.textContent = ctx.typeColumn ? (TYPE_LABEL[row.kind] ?? '?') : '';
 
     slot.actions.hidden = !ctx.showActions;
+    slot.locateRaw.hidden = !ctx.locateRaw;
 
     el.classList.toggle('is-selected', ctx.selected);
     el.classList.toggle('is-hit', ctx.hit);

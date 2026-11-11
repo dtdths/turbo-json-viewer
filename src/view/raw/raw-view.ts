@@ -14,7 +14,7 @@
  *   - 禁止 innerHTML 拼数据：只用 createElement / createTextNode / textContent；
  *   - 固定行高：行内容单行不换行（白空间 pre），行高由 CSS 变量 --row-h 锁死。
  */
-import { JsonLexer, TOK } from '../../shared/json-lex';
+import { CH, JsonLexer, TOK } from '../../shared/json-lex';
 import { clampRowHeight } from '../../shared/num';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
 import type { RawSnapshot } from '../../viewmodel/raw-window-source';
@@ -22,6 +22,13 @@ import type { RawSnapshot } from '../../viewmodel/raw-window-source';
 export interface RawViewOptions {
   rowHeight: number;
   onScroll(scrollTopPx: number): void;
+  /**
+   * 行号 gutter 的「跳到树视图」按钮点击（#30 / ADR-0019）：参数 = 1-based 绝对行号。
+   * 未提供时不显示按钮（plain 模式同理）。
+   */
+  onLocate?(line: number): void;
+  /** 行右键（#30）：参数 = 1-based 绝对行号 + 屏幕坐标；未提供则不拦系统菜单。 */
+  onContextMenu?(line: number, x: number, y: number): void;
 }
 
 export const FLASH_MS = 900;
@@ -46,10 +53,24 @@ interface RawSlot {
   readonly key: number;
   readonly el: HTMLDivElement;
   readonly ln: HTMLSpanElement;
+  readonly num: HTMLSpanElement;
+  readonly locate: HTMLButtonElement;
   readonly code: HTMLSpanElement;
   visible: boolean;
   /** 槽位当前显示的绝对行号（1-based；隐藏时为 0） */
   lineNo: number;
+}
+
+/** 行首 token 是结构行（没有节点锚点）的字符：`}` / `]` / `,` / `:` */
+const STRUCTURAL_CHARS = new Set<number>([CH.RBRACE, CH.RBRACK, CH.COMMA, CH.COLON]);
+
+/** 行首非空白字符（与「锚点粒度」同口径，ADR-0019 §3）；空行 → -1 */
+function firstTokenChar(line: string): number {
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charCodeAt(i);
+    if (c !== 32 && c !== 9 && c !== 13) return c;
+  }
+  return -1;
 }
 
 /**
@@ -113,6 +134,29 @@ export class RawView {
     this.opts.onScroll(this.scroller.scrollTop);
   };
 
+  /** 行号 gutter 按钮（行池复用下按行号定位，不绑死在槽位上）。 */
+  private readonly onClickBound = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLElement>('.raw-row__locate');
+    if (!button) return;
+    const row = button.closest<HTMLElement>('.raw-row');
+    const line = Number(row?.dataset.line);
+    if (!Number.isFinite(line) || line <= 0) return;
+    event.preventDefault();
+    this.opts.onLocate?.(line);
+  };
+
+  /** 行右键（#30）：交给 app 弹菜单（键盘等价入口，ADR-0015）。 */
+  private readonly onContextMenuBound = (event: MouseEvent): void => {
+    if (!this.opts.onContextMenu) return;
+    const target = event.target as HTMLElement | null;
+    const row = target?.closest<HTMLElement>('.raw-row');
+    const line = Number(row?.dataset.line);
+    if (!Number.isFinite(line) || line <= 0) return;
+    event.preventDefault();
+    this.opts.onContextMenu(line, event.clientX, event.clientY);
+  };
+
   constructor(host: HTMLElement, opts: RawViewOptions) {
     this.host = host;
     this.opts = opts;
@@ -145,6 +189,8 @@ export class RawView {
     this.rowsHost = rowsHost;
 
     scroller.addEventListener('scroll', this.onScrollBound, { passive: true });
+    scroller.addEventListener('click', this.onClickBound);
+    scroller.addEventListener('contextmenu', this.onContextMenuBound);
     if (this.lastSnapshot) this.render(this.lastSnapshot);
   }
 
@@ -163,15 +209,19 @@ export class RawView {
     scroller.dataset.mode = snapshot.mode;
 
     const highlight = snapshot.mode !== 'plain';
+    // 双向定位只在「解析成功」的原文上有意义：plain（修复文档）不显示按钮
+    const canLocate = this.opts.onLocate !== undefined && snapshot.mode !== 'plain';
     const lines = snapshot.lines;
     for (let i = 0; i < lines.length; i++) {
       const slot = this.slots[i] ?? this.allocSlot();
+      const text = lines[i] as string;
       this.fill(
         slot,
         snapshot.start + i + 1,
-        lines[i] as string,
+        text,
         snapshot.truncated[i] ?? 0,
         highlight,
+        canLocate && !STRUCTURAL_CHARS.has(firstTokenChar(text)),
       );
       slot.el.style.top = `${(snapshot.start + i) * rowHeight}px`;
     }
@@ -285,6 +335,8 @@ export class RawView {
     const scroller = this.scroller;
     if (scroller) {
       scroller.removeEventListener('scroll', this.onScrollBound);
+      scroller.removeEventListener('click', this.onClickBound);
+      scroller.removeEventListener('contextmenu', this.onContextMenuBound);
       scroller.remove();
     }
     this.scroller = null;
@@ -309,6 +361,19 @@ export class RawView {
     ln.className = 'raw-row__ln';
     ln.setAttribute('aria-hidden', 'true');
 
+    const num = document.createElement('span');
+    num.className = 'raw-row__num';
+    ln.appendChild(num);
+
+    // 行号 gutter 的跳树按钮（#30）：覆盖整个 gutter，hover 行时显示（不改变布局/gutter 宽度）
+    const locate = document.createElement('button');
+    locate.type = 'button';
+    locate.className = 'raw-row__locate';
+    locate.tabIndex = -1;
+    locate.hidden = true;
+    locate.textContent = '⇢';
+    ln.appendChild(locate);
+
     const code = document.createElement('span');
     code.className = 'raw-row__code';
 
@@ -319,6 +384,8 @@ export class RawView {
       key: this.slots.length,
       el,
       ln,
+      num,
+      locate,
       code,
       visible: false,
       lineNo: 0,
@@ -333,12 +400,19 @@ export class RawView {
     text: string,
     truncated: number,
     highlight: boolean,
+    anchorable: boolean,
   ): void {
     slot.visible = true;
     slot.lineNo = lineNo;
     slot.el.hidden = false;
     slot.el.dataset.line = String(lineNo);
-    slot.ln.textContent = String(lineNo);
+    slot.num.textContent = String(lineNo);
+    slot.locate.hidden = !anchorable;
+    if (anchorable) {
+      const label = `在树视图中定位（第 ${lineNo} 行）`;
+      slot.locate.title = label;
+      slot.locate.setAttribute('aria-label', label);
+    }
     writeLine(this.lex, slot.code, text, highlight);
 
     if (truncated > 0) {
@@ -363,7 +437,8 @@ export class RawView {
     delete slot.el.dataset.truncated;
     slot.el.removeAttribute('title');
     // 隐藏槽位清空文本，否则上一批窗口的行文本会留在池里被审计看到
-    slot.ln.textContent = '';
+    slot.locate.hidden = true;
+    slot.num.textContent = '';
     slot.code.replaceChildren();
   }
 

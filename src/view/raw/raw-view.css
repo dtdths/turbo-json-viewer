@@ -81,6 +81,36 @@
 }
 
 /* 行文本：逐字（white-space: pre 保留缩进 / 尾随空白），不换行、不加省略号。 */
+/* 行号 gutter 内的「跳到树视图」按钮（#30 / ADR-0019）：覆盖整个 gutter、hover 行才出现；
+   不改变 gutter 宽度/行号对齐（数字被按钮底色盖住，移开即恢复）。图标-only + aria-label。 */
+.tjv-raw .raw-row__locate {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: var(--text-mono, 12.5px);
+  line-height: 1;
+  color: var(--muted, #8b93a7);
+  background: var(--bg-panel, #11141b);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.tjv-raw .raw-row:hover .raw-row__locate {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tjv-raw .raw-row__locate:hover {
+  color: var(--text, #e7eaf0);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.045));
+}
+.tjv-raw .raw-row__locate[hidden] { display: none; }
+
 .tjv-raw .raw-row__code {
   flex: 0 0 auto;
   padding: 0 24px 0 12px;

@@ -21,6 +21,8 @@ import type {
   JsonKind,
   RawLocateReply,
   RawMeta,
+  RawOffsetOfReply,
+  RawPathAtReply,
   RawWindow,
   Row,
 } from '../protocol/types';
@@ -182,6 +184,12 @@ export interface FidelityHookState {
   jumpVisible: boolean;
   viewMode: 'tree' | 'raw';
   statusRows: string;
+}
+
+/** 双向定位快照（#30 / ADR-0019）：busy + 本标签记住的对照锚点。 */
+export interface LocateHookState {
+  busy: boolean;
+  anchor: { path: string; line: number } | null;
 }
 
 export interface ExportHookState {
@@ -455,6 +463,12 @@ export interface DevHookDeps {
     resetEdits(): Promise<boolean>;
     setViewMode(mode: 'tree' | 'raw'): Promise<void>;
     revealRepairOffset(offset: number): Promise<number>;
+    jumpTreeToRaw(path: string): Promise<number>;
+    jumpRawToTree(line: number): Promise<string | null>;
+    locateBusy(): boolean;
+    locateAnchor(): { path: string; line: number } | null;
+    rawCtxMenu: HTMLElement;
+    rawCtxOpen(line: number, x: number, y: number): void;
     openSettings(): SettingsOpenState;
     treeGeometry(): TreeGeometryState;
     contextMenu: {
@@ -650,6 +664,14 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       lines: rawView.renderedLines(),
     };
   };
+
+  const locateHookState = (): LocateHookState => ({
+    busy: deps.entries.locateBusy(),
+    anchor: deps.entries.locateAnchor(),
+  });
+
+  const rawCtxItems = (): HTMLButtonElement[] =>
+    Array.from(deps.entries.rawCtxMenu.querySelectorAll<HTMLButtonElement>('[data-raw-act]'));
 
   const exportState = (): ExportHookState => {
     const items = ui.exportMenuItems();
@@ -1018,6 +1040,67 @@ export function createDevHook(deps: DevHookDeps): DevHook {
         if ((ui.toast.textContent ?? '') !== before) break;
       }
       return { toast: ui.toast.hidden ? '' : (ui.toast.textContent ?? ''), ...rawHookState() };
+    },
+
+    // ---- 双向定位 dev hook（#30 / ADR-0019）----
+    locateState: () => locateHookState(),
+    rawPathAt: async (line: number) => {
+      if (!session.rootId) return null;
+      try {
+        return await core.rawPathAt({ rootId: session.rootId, line });
+      } catch {
+        return null;
+      }
+    },
+    rawOffsetOf: async (path: string) => {
+      if (!session.rootId) return null;
+      try {
+        return await core.rawOffsetOf({ rootId: session.rootId, path });
+      } catch {
+        return null;
+      }
+    },
+    rawLocateClick: async (line: number) => {
+      const started = performance.now();
+      const row = document.querySelector<HTMLElement>(`.raw-row[data-line="${line}"]`);
+      const button = row?.querySelector<HTMLButtonElement>('.raw-row__locate') ?? null;
+      if (!button || button.hidden) {
+        return { clicked: false, path: null, ms: ms(started), ...stateOf(), ...rawHookState() };
+      }
+      button.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      return {
+        clicked: true,
+        path: deps.selected(),
+        ms: ms(started),
+        ...stateOf(),
+        ...rawHookState(),
+      };
+    },
+    treeLocateClick: async (path: string) => {
+      const started = performance.now();
+      const row = document.querySelector<HTMLElement>(`.row[data-path="${CSS.escape(path)}"]`);
+      const button =
+        row?.querySelector<HTMLButtonElement>('.row__action[data-action="raw"]') ?? null;
+      if (!button || button.hidden) {
+        return { clicked: false, line: null, ms: ms(started), ...rawHookState() };
+      }
+      button.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      return { clicked: true, line: rawView.flashedLine(), ms: ms(started), ...rawHookState() };
+    },
+    rawCtxOpen: (line: number, x = 240, y = 200) => {
+      deps.entries.rawCtxOpen(line, x, y);
+      return {
+        open: !deps.entries.rawCtxMenu.hidden,
+        items: rawCtxItems().map((item) => (item.textContent ?? '').trim()),
+      };
+    },
+    rawCtxClick: () => {
+      const item = rawCtxItems().find((entry) => !entry.disabled) ?? null;
+      if (!item) return false;
+      item.click();
+      return true;
     },
 
     // ---- 表达式视图 dev hook（#27 / ADR-0018 §9）----

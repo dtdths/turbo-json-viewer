@@ -254,6 +254,49 @@ try {
   );
   await page.screenshot(path.join(SHOTS, 'raw-edited.png'));
 
+  // ---- phase 6.6：双向定位（#30 / ADR-0019）：gutter 按钮 → 树；树浮条 → 原文；结构行无按钮 ----
+  await runPhase(
+    'locate',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      await h.loadText(${JSON.stringify(PRETTY)}, 'locate.json');
+      await sleep(350);
+      await h.setViewMode('raw');
+      await sleep(300);
+      // 行 3 = \`  "b": {\`（源码行模式）：gutter 按钮可锚定；点它 → 切树 + 选中 $.b
+      const row = document.querySelector('.raw-row[data-line="3"]');
+      const locateBtn = row && row.querySelector('.raw-row__locate');
+      out.line3 = {
+        text: row ? (row.querySelector('.raw-row__code').textContent ?? '') : null,
+        buttonVisible: Boolean(locateBtn && !locateBtn.hidden),
+        buttonLabel: locateBtn ? locateBtn.getAttribute('aria-label') : null,
+      };
+      out.toTree = await h.rawLocateClick(3);
+      await sleep(200);
+      out.afterToTree = h.state();
+      out.anchor = h.locateState();
+      // 反向：树行 $.d 的行尾浮条第三钮 → 切原文 + 闪烁对应行（第 9 行）
+      out.toRaw = await h.treeLocateClick('$.d');
+      await sleep(200);
+      out.afterToRaw = h.rawState();
+      // 结构行（闭括号/逗号）不显示按钮
+      const rows = [...document.querySelectorAll('.raw-row')];
+      const closeRow = rows.find((r) => (r.querySelector('.raw-row__code')?.textContent ?? '').trim().startsWith('}'));
+      out.structuralHidden = closeRow ? Boolean(closeRow.querySelector('.raw-row__locate')?.hidden) : null;
+      // 右键菜单（键盘等价入口，ADR-0015）：打开 → 点唯一项 → 回树
+      out.menu = h.rawCtxOpen(3);
+      out.menuClick = h.rawCtxClick();
+      await sleep(250);
+      out.afterMenu = h.state();
+      out.anchorAfterMenu = h.locateState();
+      // 按组挂到 report.locate（Object.assign 语义：顶层 = 组名）
+      return { locate: out };
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'raw-locate.png'));
+
   // ---- phase 6.5：读长任务（刷新前；页面重载会清掉 window 状态）----
   await runPhase(
     'perf-before',
@@ -400,6 +443,28 @@ const checks = {
     report.edited?.afterSearch?.state?.view === 'tree' &&
     report.edited?.afterSearch?.state?.mode === 'tree',
 
+  // 双向定位（#30 / ADR-0019）
+  'locate:gutter-button':
+    report.locate?.line3?.buttonVisible === true &&
+    /"b"/.test(report.locate?.line3?.text ?? '') &&
+    /第 3 行/.test(report.locate?.line3?.buttonLabel ?? ''),
+  'locate:to-tree-selected':
+    report.locate?.toTree?.clicked === true &&
+    report.locate?.afterToTree?.selected === '$.b' &&
+    report.locate?.afterToTree?.viewMode === 'tree',
+  'locate:anchor-remembered':
+    report.locate?.anchor?.anchor?.path === '$.b' && report.locate?.anchor?.anchor?.line === 3,
+  'locate:tree-to-raw':
+    report.locate?.toRaw?.clicked === true &&
+    report.locate?.afterToRaw?.mode === 'raw' &&
+    Number(report.locate?.afterToRaw?.flash) === 9,
+  'locate:structural-no-button': report.locate?.structuralHidden === true,
+  'locate:context-menu':
+    (report.locate?.menu?.items ?? []).some((text) => String(text).includes('在树视图中定位')) &&
+    report.locate?.menuClick === true &&
+    report.locate?.afterMenu?.selected === '$.b' &&
+    report.locate?.afterMenu?.viewMode === 'tree',
+
   // 持久化
   'persist:ui-viewMode': report.persistBefore?.state?.ui?.viewMode === 'raw',
   'persist:restored':
@@ -426,6 +491,7 @@ if (Object.values(checks).some((ok) => !ok)) {
     big: { end: report.big?.end, mid: report.big?.mid },
     repair: { after: report.repair?.after, locate: report.repair?.locate, atButtons: report.repair?.atButtons },
     edited: report.edited,
+    locate: report.locate,
     reloaded: report.reloaded,
   };
   console.log(`\n--- debug ---\n${JSON.stringify(debug, null, 2)}`);

@@ -30,7 +30,7 @@ import { startStaticServer } from '../prototype/p1/lib/http.mjs';
 const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 await mkdir(SHOTS, { recursive: true });
 
-/** 固定菜单契约（ADR-0010 §1 / 修订 2026-11-09 #22）：7 项、DOM 顺序即此顺序。 */
+/** 固定菜单契约（ADR-0010 §1 / 修订 2026-11-09 #22 / #30 ADR-0019）：8 项、DOM 顺序即此顺序。 */
 const MENU_ACTS = [
   'copy-subtree',
   'copy-path',
@@ -39,6 +39,7 @@ const MENU_ACTS = [
   'expand-subtree',
   'collapse-subtree',
   'edit',
+  'locate-raw',
 ];
 const MENU_LABELS = [
   '复制子树 JSON',
@@ -48,6 +49,7 @@ const MENU_LABELS = [
   '展开整棵子树',
   '收起整棵子树',
   '编辑此节点 JSON',
+  '在原文中定位',
 ];
 
 /**
@@ -557,7 +559,8 @@ const checks = {
   'menu:open-focus-first-enabled': report.menuContract?.openFocus === 'copy-subtree',
   'menu:arrow-down': report.menuContract?.arrowDownFocus === 'copy-path',
   'menu:home-end':
-    report.menuContract?.endFocus === 'edit' && report.menuContract?.homeFocus === 'copy-subtree',
+    report.menuContract?.endFocus === 'locate-raw' &&
+    report.menuContract?.homeFocus === 'copy-subtree',
   'menu:escape-closes-and-restores-tree-focus':
     report.menuContract?.escape?.open === false && report.menuContract?.escape?.focusTree === true,
   'menu:tab-closes-and-restores-tree-focus':
@@ -635,10 +638,12 @@ const checks = {
     clipboardOk(report.keyClick, 'b.c'),
 
   'row-action:buttons':
-    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.tag)) === JSON.stringify(['BUTTON', 'BUTTON']) &&
-    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.action)) === JSON.stringify(['copy', 'edit']) &&
+    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.tag)) ===
+      JSON.stringify(['BUTTON', 'BUTTON', 'BUTTON']) &&
+    JSON.stringify((report.rowActionButtons ?? []).map((b) => b.action)) ===
+      JSON.stringify(['copy', 'edit', 'raw']) &&
     JSON.stringify((report.rowActionButtons ?? []).map((b) => b.label)) ===
-      JSON.stringify(['复制子树 JSON', '编辑此节点 JSON']) &&
+      JSON.stringify(['复制子树 JSON', '编辑此节点 JSON', '在原文中定位']) &&
     (report.rowActionButtons ?? []).every((b) => b.tabIndex === -1),
   // 浮条容器不再 aria-hidden（按钮自带 aria-label，AT 可读）
   'row-action:no-aria-hidden': report.rowActionAriaHidden === null,

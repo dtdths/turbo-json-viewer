@@ -34,8 +34,11 @@ export interface TreeViewOptions {
   onEdit?(path: string): void;
   /** 行右键（slice 5 / ADR-0010）：app 负责弹菜单；上报路径、屏幕坐标与**该行数据**（菜单启用态用）。 */
   onContextMenu?(path: string, x: number, y: number, row: Row): void;
-  /** 行尾浮条动作（ADR-0010 修订）：鼠标快路径 copy=子树 JSON / edit=弹层；未提供时按钮无动作。 */
-  onRowAction?(path: string, action: 'copy' | 'edit'): void;
+  /**
+   * 行尾浮条动作（ADR-0010 修订）：鼠标快路径 copy=子树 JSON / edit=弹层；
+   * raw=在原文中定位（#30 / ADR-0019）。未提供时按钮无动作。
+   */
+  onRowAction?(path: string, action: 'copy' | 'edit' | 'raw'): void;
 }
 
 export interface TreeSearchState {
@@ -70,6 +73,8 @@ export class TreeView {
   private searchTerm: string | undefined;
   private typeColumn = false;
   private showActions = true;
+  /** 行尾「在原文中定位」按钮（#30）：表达式结果根 / plain 模式由 app 关闭 */
+  private locateRawVisible = true;
 
   private readonly onScrollBound = (): void => {
     if (!this.scroller) return;
@@ -100,7 +105,7 @@ export class TreeView {
     const actionEl = target.closest<HTMLElement>('.row__action');
     if (actionEl) {
       const action = actionEl.dataset.action;
-      if (action !== 'copy' && action !== 'edit') return;
+      if (action !== 'copy' && action !== 'edit' && action !== 'raw') return;
       this.opts.onSelect(path);
       this.opts.onRowAction?.(path, action);
       return;
@@ -264,6 +269,7 @@ export class TreeView {
         searchTerm: this.hitPaths.has(row.path) ? this.searchTerm : undefined,
         typeColumn: this.typeColumn,
         showActions: this.showActions,
+        locateRaw: this.locateRawVisible,
       };
       const handle = renderer.update(this.handles[i] ?? null, row, ctx);
       this.handles[i] = handle;
@@ -298,6 +304,13 @@ export class TreeView {
     if (this.changedPath === path) return;
     this.changedPath = path;
     this.applyChangedClass();
+  }
+
+  /** 行尾「在原文中定位」入口开关（#30 / ADR-0019）：表达式结果视图 / plain 模式关闭。 */
+  setLocateRaw(enabled: boolean): void {
+    if (this.locateRawVisible === enabled) return;
+    this.locateRawVisible = enabled;
+    this.refresh();
   }
 
   setSearch(state: TreeSearchState | null): void {

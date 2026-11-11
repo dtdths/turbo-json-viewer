@@ -9,7 +9,7 @@ import { createDevHook, type DevHookDeps } from '../../../src/app/dev-hook';
 import { DocSession } from '../../../src/app/doc-session';
 import { CoreError } from '../../../src/protocol/errors';
 
-/** 75 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
+/** 82 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
 const HOOK_MEMBERS = [
   'loadText', 'scrollToPx', 'togglePath', 'expandAll', 'collapseAll', 'state',
   'search', 'searchNext', 'searchPrev', 'searchJump', 'searchMarkStale', 'setSearchFilter',
@@ -24,6 +24,9 @@ const HOOK_MEMBERS = [
   'fidelityState', 'fidelityJump', 'fidelityClose',
   'rawState', 'setViewMode', 'rawScrollTo', 'rawWindowText', 'rawLocate', 'rawRevealAt',
   'rawRepairAt', 'rawCopyText', 'rawCopy',
+  // #30 / ADR-0019：双向定位（7 个）
+  'locateState', 'rawPathAt', 'rawOffsetOf', 'rawLocateClick', 'treeLocateClick',
+  'rawCtxOpen', 'rawCtxClick',
   // #27 / ADR-0018 §9：表达式视图（11 个）
   'expressionState', 'expressionOpen', 'expressionSetText', 'expressionRun', 'expressionRunText',
   'expressionComplete', 'expressionSetStrict', 'expressionBack', 'expressionRerun', 'expressionLocate',
@@ -125,6 +128,12 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
       resetEdits: async () => true,
       setViewMode: async () => {},
       revealRepairOffset: async () => 1,
+      jumpTreeToRaw: async () => -1,
+      jumpRawToTree: async () => null,
+      locateBusy: () => false,
+      locateAnchor: () => null,
+      rawCtxMenu: fakeElement(),
+      rawCtxOpen: () => {},
       openSettings: () => ({ panel: 'settings', title: '', focused: false, rows: [] }),
       treeGeometry: () => ({
         rowHeight: 24,
@@ -226,7 +235,7 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
 }
 
 describe('dev hook — API 契约与纯快照组装', () => {
-  it('成员表逐字保持（75 个，顺序无关）', () => {
+  it('成员表逐字保持（82 个，顺序无关）', () => {
     const hook = createDevHook(fakeDeps());
     expect(Object.keys(hook).sort()).toEqual(HOOK_MEMBERS);
     for (const key of HOOK_MEMBERS) expect(typeof hook[key]).toBe('function');

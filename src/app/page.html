@@ -260,6 +260,13 @@
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="collapse-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>收起整棵子树</button>
   <div class="ctxmenu__sep" role="separator"></div>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="edit"><span class="ctxmenu__lead" aria-hidden="true"></span>编辑此节点 JSON</button>
+  <div class="ctxmenu__sep" role="separator"></div>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="locate-raw"><span class="ctxmenu__lead" aria-hidden="true"></span>在原文中定位</button>
+</div>
+
+<!-- 原文行右键菜单（#30 / ADR-0019）：键盘等价入口；鼠标快路径是行号 gutter 按钮 -->
+<div class="ctxmenu" id="rawCtxMenu" role="menu" aria-label="原文行操作" hidden>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-raw-act="locate-tree"><span class="ctxmenu__lead" aria-hidden="true"></span>在树视图中定位</button>
 </div>
 
 <!-- 导出方式菜单（ADR-0012：主按钮执行上次方式，箭头选另一种） -->

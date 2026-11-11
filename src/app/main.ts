@@ -31,7 +31,7 @@ import {
   LARGE_DOC_WARN_BYTES,
   exprWatchdogMs,
 } from '../protocol/versions';
-import { ROOT_PATH } from '../shared/path';
+import { parentPath, ROOT_PATH } from '../shared/path';
 import type {
   CopyFormat,
   DocumentMeta,
@@ -148,6 +148,8 @@ const rawModeLabel = el('rawModeLabel');
 const rawNotice = el('rawNotice');
 const rawMetaLabel = el('rawMetaLabel');
 const rawCopyBtn = el<HTMLButtonElement>('rawCopyBtn');
+/** 原文行右键菜单（#30 / ADR-0019 键盘等价入口） */
+const rawCtxMenu = el('rawCtxMenu');
 
 /* ---------------- 设置（ADR-0011）：先读盘再装配，避免主题/布局闪烁 ---------------- */
 
@@ -205,8 +207,12 @@ interface TabExtras {
   searchOpts: { caseSensitive: boolean; regex: boolean };
   /** 原文视图的滚动位置（切回来时恢复） */
   rawScrollTopPx: number;
+  /** 双向定位的上次对照锚点（#30 / ADR-0019 §5）：内存、per-tab、不持久化 */
+  anchor: { path: string; line: number } | null;
 }
 const tabExtras = new Map<string, TabExtras>();
+/** 活动标签的对照锚点（切标签时随 TabExtras 存取；#30 / ADR-0019 §5） */
+let rawTreeAnchor: { path: string; line: number } | null = null;
 
 function extrasOf(tabId: string): TabExtras {
   let extras = tabExtras.get(tabId);
@@ -218,6 +224,7 @@ function extrasOf(tabId: string): TabExtras {
       scrollTopPx: 0,
       rawScrollTopPx: 0,
       searchOpts: { caseSensitive: false, regex: false },
+      anchor: null,
     };
     tabExtras.set(tabId, extras);
   }
@@ -244,8 +251,9 @@ const tree = new TreeView(treeHost, {
     showContextMenu(path, x, y, row);
   },
   // 行尾浮条（ADR-0010 修订）：鼠标快路径；复制格式跟随设置（ADR-0011 §1 defaultCopyFormat）
-  onRowAction: (path: string, action: 'copy' | 'edit') => {
+  onRowAction: (path: string, action: 'copy' | 'edit' | 'raw') => {
     if (action === 'copy') void copyNodeToClipboard(path, settings.get('defaultCopyFormat'));
+    else if (action === 'raw') void jumpTreeToRaw(path);
     else void openEditor(path);
   },
 });
@@ -281,6 +289,11 @@ function focusTree(): void {
 const rawView = new RawView(rawHost, {
   rowHeight: settings.get('rowHeight'),
   onScroll: (top: number) => rawSource.scrollTo(top),
+  // 双向定位（#30 / ADR-0019）：行号 gutter 按钮 → 树；行右键 → 菜单（键盘等价入口）
+  onLocate: (line: number) => {
+    void jumpRawToTree(line);
+  },
+  onContextMenu: (line: number, x: number, y: number) => showRawContextMenu(line, x, y),
 });
 rawView.mount();
 
@@ -423,6 +436,7 @@ function saveActiveSession(): void {
   extras.scrollTopPx = tree.scrollTopPx();
   extras.rawScrollTopPx = rawView.scrollTopPx();
   extras.searchOpts = { ...searchOpts };
+  extras.anchor = rawTreeAnchor;
   workspace.update(tab.id, {
     docRevision: session.docRevision,
     rowVersion: session.rowVersion,
@@ -454,11 +468,17 @@ function bindTab(tab: TabState): void {
   fidelity = extras.fidelity;
   exprView = extras.exprView;
   searchOpts = { ...extras.searchOpts };
+  rawTreeAnchor = extras.anchor;
   // 表达式结果视图不跨标签自动激活：切回来时若左面板是表达式，由 setPanel('expression') 的
   // 既有恢复链路决定（见 switchTab）；这里一律先按「文档树」绑定会话。
   exprViewActive = false;
   docSessionBeforeExpr = null;
   refreshHookDeps();
+}
+
+/** 行尾「在原文中定位」入口开关（#30）：表达式结果根无源文本；plain（修复文档）无可靠映射。 */
+function syncLocateRaw(): void {
+  tree.setLocateRaw(!exprViewActive && meta?.repair === undefined);
 }
 
 /** 工具栏 / 文件 chip / 三条常驻提示条 / 状态栏按活动标签重画。 */
@@ -480,6 +500,7 @@ function renderTabChrome(): void {
   renderDocWarn();
   renderFidelity();
   renderRawChrome();
+  syncLocateRaw();
   updateStatus();
 }
 
@@ -977,6 +998,7 @@ function enterExpressionView(
     seq: exprSeq,
   };
   exprViewActive = true;
+  syncLocateRaw();
   const plan = session.land(reply, { kind: 'expression' });
   applyLanding(plan);
   renderExpressionBar();
@@ -1005,6 +1027,7 @@ function renderExpressionBar(stale = false): void {
 function backToDocTree(opts: { silent?: boolean } = {}): void {
   if (!exprViewActive) return;
   exprViewActive = false;
+  syncLocateRaw();
   expressionBar.hide();
   const saved = docSessionBeforeExpr;
   docSessionBeforeExpr = null;
@@ -1327,6 +1350,7 @@ function resetTabStateForNewDoc(tab: TabState): void {
   extras.scrollTopPx = 0;
   extras.rawScrollTopPx = 0;
   extras.searchOpts = { caseSensitive: false, regex: false };
+  extras.anchor = null;
   rawOpenSeq += 1;
   fidelitySeq += 1;
   fidelityPending = false;
@@ -1954,11 +1978,44 @@ const ctxMenuController = createMenu({
       return;
     }
     if (act === 'edit') void openEditor(path);
+    if (act === 'locate-raw') void jumpTreeToRaw(path);
   },
   onClose: () => {
     ctxPath = null;
   },
 });
+
+/** 原文行右键菜单打开时的行号（1-based；关闭清理）。 */
+let ctxRawLine: number | null = null;
+
+/**
+ * 原文行右键菜单控制器（#30 / ADR-0019）：只有一个动作「在树视图中定位」。
+ * 交互契约复用 `view/menu`（ADR-0015）：Esc/选中回原文、外部关闭、内层滚动关闭。
+ */
+const rawCtxController = createMenu({
+  element: rawCtxMenu,
+  itemSelector: '[data-raw-act]',
+  returnFocus: focusRaw,
+  returnFocusOnOutside: true,
+  closeOnScroll: true,
+  onSelect: () => {
+    const line = ctxRawLine;
+    if (line === null) return;
+    void jumpRawToTree(line);
+  },
+  onClose: () => {
+    ctxRawLine = null;
+  },
+});
+
+/** 弹原文行右键菜单（键盘等价入口；鼠标快路径是行号 gutter 按钮）。 */
+function showRawContextMenu(line: number, x: number, y: number): void {
+  rawCtxController.close('programmatic');
+  ctxRawLine = line;
+  const item = rawCtxMenu.querySelector<HTMLButtonElement>('[data-raw-act]');
+  if (item) item.title = `第 ${line} 行 → 树视图`;
+  rawCtxController.open({ kind: 'point', x, y });
+}
 
 /**
  * 弹树行右键菜单。`row` = 该行的窗口数据（kind / open / count / hasChildren），
@@ -1989,6 +2046,12 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
   setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
   // 表达式结果只读（ADR-0018 §1）：结果根上的编辑入口一律禁用（复制四格式照常可用）
   setCtxItemDisabled('edit', exprViewActive, '表达式结果只读');
+  // 双向定位（#30）：表达式结果根没有源文本；plain（修复文档）没有可靠的行/路径映射
+  setCtxItemDisabled(
+    'locate-raw',
+    exprViewActive || meta?.repair !== undefined,
+    exprViewActive ? '表达式结果没有原文位置' : '原始文本被截断修复，无法定位到节点',
+  );
   ctxMenuController.open({ kind: 'point', x, y });
 }
 
@@ -2303,7 +2366,10 @@ function applyFilter(filter: SearchFilter): void {
  * expandTo 展开树祖先链 → 树滚动居中 → 选中。原文视图下先切回树。
  * 返回 `{ ok, row }`（row = 树内行号；失败 -1），错误已在内部提示。
  */
-async function jumpToPath(path: string): Promise<{ ok: boolean; row: number }> {
+async function jumpToPath(
+  path: string,
+  opts: { silent?: boolean } = {},
+): Promise<{ ok: boolean; row: number }> {
   if (!session.rootId) return { ok: false, row: -1 };
   // 跳转是树动作：原文视图下先切回树（ADR-0003 修订：两视图 v1 不联动）
   if (isRawView()) await setViewMode('tree');
@@ -2319,7 +2385,8 @@ async function jumpToPath(path: string): Promise<{ ok: boolean; row: number }> {
     );
     return { ok: true, row: reply.row };
   } catch (error) {
-    showError(error);
+    // 双向定位的祖先回退会连续尝试多级路径：静默失败，由调用方决定最终提示（#30）
+    if (!opts.silent) showError(error);
     return { ok: false, row: -1 };
   }
 }
@@ -2679,6 +2746,118 @@ async function revealRepairOffset(offset: number): Promise<number> {
   }
 }
 
+/* ---------------- 双向定位：原文 ↔ 树（#30 / ADR-0019） ---------------- */
+
+/** 焦点回原文视图（右键菜单关闭时归还；ADR-0015）。 */
+function focusRaw(): void {
+  rawHost.querySelector<HTMLElement>('.tjv-raw')?.focus();
+}
+
+/** 900ms 高亮（与 Apply 后的 changed 高亮同一视觉/时长）。 */
+function flashTreePath(path: string): void {
+  tree.setChangedPath(path);
+  window.setTimeout(() => tree.setChangedPath(null), CHANGED_FLASH_MS);
+}
+
+let locateBusy = false;
+let statusHint: string | null = null;
+let statusHintTimer = 0;
+
+/** 状态栏临时文案（ADR-0019 §4）：不新增提示条/对话框，约 3s 后恢复。 */
+function showStatusHint(text: string): void {
+  statusHint = text;
+  updateStatus();
+  window.clearTimeout(statusHintTimer);
+  statusHintTimer = window.setTimeout(() => {
+    statusHint = null;
+    updateStatus();
+  }, 3000);
+}
+
+/**
+ * 树 → 原文（#30 / ADR-0019）：path→offset 由 worker 单趟扫描（结果按根 LRU 缓存）。
+ * 同一节点来回对照走本标签记住的锚点，第二次起不扫（0ms）。
+ */
+async function jumpTreeToRaw(path: string): Promise<number> {
+  if (!session.rootId || exprViewActive) return -1;
+  const rid = session.rootId;
+  const remembered = rawTreeAnchor !== null && rawTreeAnchor.path === path ? rawTreeAnchor : null;
+  if (remembered) {
+    await setViewMode('raw');
+    if (rid !== session.rootId || !isRawView()) return -1;
+    rawView.flashLine(remembered.line);
+    return remembered.line;
+  }
+  if (locateBusy) return -1;
+  locateBusy = true;
+  updateStatus();
+  try {
+    const reply = await core.rawOffsetOf({ rootId: rid, path });
+    // 迟到回包：已换文档/标签（ADR-0009 §2 的 rootId 路由口径）
+    if (rid !== session.rootId) return -1;
+    if (reply.offset === null || reply.line === null) {
+      showStatusHint('该节点来自临时修改，原文中没有对应位置');
+      return -1;
+    }
+    rawTreeAnchor = { path, line: reply.line };
+    await setViewMode('raw');
+    if (rid !== session.rootId || !isRawView()) return -1;
+    rawView.flashLine(reply.line);
+    return reply.line;
+  } catch (error) {
+    showError(error);
+    return -1;
+  } finally {
+    locateBusy = false;
+    updateStatus();
+  }
+}
+
+/**
+ * 原文 → 树（#30 / ADR-0019）：行首 token 反查路径（检查点索引 ≈0.1ms），
+ * 展开祖先 + 选中 + 居中 + 900ms 高亮；路径被临时修改删掉时回退到最近仍存在的祖先。
+ */
+async function jumpRawToTree(line: number): Promise<string | null> {
+  if (!session.rootId || locateBusy) return null;
+  const rid = session.rootId;
+  locateBusy = true;
+  updateStatus();
+  try {
+    const reply = await core.rawPathAt({ rootId: rid, line });
+    if (rid !== session.rootId) return null;
+    if (reply.path === null) {
+      showStatusHint('该行没有对应的树节点');
+      return null;
+    }
+    const sourcePath = reply.path;
+    let target = sourcePath;
+    // 静默尝试：源文本里的路径可能已被临时修改删掉/改名 → 逐级回退到仍存在的祖先
+    let jumped = await jumpToPath(target, { silent: true });
+    let fallback = false;
+    while (!jumped.ok && target !== ROOT_PATH) {
+      const parent = parentPath(target);
+      if (!parent) break;
+      target = parent;
+      fallback = true;
+      jumped = await jumpToPath(target, { silent: true });
+    }
+    if (!jumped.ok) {
+      showStatusHint('树里找不到对应节点');
+      return null;
+    }
+    if (fallback) showStatusHint('该位置已被临时修改，已定位到最近的祖先');
+    flashTreePath(target);
+    rawTreeAnchor = { path: sourcePath, line };
+    return target;
+  } catch (error) {
+    showError(error);
+    return null;
+  } finally {
+    locateBusy = false;
+    updateStatus();
+  }
+}
+
 function updateStatus(): void {
   if (!session.rootId || !meta) {
     statusRows.textContent = '未打开文档';
@@ -2687,7 +2866,9 @@ function updateStatus(): void {
     statusState.textContent = '只读 · 原文件不变';
     return;
   }
-  if (isRawView()) {
+  if (locateBusy) {
+    statusRows.textContent = '正在定位…';
+  } else if (isRawView()) {
     const rawSnapshot = rawSource.snapshot();
     const lines = rawMetaInfo?.totalLines ?? rawSnapshot.totalLines;
     statusRows.textContent = `${lines.toLocaleString()} 行 · 原文 · 已渲染 ${rawSnapshot.lines.length}`;
@@ -2701,6 +2882,11 @@ function updateStatus(): void {
   // 表达式结果视图：状态栏明确「这不是文档」（ADR-0018 §1）
   if (exprViewActive && exprView) {
     statusState.textContent = `表达式结果 ${exprView.rootId} · 只读 · 原文件不变`;
+    return;
+  }
+  // 临时提示（双向定位失败/回退等）优先于常驻态（ADR-0019 §4）
+  if (statusHint !== null) {
+    statusState.textContent = statusHint;
     return;
   }
   // 修复角标独立于修复条显隐：数据仍不完整，状态栏要一直能看出来
@@ -2826,6 +3012,12 @@ function buildDevHookDeps(): DevHookDeps {
       resetEdits: () => resetEdits(true),
       setViewMode,
       revealRepairOffset,
+      jumpTreeToRaw,
+      jumpRawToTree,
+      locateBusy: () => locateBusy,
+      locateAnchor: () => rawTreeAnchor,
+      rawCtxMenu,
+      rawCtxOpen: showRawContextMenu,
       openSettings: () => {
         setPanel('settings');
         return {

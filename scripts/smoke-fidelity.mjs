@@ -198,6 +198,41 @@ try {
   check('jump:line-contains-literal', flashText.includes('1234567890123456789'), { flashText: String(flashText).slice(0, 80) });
   check('jump:bar-kept', phase2.after?.barVisible === true, { barVisible: phase2.after?.barVisible });
 
+  // ---- phase 2b：痛点闭环（#30 / ADR-0019）：查看原文 → 原文→树选中 → 树→原文锚点回跳 ----
+  const phase2b = await page.eval(`(async () => {
+    const out = {};
+    const { sleep } = window.__fid;
+    const row = document.querySelector('.raw-row[data-line="2"]');
+    const button = row && row.querySelector('.raw-row__locate');
+    out.gutter = Boolean(button && !button.hidden);
+    // 原文 → 树（真实 DOM click）：应切树并选中 $.big
+    out.toTree = await window.__tjv.rawLocateClick(2);
+    await sleep(150);
+    out.state = window.__tjv.state();
+    out.anchor = window.__tjv.locateState();
+    // 树 → 原文（行尾浮条第三钮）：锚点记忆 → 直接落回第 2 行
+    out.toRaw = await window.__tjv.treeLocateClick('$.big');
+    await sleep(150);
+    out.afterBack = window.__tjv.rawState();
+    return out;
+  })()`);
+  report.locate = phase2b;
+  await page.screenshot(path.join(SHOTS, 'fidelity-locate.png'));
+  check('locate:gutter-button', phase2b.gutter === true, { gutter: phase2b.gutter });
+  check(
+    'locate:raw-to-tree',
+    phase2b.toTree?.clicked === true && phase2b.state?.selected === '$.big' && phase2b.state?.viewMode === 'tree',
+    { clicked: phase2b.toTree?.clicked, selected: phase2b.state?.selected, viewMode: phase2b.state?.viewMode },
+  );
+  check('locate:anchor-recorded', phase2b.anchor?.anchor?.path === '$.big' && phase2b.anchor?.anchor?.line === 2, {
+    anchor: phase2b.anchor?.anchor,
+  });
+  check(
+    'locate:tree-to-raw-anchor',
+    phase2b.toRaw?.clicked === true && phase2b.afterBack?.mode === 'raw' && Number(phase2b.afterBack?.flash) === 2,
+    { clicked: phase2b.toRaw?.clicked, mode: phase2b.afterBack?.mode, flash: phase2b.afterBack?.flash },
+  );
+
   // ---- phase 3：无失真文档 → 条不出现 ----
   const phase3 = await page.eval(`(async () => {
     const out = {};
@@ -293,7 +328,7 @@ try {
   check('page:no-exceptions', exceptions.length === 0, { exceptions });
   check('page:no-console-error', consoleErrors.length === 0, { consoleErrors });
 
-  for (const shot of ['fidelity-bar.png', 'fidelity-jump.png', 'fidelity-clean.png', 'fidelity-coexist.png', 'fidelity-10mb.png']) {
+  for (const shot of ['fidelity-bar.png', 'fidelity-jump.png', 'fidelity-locate.png', 'fidelity-clean.png', 'fidelity-coexist.png', 'fidelity-10mb.png']) {
     const file = path.join(SHOTS, shot);
     check('screenshot:' + shot, existsSync(file), { path: file });
   }
