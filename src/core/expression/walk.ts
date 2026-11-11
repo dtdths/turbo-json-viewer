@@ -20,7 +20,7 @@
 import type { ExprError, JsonKind } from '../../protocol/types';
 import { EXPR_TIME_CHECK_EVERY } from '../../protocol/versions';
 import { appendIndex, appendKey } from '../../shared/path';
-import { analyzeNumberLiteral } from '../number-literal';
+import { analyzeNumberLiteral, isJsonNumberLiteral } from '../number-literal';
 import { parseLossless, serializeLossless } from '../lossless-json';
 import type { EvalBudget, EvalOrigins, EvalOutcome, EvaluateOptions } from './types';
 import { isArrayMethod, isMathMember, isStringMethod, LENGTH_PROP } from './whitelist';
@@ -563,15 +563,14 @@ function evalLiteral(m: Machine, node: AstNode): Ev {
   }
   const value = node.value;
   if (typeof value === 'string') return ev(clampString(m, value));
-  // 十进制数字字面量：`node.value` 已被 double 圆整，改用 `raw` 走无损判定
-  // （否则 `$.uid > 1234567890123456789` 的右侧先丢精度）。0x/0o/0b 保持 JS 语义。
-  if (typeof value === 'number' && typeof node.raw === 'string') {
-    const raw = node.raw;
-    const prefix = raw.length > 1 ? raw.slice(0, 2).toLowerCase() : '';
-    if (prefix !== '0x' && prefix !== '0o' && prefix !== '0b') {
-      const info = analyzeNumberLiteral(raw);
-      return ev(info.value === null ? Infinity : info.value);
-    }
+  // 数字字面量：`node.value` 已被 double 圆整，改用 `raw` 走无损判定
+  // （否则 `$.uid > 1234567890123456789` 的右侧先丢精度）。
+  // **只有严格 JSON 数字语法才走无损判定**：`1_000`（分隔符）、`0x/0o/0b`、
+  // sloppy legacy octal `0777` 等 JS 专属写法必须保持 acorn 的 `node.value`（JS 语义），
+  // 否则 `Number('1_000') = NaN`、`0777` 会被当十进制 777（Standards 审查回归修复）。
+  if (typeof value === 'number' && typeof node.raw === 'string' && isJsonNumberLiteral(node.raw)) {
+    const info = analyzeNumberLiteral(node.raw);
+    return ev(info.value === null ? Infinity : info.value);
   }
   return ev(value);
 }
@@ -841,6 +840,9 @@ function evalBinaryExpression(m: Machine, node: AstNode, env: Env): Ev {
         if (typeof l !== 'bigint' || typeof r !== 'bigint') raise(node, 'EVAL_MIXED_NUMBER', [operator]);
         if (operator === '-') return ev(l - r);
         if (operator === '*') return ev(l * r);
+        // BigInt 除零/模零会抛 RangeError（原生 TypeError 语义）→ 给确定错误码，
+        // 不能被外层泛化成 PARSE_ERR_ROOT_SHAPE（Standards 审查收口）
+        if (r === 0n) raise(node, 'EVAL_DIV_BY_ZERO', [operator]);
         if (operator === '/') return ev(l / r);
         return ev(l % r);
       }
@@ -868,22 +870,31 @@ function relational(operator: string, left: unknown, right: unknown): boolean {
     if (operator === '>') return l > r;
     return l >= r;
   }
-  // 无损数字（ADR-0020）：任一侧 BigInt → 走 JS 原生关系比较（BigInt 与 Number 可混合比较，
-  // 且不经过 toNumberValue 的有损转换）。断言只为绕过 TS 的类型收窄，运行时值不变。
-  if (typeof l === 'bigint' || typeof r === 'bigint') {
-    const a = l as unknown as number;
-    const b = r as unknown as number;
-    if (operator === '<') return a < b;
-    if (operator === '<=') return a <= b;
-    if (operator === '>') return a > b;
-    return a >= b;
-  }
+  // 无损数字（ADR-0020）：任一侧 BigInt → 走 JS 原生关系比较（BigInt 与 Number/String 的
+  // 混合关系比较是规范允许的，且不经过 toNumberValue 的有损转换）。
+  if (typeof l === 'bigint' || typeof r === 'bigint') return nativeRelational(operator, l, r);
   const ln = toNumberValue(l);
   const rn = toNumberValue(r);
   if (operator === '<') return ln < rn;
   if (operator === '<=') return ln <= rn;
   if (operator === '>') return ln > rn;
   return ln >= rn;
+}
+
+/**
+ * 原生关系比较（BigInt 与 Number/String 混合）：语义与 JS 规范一致（含 NaN/Infinity/小数
+ * 边界），比手写 floor/ceil 分支更不易出错，因此直接委托运行时。
+ *
+ * 类型断言只出现这一处、并有单测钉住行为（`1n < 1.5`、`2n > 1.5`、`-1n > -1.5`、
+ * `1n < "2"` 等）：TS 的关系运算符不允许 number|bigint 混算，但运行期这是合法原生语义。
+ */
+function nativeRelational(operator: string, left: unknown, right: unknown): boolean {
+  const a = left as unknown as number;
+  const b = right as unknown as number;
+  if (operator === '<') return a < b;
+  if (operator === '<=') return a <= b;
+  if (operator === '>') return a > b;
+  return a >= b;
 }
 
 function evalLogicalExpression(m: Machine, node: AstNode, env: Env): Ev {

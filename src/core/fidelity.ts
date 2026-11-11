@@ -269,6 +269,7 @@ function keyIndexValue(text: string, from: number, to: number): number {
 /* ---------------------------- 数字判定 ---------------------------- */
 
 /** JSON 数字字面量的结束偏移（最小文法：`-`? int frac? exp?）；非法起点返回 start。 */
+/** 宽松扫描数字终点（容错：源文本可能是截断修复前的非法 JSON）；判定统一走 analyzeNumberLiteral。 */
 function scanNumberEnd(text: string, start: number): number {
   const n = text.length;
   let i = start;

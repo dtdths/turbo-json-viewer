@@ -759,6 +759,29 @@ describe('core/expression — BigInt 语义（ADR-0020 §6）', () => {
     name: 'x',
   };
 
+  it('JavaScript 数字字面量保持 JS 语义（分隔符 / legacy octal / 进制前缀不经过 JSON 分析器）', () => {
+    expect(valueOf('1_000')).toBe(1000);
+    expect(valueOf('1e1_0')).toBe(1e10);
+    expect(valueOf('0x1f')).toBe(31);
+    expect(valueOf('0b1010')).toBe(10);
+    expect(valueOf('0o17')).toBe(15);
+    expect(valueOf('0777')).toBe(511); // sloppy legacy octal，真值 511（不是十进制 777）
+    expect(valueOf('.5')).toBe(0.5);
+    expect(valueOf('1.')).toBe(1);
+  });
+
+  it('BigInt 除零给确定错误；BigInt 与 Number/小数/字符串的关系比较按原生语义', () => {
+    expect(errorOf('1n / 0n')).toMatchObject({ code: 'EVAL_DIV_BY_ZERO' });
+    expect(errorOf('1n % 0n')).toMatchObject({ code: 'EVAL_DIV_BY_ZERO' });
+    expect(valueOf('1n < 2')).toBe(true);
+    expect(valueOf('2n > 1.5')).toBe(true);
+    expect(valueOf('-2n < -1.5')).toBe(true);
+    expect(valueOf('-1n > -1.5')).toBe(true);
+    expect(valueOf('1n < 1.5')).toBe(true);
+    expect(valueOf('1n >= 1.5')).toBe(false);
+    expect(valueOf('1n < "2"')).toBe(true);
+  });
+
   it('文档里的 BigInt 原样读出、类型仍是 number 类', () => {
     expect(valueOf('id', { doc: BIG_DOC })).toBe(297532588187238660n);
     expect(valueOf('typeof id', { doc: BIG_DOC })).toBe('bigint');

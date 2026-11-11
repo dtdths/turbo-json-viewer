@@ -43,6 +43,50 @@ function isDigit(c: number): boolean {
   return c >= CH_0 && c <= CH_9;
 }
 
+/**
+ * 字面量是否严格符合 **JSON 数字语法**（`-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?`）。
+ *
+ * 动机（Standards 审查收口）：表达式引擎里的数字字面量是 **JS** 语法，acorn 还接受
+ * `1_000`（数字分隔符）、`0x1f`/`0o17`/`0b1010`、sloppy legacy octal `0777`（真值 511）。
+ * 这些写法**不能**喂给 `analyzeNumberLiteral`（它只认 JSON 语法）——否则 `1_000` 会落到
+ * `Number('1_000') = NaN`、`0777` 会被当十进制 777。只有严格 JSON 语法的字面量才走无损判定，
+ * 其余保持 acorn 的 `node.value`（JS 语义）。分隔符与合法 JSON 前缀不重叠，无需先剥 `_`。
+ */
+export function isJsonNumberLiteral(lit: string): boolean {
+  let i = 0;
+  const len = lit.length;
+  if (lit.charCodeAt(i) === CH_MINUS) i += 1;
+  if (i >= len) return false;
+  const first = lit.charCodeAt(i);
+  if (first === CH_0) {
+    i += 1;
+    // JSON 不允许前导零（后面不能紧跟数字；`.`/`e`/结束都合法）
+    if (i < len && isDigit(lit.charCodeAt(i))) return false;
+  } else if (first >= 49 && first <= 57) {
+    i += 1;
+    while (i < len && isDigit(lit.charCodeAt(i))) i += 1;
+  } else {
+    return false;
+  }
+  if (i < len && lit.charCodeAt(i) === CH_DOT) {
+    i += 1;
+    const dotStart = i;
+    while (i < len && isDigit(lit.charCodeAt(i))) i += 1;
+    if (i === dotStart) return false; // `1.` 非法
+  }
+  if (i < len) {
+    const e = lit.charCodeAt(i);
+    if (e === CH_E_UPPER || e === CH_E_LOWER) {
+      i += 1;
+      if (i < len && (lit.charCodeAt(i) === CH_PLUS || lit.charCodeAt(i) === CH_MINUS)) i += 1;
+      const expStart = i;
+      while (i < len && isDigit(lit.charCodeAt(i))) i += 1;
+      if (i === expStart) return false;
+    }
+  }
+  return i === len;
+}
+
 interface Normalized {
   negative: boolean;
   /** 去掉前导零与尾随零后的有效数字（全零时为空串） */

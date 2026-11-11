@@ -166,8 +166,8 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
 
 ## 6. 表达式语义（Q4 落地）
 
-- **字面量**：允许 `123n`（撤销 `BigIntLiteral` 静态拒绝）；十进制数字字面量按 `acorn` 的 `raw` 走 `analyzeNumberLiteral`（否则 `$.uid > 1234567890123456789` 右侧先丢精度）；`0x/0o/0b` 保持 JS 语义（`Number(raw)`）。
-- **算术 `+ - * / %`**：两边都是 BigInt → 原生（`/` 截断）；一边 BigInt 一边非 BigInt（且不是字符串拼接）→ `EVAL_MIXED_NUMBER`（文案「超大整数不能与普通数字混算：<op>`」）；`+` 遇字符串仍按 JS 拼接（`${1n}`/`String(1n)` 正常出 `'1'`）。
+- **字面量**：允许 `123n`（撤销 `BigIntLiteral` 静态拒绝）；**严格 JSON 数字语法**的字面量按 `acorn` 的 `raw` 走 `analyzeNumberLiteral`（否则 `$.uid > 1234567890123456789` 右侧先丢精度）；JS 专属写法（数字分隔符 `1_000`、`0x/0o/0b`、sloppy legacy octal `0777`）**保持 acorn `node.value` 的 JS 语义**（`isJsonNumberLiteral` 单一判定）——审查修复：否则 `1_000` 会变 NaN、`0777` 会变十进制 777。
+- **算术 `+ - * / %`**：两边都是 BigInt → 原生（`/` 截断；**除零/模零给 `EVAL_DIV_BY_ZERO`**，不能落成泛化 PARSE 错误）；一边 BigInt 一边非 BigInt（且不是字符串拼接）→ `EVAL_MIXED_NUMBER`（文案「超大整数不能与普通数字混算：<op>`」）；`+` 遇字符串仍按 JS 拼接（`${1n}`/`String(1n)` 正常出 `'1'`）。
 - **比较 `< <= > >=`**：任一侧 BigInt → 原生关系比较（JS 允许 BigInt 与 Number 混合比较，不做有损转换）；字符串比较路径不变。
 - **`Math.*`**：任一实参是 BigInt → `EVAL_MIXED_NUMBER`（对齐原生 `TypeError`）。
 - **显式转换**：`Number(bigint)` → `Number(value)`（允许、可能丢精度，用户显式选择）；`String(bigint)`/模板串 → 十进制串。
@@ -230,6 +230,7 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
 - **冒烟**：15 套串行全绿；受影响套件计数变化——`smoke-fidelity` **35/35**（fixture 按新口径重写：大整数/`1e400` 不再报、超 cap 才报 overflow；导航/循环/常驻对照/跳原文不变、与修复条并存仍绿）、`smoke-copy` **38 → 43**（树行/子树/根子树/原始值/键名精确十进制）、`smoke-export` **21 → 22**（导出剪贴板逐字含裸大整数）、`smoke-edit` +3（编辑器回填精确、no-op 不推版本、编辑后仍精确）、`smoke-expression` **45 → 50**（读/算术/混合关系/混算错误/数组过滤/字符串转换）。
 - **体积**（`node build.mjs --analyze`）：`page.js` **47.6KB gz / 预算 48（未变，0 增长）**；懒加载 chunk 合计 **145.6KB gz / 预算 146（未变）**；`worker.js` 61.1 → **63.2KB gz（+2.1，无硬预算，记录）**；`page.css` 8.2 不变。
 - **性能 / Chrome 复测（2026-11-12，仓内 headless harness + `.spike/samples/50mb.json`）**：50MB `loadText` → 首行 **427ms**（仓库旧基线 150.2ms，**2.8×**，与 Node bench 的 2.80× 一致）；保真扫描 **256.6ms**（首帧后异步）、**0 个长任务**（解析在 Worker 内，不阻塞主线程）、0 异常 / 0 console error。10MB 首帧仍 9ms（`smoke-fidelity` 实测）。
+- **push 前双轴审查修复（2026-11-12，Standards 轴 1 硬违规 + 4 judgement call 收口）**：① 表达式数字字面量只有严格 JSON 语法走无损判定（新增 `isJsonNumberLiteral`），修复 `1_000`/`0777` 回归并加单测；② BigInt 除零/模零 → 新增 `EVAL_DIV_BY_ZERO`（文案「除数为 0」），不再被泛化成 `PARSE_ERR_ROOT_SHAPE`；③ `EVAL_MIXED_NUMBER` 文案改「超大整数不能进行该运算：{0}」（覆盖混算/一元 `+`/`Math.*`，不再只写「混算」）；④ BigInt 混合关系比较的单一原生断言收进 `nativeRelational()` 并加边界单测（`1n < 1.5` / `-1n > -1.5` / `1n < '2'` 等）；⑤ 三处数字语法扫描加交叉注释（parser 严格 / fidelity 宽松是有意的，判定仍单一来源）。
 - **与 ADR 的偏差**：无设计级偏离；两处实现口径细化——① `1.5e400` 数值上是整数（15×10^399）→ 走 BigInt 精确（不是 Infinity），「非整数上溢」需 401 位整数部分 + 小数才出现；② 编辑 no-op 用 `deepEqualJson`（键序敏感、`-0` 用 `Object.is`），与旧 stringify 比较语义对齐。
 
 ## 12. 记录

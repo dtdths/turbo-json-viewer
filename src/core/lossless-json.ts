@@ -187,6 +187,10 @@ function readString(text: string, len: number, quotePos: number): { value: strin
 /**
  * 读一个数字（`start` = 首字符下标）。严格按 JSON 数字语法校验，然后交给
  * `analyzeNumberLiteral` 决定 number / bigint / Infinity。
+ *
+ * 注意：本函数的「**语法扫描**」与 `number-literal.normalizeDecimal`、`fidelity.scanNumberEnd`
+ * 各扫一遍是有意的（parser 需要严格校验 + 精确报错位置；fidelity 需要对截断文本宽松容错）；
+ * ADR-0020 §7 的「单一来源」钉的是**判定规则**（`analyzeNumberLiteral`），不是扫描实现。
  */
 function readNumber(text: string, len: number, start: number): { value: number | bigint; next: number } {
   let j = start;

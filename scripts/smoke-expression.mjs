@@ -591,6 +591,16 @@ try {
     out.str = await window.__tjv.expressionRunText('String($.id)');
     await sleep(150);
     out.strRow = rowText();
+    // JS 数字字面量语义（分隔符 / legacy octal 不经过 JSON 分析器）+ BigInt 除零
+    out.sep = await window.__tjv.expressionRunText('1_000');
+    await sleep(120);
+    out.sepRow = rowText();
+    out.octal = await window.__tjv.expressionRunText('0777');
+    await sleep(120);
+    out.octalRow = rowText();
+    await window.__tjv.expressionRunText('1n / 0n');
+    await sleep(200);
+    out.divZero = { hidden: document.getElementById('exprError').hidden, text: document.getElementById('exprError').textContent };
     return out;
   })()`);
   report.lossless = phase11;
@@ -605,7 +615,7 @@ try {
   );
   check(
     'lossless:mixed-number-error',
-    phase11.mixed?.hidden === false && String(phase11.mixed?.text).includes('超大整数不能与普通数字混算'),
+    phase11.mixed?.hidden === false && String(phase11.mixed?.text).includes('超大整数不能进行该运算'),
     phase11.mixed,
   );
   check(
@@ -624,6 +634,16 @@ try {
     'lossless:string-conversion',
     phase11.str?.view?.kind === 'string' && String(phase11.strRow).includes('297532588187238660'),
     { kind: phase11.str?.view?.kind, row: phase11.strRow },
+  );
+  check(
+    'lossless:js-literal-semantics',
+    String(phase11.sepRow).includes('1000') && String(phase11.octalRow).includes('511'),
+    { sepRow: phase11.sepRow, octalRow: phase11.octalRow },
+  );
+  check(
+    'lossless:bigint-div-zero',
+    phase11.divZero?.hidden === false && String(phase11.divZero?.text).includes('除数为 0'),
+    phase11.divZero,
   );
 
   // ---- 汇总：page 异常 / console error ----

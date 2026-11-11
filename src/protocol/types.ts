@@ -101,6 +101,8 @@ export type ExprErrorCode =
   | 'EVAL_ILLEGAL_CALL'
   /** 超大整数（BigInt）与普通数字混算 / Math.* 收到 BigInt（ADR-0020；对齐原生 TypeError） */
   | 'EVAL_MIXED_NUMBER'
+  /** BigInt 除以/模零（原生 RangeError；ADR-0020 §6） */
+  | 'EVAL_DIV_BY_ZERO'
   | 'RESULT_TRUNCATED';
 
 /** 引擎错误（用户可改表达式重试 → 走**正常回包**，不是 CoreError）。 */
