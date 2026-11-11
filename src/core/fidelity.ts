@@ -1,23 +1,22 @@
 /**
  * core/fidelity — 保真失真扫描（#23 / ADR-0003 修订 2026-11-09 §2–§3）。
  *
- * 真相源仍是 `JSON.parse` 值图；本模块只**单趟线性扫描源文本**，找出会被 `JSON.parse`
- * 静默改写的字面量/键序，产出「小报告」（片段 + 源偏移），不建反向索引、不重解析值图。
+ * 真相源是**无损解析值图**（ADR-0020：整数超安全范围用 BigInt）；本模块只**单趟线性扫描源文本**，
+ * 找出仍会被解析改写的字面量/键序，产出「小报告」（片段 + 源偏移），不建反向索引、不重解析值图。
  *
- * 检测范围（严格按 ADR 修订 §2 的表；不检测项见下）：
+ * 检测范围（ADR-0020 §7；规则与 parser 共用 `analyzeNumberLiteral`，禁止两处漂移）：
  *
  * | 类别 | 候选 | 精确判定 | 报告 |
  * |---|---|---|---|
- * | 大整数精度流失 | 整数字面量（无 `.`/指数）位数 > 15 | `BigInt(lit) !== BigInt(Number(lit))` | `number` / `precision` |
- * | 上溢 | 带指数且 `Number(lit)` 非有限 | `!isFinite(Number(lit))`（如 `1e400`） | `number` / `overflow` |
- * | 下溢 | 带指数且 `Number(lit)===0` 而有效数字非零 | 同上（如 `1e-400`） | `number` / `underflow` |
+ * | 数字上溢 | 整数超展开位数上限（`BIGINT_DIGIT_CAP`）；非整数小数 `Number(lit)` 非有限 | `analyzeNumberLiteral(lit).overflow` | `number` / `overflow` |
+ * | 数字下溢 | 非整数小数 `Number(lit)===0` 而有效数字非零（如 `1e-400`） | `analyzeNumberLiteral(lit).underflow` | `number` / `underflow` |
  * | 整数样式键重排 | 对象内出现数组下标样式的键（规范整数串且 < 2^32−1） | 去掉「整数键全部在前且升序」的无损情况；键先按 JSON 转义解码 | `key-order` |
  *
- * **v1 不检测（ADR 已记为差距，不要偷偷补）**：
- *   - 高精度**小数**（`0.1234567890123456789`）：BigInt 精确法不适用，字符串往返比较会误报；
- *   - 重复键 / `-0` / 孤立代理项（ADR §4：只记录不标记）。
- * 另：超长纯整数（`Number(lit)` 上溢为 Infinity）按 `overflow` 报——ADR 表只列了「带指数」，
- * 但那种字面量同样被 `JSON.parse` 改写成 `Infinity`，不报会漏；见实现报告。
+ * **整数精度流失（原 `precision`）已退场**（ADR-0020 Q6/Q7）：无损 parser 保证整数精确，
+ * 整数只会因「超展开位数上限」被降级成 `Infinity`（报 overflow）。自检移到单测。
+ * **v1 不检测（ADR-0020 §8 已知差距，不要偷偷补）**：
+ *   - 高精度**小数**（`0.1234567890123456789`）：仍按 Number 丢精度，字符串往返比较会误报；
+ *   - 重复键 / `-0` / 孤立代理项：只记录不标记。
  *
  * 实现纪律：
  *   - **一遍 charCode 扫描**（不逐字符正则）：字符串整段跳过（含 `\` 转义），只在结构层判断
@@ -33,6 +32,7 @@
  *     淘汰最大 offset，内存恒为 maxHits 条（code review 收口：原先「先截断再排序」会漏掉晚产出但更早的键序命中）。
  */
 import type { FidelityHit, FidelityReport } from '../protocol/types';
+import { analyzeNumberLiteral } from './number-literal';
 import { now, roundMs } from '../shared/timing';
 
 /** `hits` 片段上限（counts 不受限） */
@@ -296,131 +296,25 @@ function scanNumberEnd(text: string, start: number): number {
  * （`0.5` / `5e-1` → `(5,-1)`；`1000` / `1e3` → `(1,3)`），因此可以直接判等。
  * 解析失败（非法文本）返回 null——调用方按「宽松跳过」处理。
  */
-function normalizeDecimal(lit: string): { digits: string; exp: number } | null {
-  let i = 0;
-  if (lit.charCodeAt(i) === CH_MINUS || lit.charCodeAt(i) === CH_PLUS) i += 1;
-  let intPart = '';
-  while (i < lit.length && isDigit(lit.charCodeAt(i))) {
-    intPart += lit[i];
-    i += 1;
-  }
-  let fracPart = '';
-  if (lit.charCodeAt(i) === CH_DOT) {
-    i += 1;
-    while (i < lit.length && isDigit(lit.charCodeAt(i))) {
-      fracPart += lit[i];
-      i += 1;
-    }
-  }
-  let exp = 0;
-  const e = lit.charCodeAt(i);
-  if (e === CH_E_UPPER || e === CH_E_LOWER) {
-    i += 1;
-    let expSign = 1;
-    if (lit.charCodeAt(i) === CH_PLUS) i += 1;
-    else if (lit.charCodeAt(i) === CH_MINUS) {
-      expSign = -1;
-      i += 1;
-    }
-    let raw = 0;
-    let digitsCount = 0;
-    while (i < lit.length && isDigit(lit.charCodeAt(i))) {
-      raw = raw * 10 + (lit.charCodeAt(i) - 48);
-      i += 1;
-      digitsCount += 1;
-    }
-    if (digitsCount === 0) return null;
-    exp = expSign * raw;
-  }
-  if (i !== lit.length || (intPart === '' && fracPart === '')) return null;
-  let digits = (intPart + fracPart).replace(/^0+/, '');
-  let power = exp - fracPart.length;
-  let end = digits.length;
-  while (end > 0 && digits.charCodeAt(end - 1) === 48) end -= 1;
-  power += digits.length - end;
-  return { digits: digits.slice(0, end), exp: power };
-}
-
 /**
- * 「解析后」的**精确**显示串（#23 修订 2026-11-11）：整数型 double 用 BigInt 给出真实整数值。
+ * 数字字面量 → 失真类别 + 「实际值」对照（不失真返回 null）。
  *
- * 动机：`String(value)` 是最短往返十进制，可能与原文**同串**（例：`297532588187238660`
- * 的 double 实为 `...656`，但打印仍是 `...660`），呈现层看不出差异。BigInt 只在 value 为
- * 整数时可用（大整数失真命中恒满足）；Infinity / 非整数保持 String。
- */
-function parsedExact(value: number): string {
-  if (!Number.isFinite(value)) return String(value);
-  if (!Number.isInteger(value)) return String(value);
-  try {
-    return BigInt(value).toString();
-  } catch {
-    return String(value);
-  }
-}
-
-/**
- * 数字字面量 → 失真类别 + 「解析后」对照（不失真返回 null）。
- * 高精度小数（含 `.` 且无指数）v1 不报（ADR 修订 §2）。
+ * 判定与 parser 完全共用 `analyzeNumberLiteral`（ADR-0020 §7）：
+ *   - 整数（含 `1e400`、`1.5e1`）：无损 parser 精确表示 → **不报**（原 precision 类别退场）；
+ *   - 整数超展开位数上限 → parser 产出 `Infinity` → 报 `overflow`；
+ *   - 非整数小数上溢 → `Infinity` → 报 `overflow`；下溢 → `0` → 报 `underflow`；
+ *   - 高精度小数（仍按 Number 丢精度）：v1 已知差距，不报。
  * 只返回判定结果、不构造 `FidelityHit`：海量命中时只为保留的 ≤100 条分配片段。
  */
 function classifyNumber(
   text: string,
   start: number,
   end: number,
-): { reason: 'precision' | 'overflow' | 'underflow'; parsed: string } | null {
-  const lit = text.slice(start, end);
-  const sign = lit.charCodeAt(0) === CH_MINUS ? 1 : 0;
-
-  // 一次小遍扫：找 `.` / 指数，同时判有效数字里是否有非零（下溢用）
-  let hasDot = false;
-  let hasExp = false;
-  let mantissaNonZero = false;
-  for (let i = sign; i < lit.length; i++) {
-    const c = lit.charCodeAt(i);
-    if (c === CH_DOT) hasDot = true;
-    else if (c === CH_E_UPPER || c === CH_E_LOWER) {
-      hasExp = true;
-      break;
-    } else if (c >= 49 && c <= 57) mantissaNonZero = true;
-  }
-
-  const value = Number(lit);
-
-  if (hasExp) {
-    if (!Number.isFinite(value)) return { reason: 'overflow', parsed: parsedExact(value) };
-    if (value === 0 && mantissaNonZero) return { reason: 'underflow', parsed: parsedExact(value) };
-    // 带指数的数字同样会被圆整（`1234567890123456789e0`、`1.234567890123456789e18`）：
-    // 用十进制规范化做精确比对（只对有效数字 >15 位的候选做，成本可忽略）。
-    const literalForm = normalizeDecimal(lit);
-    if (literalForm !== null && literalForm.digits.length > 15) {
-      const numberForm = normalizeDecimal(value.toExponential());
-      if (
-        numberForm === null ||
-        numberForm.digits !== literalForm.digits ||
-        numberForm.exp !== literalForm.exp
-      ) {
-        return { reason: 'precision', parsed: parsedExact(value) };
-      }
-    }
-    return null;
-  }
-  // 高精度小数：v1 已知差距（ADR 修订 §2），不做字符串往返比较
-  if (hasDot) return null;
-
-  // 纯整数：候选 = 去掉符号与前导零后位数 > 15；精确判定用 BigInt
-  let digitStart = sign;
-  while (digitStart < lit.length && lit.charCodeAt(digitStart) === 48) digitStart += 1;
-  if (lit.length - digitStart <= 15) return null;
-  // >15 位的整数也可能直接把 double 撑爆（如 400 位）：同样被 JSON.parse 改写，报 overflow
-  if (!Number.isFinite(value)) return { reason: 'overflow', parsed: parsedExact(value) };
-  let exact: bigint;
-  try {
-    exact = BigInt(lit);
-  } catch {
-    return null; // 非法整数文本（如 `0123`）：宽松跳过，不误报
-  }
-  if (exact === BigInt(value)) return null;
-  return { reason: 'precision', parsed: parsedExact(value) };
+): { reason: 'overflow' | 'underflow'; parsed: string } | null {
+  const info = analyzeNumberLiteral(text.slice(start, end));
+  if (info.overflow) return { reason: 'overflow', parsed: 'Infinity' };
+  if (info.underflow) return { reason: 'underflow', parsed: '0' };
+  return null;
 }
 
 /* ------------------------------ 扫描 ------------------------------ */
@@ -526,7 +420,6 @@ export async function scanFidelity(
   const stack: Frame[] = [];
   /** 保留的命中片段：**始终按 offset 升序**、长度 ≤ maxHits（见 pushHit） */
   const hits: FidelityHit[] = [];
-  let precisionCount = 0;
   let overflowCount = 0;
   let underflowCount = 0;
   let keyOrderCount = 0;
@@ -564,8 +457,7 @@ export async function scanFidelity(
     end: number,
     cls: NonNullable<ReturnType<typeof classifyNumber>>,
   ): void => {
-    if (cls.reason === 'precision') precisionCount += 1;
-    else if (cls.reason === 'overflow') overflowCount += 1;
+    if (cls.reason === 'overflow') overflowCount += 1;
     else underflowCount += 1;
     if (maxHits === 0) return;
     const literal = clip(text.slice(start, end));
@@ -688,13 +580,12 @@ export async function scanFidelity(
   }
 
   // hits 由 pushHit 维护为「offset 升序 + 只留最靠前 maxHits 条」，这里无需再排序
-  const numberCount = precisionCount + overflowCount + underflowCount;
+  const numberCount = overflowCount + underflowCount;
   const total = numberCount + keyOrderCount;
   const report: FidelityReport = {
     status: total > 0 ? 'found' : 'none',
     counts: {
       number: numberCount,
-      precision: precisionCount,
       overflow: overflowCount,
       underflow: underflowCount,
       keyOrder: keyOrderCount,

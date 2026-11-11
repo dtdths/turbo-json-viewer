@@ -59,7 +59,8 @@ const SPLIT_TEXT = '{\n  "c":\n    {\n      "d": 1\n    }\n}';
 const DUP_KEY_TEXT = '{\n  "k": 1,\n  "k": 2\n}';
 
 /** 保真 fixture：整数键重排 + 大整数精度流失（counts = number 1 / keyOrder 1）。 */
-const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1234567890123456789}';
+/** 保真 fixture（ADR-0020）：整数键序失真 + 整数超展开位数上限（overflow）；大整数本身已无损、不再报。 */
+const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1e10001}';
 
 /** 截断源：load 走 repair，同时发 load-progress×3 + repair 事件。 */
 const TRUNCATED_TEXT = '{"a":1,"b":"hello wor';
@@ -502,8 +503,7 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       expect(reply).toMatchObject({ rootId: loaded.rootId, docRevision: 1 });
       expect(reply.report.counts).toMatchObject({
         number: 1,
-        precision: 1,
-        overflow: 0,
+        overflow: 1,
         underflow: 0,
         keyOrder: 1,
         total: 2,

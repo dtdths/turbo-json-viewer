@@ -14,7 +14,7 @@
  * - 节点类型不在白名单 → `[nodeType]`（如 `'AssignmentExpression'`）；
  * - 运算符被拒 → `[operator]`（如 `'=='` / `'**'` / `'delete'` / `'void'` / `'&'`）；
  * - 调用点非法 → `[calleeName]`（能取到属性名取属性名；取不到用 `'[]'` / `'<expr>'`）；
- * - 正则 / BigInt 字面量 → `['RegExpLiteral']` / `['BigIntLiteral']`（便于文案区分）。
+ * - 正则字面量 → `['RegExpLiteral']`；BigInt 字面量（`123n`）自 ADR-0020 起允许（不再拒绝）。
  */
 
 /** 数组只读方法 15（#14 §1.1：变异方法 push/sort/splice/pop/reverse 一律不进）。 */

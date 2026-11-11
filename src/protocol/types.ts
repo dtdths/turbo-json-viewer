@@ -99,6 +99,8 @@ export type ExprErrorCode =
   | 'EVAL_STEP_LIMIT'
   | 'EVAL_TIME_LIMIT'
   | 'EVAL_ILLEGAL_CALL'
+  /** 超大整数（BigInt）与普通数字混算 / Math.* 收到 BigInt（ADR-0020；对齐原生 TypeError） */
+  | 'EVAL_MIXED_NUMBER'
   | 'RESULT_TRUNCATED';
 
 /** 引擎错误（用户可改表达式重试 → 走**正常回包**，不是 CoreError）。 */
@@ -357,25 +359,23 @@ export interface FidelityHit {
   offset: number;
   /** ≤48 字符的异常片段（超长截断 + 省略号） */
   snippet: string;
-  /** kind==='number' 时的失真类别 */
-  reason?: 'precision' | 'overflow' | 'underflow';
+  /** kind==='number' 时的失真类别（整数精度流失已退场，ADR-0020） */
+  reason?: 'overflow' | 'underflow';
   /** 「原文 vs 解析后」对照（各自 ≤48 字符；kind==='number'） */
   literal?: string;
   parsed?: string;
 }
 
 /**
- * 保真统计（code review 收口）：`number` 是数字类总量，但**必须能按类别分别展示**——
- * 把上溢/下溢也标成「大整数精度」会让「精确数量」这句话失真（ADR-0003 §4）。
+ * 保真统计（ADR-0003 §4 / ADR-0020 §7）：`number` 是数字类总量，但**必须能按类别分别展示**。
+ * 整数精度流失（原 `precision`）已退场——无损 parser 保证整数精确；只剩上溢/下溢两类数字失真。
  */
 export interface FidelityCounts {
-  /** 数字类失真总量 = precision + overflow + underflow */
+  /** 数字类失真总量 = overflow + underflow */
   number: number;
-  /** 大整数精度流失（>15 位整数被 double 圆整，含带指数的整数尾数） */
-  precision: number;
-  /** 数字上溢（如 `1e400` → `Infinity`） */
+  /** 数字上溢（整数超展开位数上限 / 非整数小数上溢 → `Infinity`） */
   overflow: number;
-  /** 数字下溢（如 `1e-400` → `0`） */
+  /** 数字下溢（非整数小数 → `0`，如 `1e-400`） */
   underflow: number;
   /** 整数样式键重排（每对象最多 1 处） */
   keyOrder: number;

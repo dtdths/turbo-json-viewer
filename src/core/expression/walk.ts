@@ -20,6 +20,8 @@
 import type { ExprError, JsonKind } from '../../protocol/types';
 import { EXPR_TIME_CHECK_EVERY } from '../../protocol/versions';
 import { appendIndex, appendKey } from '../../shared/path';
+import { analyzeNumberLiteral } from '../number-literal';
+import { parseLossless, serializeLossless } from '../lossless-json';
 import type { EvalBudget, EvalOrigins, EvalOutcome, EvaluateOptions } from './types';
 import { isArrayMethod, isMathMember, isStringMethod, LENGTH_PROP } from './whitelist';
 import { nodeLocation } from './validate';
@@ -310,6 +312,8 @@ function display(value: unknown): string {
   const type = typeof value;
   if (type === 'string') return value as string;
   if (type === 'number' || type === 'boolean') return String(value);
+  // 无损数字（ADR-0020）：BigInt 原生 String() 就是精确十进制；不能落 ''（那会让 `'x'+big` 丢掉值）
+  if (type === 'bigint') return String(value);
   if (Array.isArray(value)) {
     let out = '';
     for (let i = 0; i < value.length; i++) {
@@ -333,6 +337,8 @@ function toPrimitive(value: unknown): unknown {
 /** ToNumber（JS 语义的 JSON 值域子集）。 */
 function toNumberValue(value: unknown): number {
   if (typeof value === 'number') return value;
+  // 无损数字（ADR-0020）：Number(bigint) 是显式转换（可能丢精度），只在用户显式调用时走这里
+  if (typeof value === 'bigint') return Number(value);
   if (value === null) return 0;
   if (value === undefined) return Number.NaN;
   if (typeof value === 'boolean') return value ? 1 : 0;
@@ -404,6 +410,7 @@ function asNodeOrRaise(value: unknown, parent: AstNode): AstNode {
 function toPropertyKey(node: AstNode, value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return String(value);
+  if (typeof value === 'bigint') return String(value); // JS ToPropertyKey(1n) = '1'
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (value === null) return 'null';
   if (value === undefined) return 'undefined';
@@ -548,10 +555,24 @@ function evalIdentifier(m: Machine, node: AstNode, env: Env): Ev {
 }
 
 function evalLiteral(m: Machine, node: AstNode): Ev {
-  if (typeof node.bigint === 'string') raise(node, 'STATIC_ERR_NODE', ['BigIntLiteral']);
   if (node.regex !== undefined) raise(node, 'STATIC_ERR_NODE', ['RegExpLiteral']);
+  // BigInt 字面量（`123n`）：acorn 的 node.value 已是 BigInt（ADR-0020 起允许）
+  if (typeof node.bigint === 'string') {
+    const big = typeof node.value === 'bigint' ? (node.value as bigint) : BigInt(node.bigint);
+    return ev(big);
+  }
   const value = node.value;
   if (typeof value === 'string') return ev(clampString(m, value));
+  // 十进制数字字面量：`node.value` 已被 double 圆整，改用 `raw` 走无损判定
+  // （否则 `$.uid > 1234567890123456789` 的右侧先丢精度）。0x/0o/0b 保持 JS 语义。
+  if (typeof value === 'number' && typeof node.raw === 'string') {
+    const raw = node.raw;
+    const prefix = raw.length > 1 ? raw.slice(0, 2).toLowerCase() : '';
+    if (prefix !== '0x' && prefix !== '0o' && prefix !== '0b') {
+      const info = analyzeNumberLiteral(raw);
+      return ev(info.value === null ? Infinity : info.value);
+    }
+  }
   return ev(value);
 }
 
@@ -771,8 +792,11 @@ function evalUnaryExpression(m: Machine, node: AstNode, env: Env): Ev {
   if (argument.v === MISSING) return MISSING_EV;
   switch (operator) {
     case '-':
+      if (typeof argument.v === 'bigint') return ev(-argument.v);
       return ev(-toNumberValue(argument.v));
     case '+':
+      // 原生 `+1n` 抛 TypeError（一元 + 不接受 BigInt）
+      if (typeof argument.v === 'bigint') raise(node, 'EVAL_MIXED_NUMBER', [operator]);
       return ev(toNumberValue(argument.v));
     case '!':
       return ev(!truthy(argument.v));
@@ -801,16 +825,30 @@ function evalBinaryExpression(m: Machine, node: AstNode, env: Env): Ev {
       const l = toPrimitive(left.v);
       const r = toPrimitive(right.v);
       if (typeof l === 'string' || typeof r === 'string') return ev(clampString(m, display(l) + display(r)));
+      if (typeof l === 'bigint' || typeof r === 'bigint') {
+        if (typeof l === 'bigint' && typeof r === 'bigint') return ev(l + r);
+        raise(node, 'EVAL_MIXED_NUMBER', [operator]);
+      }
       return ev(toNumberValue(l) + toNumberValue(r));
     }
     case '-':
-      return ev(toNumberValue(left.v) - toNumberValue(right.v));
     case '*':
-      return ev(toNumberValue(left.v) * toNumberValue(right.v));
     case '/':
-      return ev(toNumberValue(left.v) / toNumberValue(right.v));
-    case '%':
-      return ev(toNumberValue(left.v) % toNumberValue(right.v));
+    case '%': {
+      const l = left.v;
+      const r = right.v;
+      if (typeof l === 'bigint' || typeof r === 'bigint') {
+        if (typeof l !== 'bigint' || typeof r !== 'bigint') raise(node, 'EVAL_MIXED_NUMBER', [operator]);
+        if (operator === '-') return ev(l - r);
+        if (operator === '*') return ev(l * r);
+        if (operator === '/') return ev(l / r);
+        return ev(l % r);
+      }
+      if (operator === '-') return ev(toNumberValue(l) - toNumberValue(r));
+      if (operator === '*') return ev(toNumberValue(l) * toNumberValue(r));
+      if (operator === '/') return ev(toNumberValue(l) / toNumberValue(r));
+      return ev(toNumberValue(l) % toNumberValue(r));
+    }
     case '<':
     case '<=':
     case '>':
@@ -829,6 +867,16 @@ function relational(operator: string, left: unknown, right: unknown): boolean {
     if (operator === '<=') return l <= r;
     if (operator === '>') return l > r;
     return l >= r;
+  }
+  // 无损数字（ADR-0020）：任一侧 BigInt → 走 JS 原生关系比较（BigInt 与 Number 可混合比较，
+  // 且不经过 toNumberValue 的有损转换）。断言只为绕过 TS 的类型收窄，运行时值不变。
+  if (typeof l === 'bigint' || typeof r === 'bigint') {
+    const a = l as unknown as number;
+    const b = r as unknown as number;
+    if (operator === '<') return a < b;
+    if (operator === '<=') return a <= b;
+    if (operator === '>') return a > b;
+    return a >= b;
   }
   const ln = toNumberValue(l);
   const rn = toNumberValue(r);
@@ -950,6 +998,10 @@ function clampRange(start: number, end: number, length: number): [number, number
 }
 
 function mathCall(node: AstNode, name: string, args: Ev[]): Ev {
+  // 无损数字（ADR-0020）：Math.* 收 BigInt 报错（原生是 TypeError，不能静默 ToNumber 丢精度）
+  for (const arg of args) {
+    if (typeof arg.v === 'bigint') raise(node, 'EVAL_MIXED_NUMBER', [`Math.${name}`]);
+  }
   const nums = args.map((arg) => toNumberValue(arg.v));
   switch (name) {
     case 'abs':
@@ -994,7 +1046,8 @@ function namespaceCall(m: Machine, node: AstNode, ns: Namespace, name: string, a
     if (!arg || typeof arg.v !== 'string') raise(node, 'EVAL_ILLEGAL_CALL', ['JSON.parse']);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(arg.v);
+      // 表达式内的 JSON.parse 也走无损 parser（ADR-0020 §6：文档无损、表达式不能有损）
+      parsed = parseLossless(arg.v);
     } catch {
       raise(node, 'EVAL_ILLEGAL_CALL', ['JSON.parse']);
     }
@@ -1008,7 +1061,8 @@ function namespaceCall(m: Machine, node: AstNode, ns: Namespace, name: string, a
     const value = args.length > 0 ? args[0]?.v : undefined;
     let text: string | undefined;
     try {
-      text = JSON.stringify(value);
+      // 无损序列化：BigInt 输出裸数字（与主链路同口径），普通值等价 JSON.stringify
+      text = serializeLossless(value);
     } catch {
       raise(node, 'EVAL_ILLEGAL_CALL', ['JSON.stringify']);
     }
@@ -1436,6 +1490,8 @@ function kindOf(value: unknown): JsonKind {
       return 'string';
     case 'number':
       return 'number';
+    case 'bigint':
+      return 'number'; // 无损数字（ADR-0020）：不新增 JsonKind 成员
     case 'boolean':
       return 'boolean';
     default:
@@ -1450,7 +1506,9 @@ function sanitize(m: Machine, value: unknown): unknown {
   const type = typeof value;
   if (type === 'number') return Number.isFinite(value as number) ? value : null;
   if (type === 'string' || type === 'boolean') return value;
-  if (type === 'symbol' || type === 'bigint') return null;
+  // 无损数字（ADR-0020）：BigInt 是合法值图数字，原样保留（行模型按 number 类渲染）
+  if (type === 'bigint') return value;
+  if (type === 'symbol') return null;
   if (type !== 'object') return null;
 
   const object = value as object;

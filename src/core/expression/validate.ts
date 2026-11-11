@@ -169,9 +169,7 @@ export function validateAst(ast: unknown): ExprError | null {
         if (node.regex !== undefined) {
           return failWith({ code: 'STATIC_ERR_NODE', params: ['RegExpLiteral'], node });
         }
-        if (typeof node.bigint === 'string') {
-          return failWith({ code: 'STATIC_ERR_NODE', params: ['BigIntLiteral'], node });
-        }
+        // BigInt 字面量（`123n`）自 ADR-0020 起允许：超大整数只能靠它写出精确常量
         break;
       }
 

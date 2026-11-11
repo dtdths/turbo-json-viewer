@@ -515,9 +515,9 @@ describe('core/expression — 白名单拒绝（code + params）', () => {
     }
   });
 
-  it('正则 / BigInt 字面量', () => {
+  it('正则仍拒绝；BigIntLiteral 自 ADR-0020 起允许', () => {
     expect(errorOf('/abc/')).toMatchObject({ code: 'STATIC_ERR_NODE', params: ['RegExpLiteral'] });
-    expect(errorOf('1n')).toMatchObject({ code: 'STATIC_ERR_NODE', params: ['BigIntLiteral'] });
+    expect(valueOf('1n')).toBe(1n);
   });
 
   it('块体箭头 / 解构参数 / 默认参数 / async 箭头', () => {
@@ -746,5 +746,81 @@ describe('core/expression — countDocumentNodes（迭代式全量计数）', ()
     let node: unknown = 1;
     for (let i = 0; i < 5000; i++) node = { child: node };
     expect(countDocumentNodes(node)).toBe(5001);
+  });
+});
+
+/* ---------------------- 无损数字 / BigInt（ADR-0020 §6） ---------------------- */
+
+describe('core/expression — BigInt 语义（ADR-0020 §6）', () => {
+  /** 含超大整数的文档（无损解析后值是 BigInt）。 */
+  const BIG_DOC = {
+    id: 297532588187238660n,
+    rows: [{ v: 1n }, { v: 2 }, { v: 3000000000000000000n }],
+    name: 'x',
+  };
+
+  it('文档里的 BigInt 原样读出、类型仍是 number 类', () => {
+    expect(valueOf('id', { doc: BIG_DOC })).toBe(297532588187238660n);
+    expect(valueOf('typeof id', { doc: BIG_DOC })).toBe('bigint');
+    expect(valueOf('id === 297532588187238660n', { doc: BIG_DOC })).toBe(true);
+  });
+
+  it('BigInt 字面量：精确常量（不会被 double 圆整）', () => {
+    expect(valueOf('297532588187238660n')).toBe(297532588187238660n);
+    expect(valueOf('1234567890123456789n')).toBe(1234567890123456789n);
+    // 十进制数字字面量（无 n）也走无损判定：超过安全范围 → BigInt
+    expect(valueOf('1234567890123456789')).toBe(1234567890123456789n);
+    expect(valueOf('1.5')).toBe(1.5);
+  });
+
+  it('BigInt 之间算术按原生；关系比较允许 BigInt 与 Number 混合', () => {
+    expect(valueOf('1n + 2n')).toBe(3n);
+    expect(valueOf('5n - 2n')).toBe(3n);
+    expect(valueOf('3n * 3n')).toBe(9n);
+    expect(valueOf('7n / 2n')).toBe(3n); // 整除截断
+    expect(valueOf('7n % 2n')).toBe(1n);
+    expect(valueOf('-1n')).toBe(-1n);
+    expect(valueOf('id > 1', { doc: BIG_DOC })).toBe(true);
+    expect(valueOf('id < 1', { doc: BIG_DOC })).toBe(false);
+    expect(valueOf('id >= 297532588187238660n', { doc: BIG_DOC })).toBe(true);
+  });
+
+  it('混算（BigInt 与 Number）报确定错误 EVAL_MIXED_NUMBER（对齐原生 TypeError）', () => {
+    expect(errorOf('id + 1', { doc: BIG_DOC })).toMatchObject({
+      code: 'EVAL_MIXED_NUMBER',
+      params: ['+'],
+    });
+    expect(errorOf('id * 2', { doc: BIG_DOC })).toMatchObject({ code: 'EVAL_MIXED_NUMBER', params: ['*'] });
+    expect(errorOf('+1n')).toMatchObject({ code: 'EVAL_MIXED_NUMBER', params: ['+'] });
+    expect(errorOf('Math.abs(id)', { doc: BIG_DOC })).toMatchObject({
+      code: 'EVAL_MIXED_NUMBER',
+      params: ['Math.abs'],
+    });
+  });
+
+  it('显式转换允许：Number()/String()/模板串/JSON.stringify/JSON.parse', () => {
+    expect(valueOf('Number(id)', { doc: BIG_DOC })).toBe(297532588187238660);
+    expect(valueOf('String(id)', { doc: BIG_DOC })).toBe('297532588187238660');
+    expect(valueOf('`${id}`', { doc: BIG_DOC })).toBe('297532588187238660');
+    expect(valueOf("'id=' + id", { doc: BIG_DOC })).toBe('id=297532588187238660');
+    // 表达式内 JSON.stringify 输出裸数字（与主链路同口径）
+    expect(valueOf('JSON.stringify(id)', { doc: BIG_DOC })).toBe('297532588187238660');
+    // 表达式内 JSON.parse 也走无损 parser
+    expect(valueOf('JSON.parse("[297532588187238660]")[0]')).toBe(297532588187238660n);
+  });
+
+  it('数组方法可处理 BigInt（filter/比较），结果保留精确值', () => {
+    expect(valueOf('rows.filter(x => x.v > 1)', { doc: BIG_DOC })).toEqual([
+      { v: 2 },
+      { v: 3000000000000000000n },
+    ]);
+    expect(valueOf('[1n,2n,3].includes(2n)')).toBe(true);
+    expect(valueOf('[1n,2,3n].join("-")')).toBe('1-2-3');
+  });
+
+  it('结果归一化保留 BigInt（不被 sanitize 变 null）', () => {
+    const outcome = ok('id', { doc: BIG_DOC });
+    expect(outcome.value).toBe(297532588187238660n);
+    expect(ok('rows', { doc: BIG_DOC }).value).toEqual(BIG_DOC.rows);
   });
 });

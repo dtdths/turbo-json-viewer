@@ -1480,7 +1480,8 @@ describe('DocService — outline（大纲分页 / ADR-0013）', () => {
 /* ===================== 保真提示（#23 / ADR-0003 修订 2026-11-09） ===================== */
 
 /** 同时含「整数键重排」与「大整数精度流失」的源文本：counts = { number:1, keyOrder:1 }。 */
-const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1234567890123456789}';
+/** 保真 fixture（ADR-0020）：整数键序失真 + 整数超展开位数上限（overflow）；大整数本身已无损、不再报。 */
+const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1e10001}';
 
 describe('DocService — fidelity（保真扫描 / #23）', () => {
   it('回包形状：rootId + docRevision + report（命中按源顺序、counts 分类正确）', async () => {
@@ -1490,20 +1491,20 @@ describe('DocService — fidelity（保真扫描 / #23）', () => {
 
     expect(reply).toMatchObject({ rootId: DOC_ROOT, docRevision: 1 });
     expect(reply.report.status).toBe('found');
-    expect(reply.report.counts).toMatchObject({ number: 1, precision: 1, overflow: 0, underflow: 0, keyOrder: 1, total: 2 });
+    expect(reply.report.counts).toMatchObject({ number: 1, overflow: 1, underflow: 0, keyOrder: 1, total: 2 });
     expect(reply.report.hits.map((hit) => hit.kind)).toEqual(['key-order', 'number']);
     expect(reply.report.truncated).toBe(false);
     expect(typeof reply.report.scanMs).toBe('number');
     // offset 可直接喂 rawLocate（源文本 UTF-16 偏移）：键序命中在对象 `{`
     expect(reply.report.hits[0]?.offset).toBe(0);
-    expect(reply.report.hits[1]?.offset).toBe(FIDELITY_TEXT.indexOf('1234567890123456789'));
+    expect(reply.report.hits[1]?.offset).toBe(FIDELITY_TEXT.indexOf('1e10001'));
   });
 
   it('无失真文档：status none、counts 0、hits 空', async () => {
     const svc = new DocService();
     await load(svc, '{"a":1,"b":[true,null]}');
     const reply = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
-    expect(reply.report).toMatchObject({ status: 'none', counts: { number: 0, precision: 0, overflow: 0, underflow: 0, keyOrder: 0, total: 0 }, hits: [] });
+    expect(reply.report).toMatchObject({ status: 'none', counts: { number: 0, overflow: 0, underflow: 0, keyOrder: 0, total: 0 }, hits: [] });
     expect(reply.report.truncated).toBe(false);
   });
 

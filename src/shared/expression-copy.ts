@@ -17,6 +17,7 @@ const TEMPLATES: Record<ExprErrorCode, string> = {
   EVAL_STEP_LIMIT: '步数超限（预算 {0}）',
   EVAL_TIME_LIMIT: '已超时（预算 {0} ms）',
   EVAL_ILLEGAL_CALL: '调用不被允许：{0}',
+  EVAL_MIXED_NUMBER: '超大整数不能与普通数字混算：{0}',
   RESULT_TRUNCATED: '结果已截断（上限 {0}）',
 };
 

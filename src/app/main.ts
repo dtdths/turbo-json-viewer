@@ -2643,9 +2643,8 @@ function renderFidelity(): void {
     fidelityNotice.hide();
     return;
   }
-  // 精确数量必须**按类别**说：上溢/下溢不能算进「大整数精度」（code review 收口）
+  // 精确数量必须**按类别**说（ADR-0020 起整数精度流失已退场，只剩上溢/下溢/键序）
   const parts: string[] = [];
-  if (report.counts.precision > 0) parts.push(`大整数精度 ${report.counts.precision} 处`);
   if (report.counts.overflow > 0) parts.push(`数字上溢 ${report.counts.overflow} 处`);
   if (report.counts.underflow > 0) parts.push(`数字下溢 ${report.counts.underflow} 处`);
   if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
@@ -2657,8 +2656,8 @@ function renderFidelity(): void {
 }
 
 /**
- * 一条失真的「人话解释」（#31）：数字类给**原文 vs 实际精确值**（`parsed` 已是 BigInt 精确整数，
- * 显示串相同也能看出差异）；键序类只说明被重排。
+ * 一条失真的「人话解释」（#31 / ADR-0020 §7）：数字类给**原文 vs 实际值**
+ * （上溢 → Infinity / 下溢 → 0；整数精度流失已退场）；键序类只说明被重排。
  */
 function describeFidelityHit(hit: FidelityHit): string {
   if (hit.kind === 'key-order') return '失真：整数样式的键顺序被重排';
