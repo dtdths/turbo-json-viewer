@@ -1,16 +1,18 @@
 /**
  * core/import — 导入管线。
  *
- * 真相源 = JSON.parse 值图；**解码出的源文本随结果返回并保留在 doc 根上**
+ * 真相源 = 无损解析值图（ADR-0020：整数超安全范围用 BigInt；不再用 JSON.parse）；
+ * **解码出的源文本随结果返回并保留在 doc 根上**
  * （ADR-0003 修订 2026-11-03 §2：原文视图 / 修复摘要跳行的唯一真相；永不落盘、不出 Worker）。
  * 解码在 Worker 内做：ArrayBuffer → TextDecoder('utf-8')（ir-spec §5）。
  *
- * 截断修复（#8 / ADR-0004 修订）：只在 JSON.parse 失败时调用 `core/repair.ts`；
+ * 截断修复（#8 / ADR-0004 修订）：只在解析失败时调用 `core/repair.ts`；
  * 只做语法层闭合（不猜内容），修复结果自校验后才采纳，并把 provenance 挂到 meta.repair。
  * 非 EOF 形态的语法错误仍按原样抛 PARSE（带行列），不产生值图。
  */
 import { CoreError } from '../protocol/errors';
 import type { LoadSource } from '../protocol/messages';
+import { LosslessParseError, parseLossless } from './lossless-json';
 import type { DocumentMeta, RepairProvenance } from '../protocol/types';
 import { repairTruncatedJson } from './repair';
 
@@ -73,11 +75,16 @@ export function offsetToLineColumn(text: string, offset: number): { line: number
 }
 
 /** 统一构造 PARSE 错误（带行列；修复失败与原语法错误同形）。 */
-function parseError(text: string, message: string): CoreError {
-  const position = parseErrorPosition(text, message);
+function parseError(text: string, err: unknown): CoreError {
+  const message = err instanceof Error ? err.message : String(err);
+  // 无损 parser 自带 1-based 行列（ADR-0020），优先用它；其它错误仍从消息里还原
+  const position =
+    err instanceof LosslessParseError
+      ? { line: err.line, column: err.column }
+      : parseErrorPosition(text, message);
   const shape: { code: 'PARSE'; message: string; line?: number; column?: number } = {
     code: 'PARSE',
-    message: `JSON.parse failed: ${message}`,
+    message: `JSON parse failed: ${message}`,
   };
   if (position.line !== undefined) shape.line = position.line;
   if (position.column !== undefined) shape.column = position.column;
@@ -91,21 +98,21 @@ export function loadDocument(input: LoadDocumentInput): LoadDocumentResult {
   let value: unknown;
   let repair: RepairProvenance | undefined;
   try {
-    value = JSON.parse(text) as unknown;
+    value = parseLossless(text);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // 设置关闭了自动修复（ADR-0011 §1）：不尝试修复，直接抛原 PARSE
-    if (input.repair === false) throw parseError(text, message);
+    if (input.repair === false) throw parseError(text, err);
     // 截断修复（ADR-0004 §6）：只做语法闭合；非 EOF 形态 → unrepairable，仍抛原 PARSE
     const attempt = repairTruncatedJson(text);
     if (attempt.status !== 'repaired' || attempt.text === undefined) {
-      throw parseError(text, message);
+      throw parseError(text, err);
     }
     try {
-      value = JSON.parse(attempt.text) as unknown;
+      value = parseLossless(attempt.text);
     } catch {
       // 自校验失败（理论上 repair 已验证过）：保守地退回 PARSE，不产生半修复文档
-      throw parseError(text, message);
+      throw parseError(text, err);
     }
     repair = {
       status: 'repaired',

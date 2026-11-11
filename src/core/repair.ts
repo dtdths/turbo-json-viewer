@@ -7,17 +7,18 @@
  *
  * 判定顺序 = docs/design/reassess-fidelity.md §6.2 的 6 条规则；驱动方式是单趟状态机
  * （容器栈 + 字符串/数字/字面量/成员槽位），不拿 V8 的报错串做字符串手术。
- * 自校验：修复结果必须 `JSON.parse` 通过才算 `repaired`，否则 `unrepairable`。
+ * 自校验：修复结果必须能被**无损 parser**（ADR-0020，与导入同一真相源）解析才算 `repaired`，否则 `unrepairable`。
  *
  * 契约：纯函数，零依赖，不碰 DOM/Node，**不抛错**。
  * `status: 'none'` 只在原文本本来可解析时返回（调用方只需在 parse 失败时调用本模块）。
  * `ops[].at` 一律指向**原文本**偏移：delete 的 `text` = 原文切片，insert 的 `at` = 原文长度。
  */
 import type { RepairCounts, RepairOp } from '../protocol/types';
+import { parseLossless } from './lossless-json';
 
 export interface RepairAttempt {
   status: 'none' | 'repaired' | 'unrepairable';
-  /** status='repaired' → 可 JSON.parse 的修复文本；status='none' 不返回文本（调用方用原文本） */
+  /** status='repaired' → 可被无损 parser 解析的修复文本；status='none' 不返回文本（调用方用原文本） */
   text?: string;
   truncatedAt?: number;
   counts?: RepairCounts;
@@ -374,7 +375,7 @@ function isPartialLiteral(lit: string): boolean {
 
 function parses(text: string): boolean {
   try {
-    JSON.parse(text);
+    parseLossless(text);
     return true;
   } catch {
     return false;

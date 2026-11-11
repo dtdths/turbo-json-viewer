@@ -12,6 +12,7 @@ import { CoreError } from '../protocol/errors';
 import type { CopyFormat, Path } from '../protocol/types';
 import { COPY_INDENT, COPY_MAX_BYTES } from '../protocol/versions';
 import { byteLengthOf } from './import';
+import { serializeLossless } from './lossless-json';
 import { lastSegment } from '../shared/path';
 
 /** 四种格式的固定枚举顺序（UI 菜单顺序同此，见 ADR-0010 §1）。 */
@@ -22,8 +23,9 @@ export function isCopyFormat(value: string): value is CopyFormat {
 }
 
 /**
- * 标量的「文本值」：字符串 = 内容本身（无引号、转义还原）；数字/布尔/null = JSON 字面量。
- * 容器不适用（容器没有原始值）→ BAD_COMMAND，由 UI 禁用保证不会触发。
+ * 标量的「文本值」：字符串 = 内容本身（无引号、转义还原）；数字/布尔/null = JSON 字面量；
+ * BigInt（无损数字，ADR-0020）= 精确十进制串。容器不适用（容器没有原始值）→ BAD_COMMAND，
+ * 由 UI 禁用保证不会触发。
  */
 export function rawValueText(value: unknown): string {
   if (value !== null && typeof value === 'object') {
@@ -36,12 +38,15 @@ export function rawValueText(value: unknown): string {
     case 'string':
       return value;
     case 'number':
-      // JSON.parse 不会产生 NaN/Infinity；String(-0) = "0" 与 JSON 口径一致
+      // 值图数字不含 NaN/Infinity（解析期保证）；String(-0) = "0" 与 JSON 口径一致
       return JSON.stringify(value) ?? 'null';
+    case 'bigint':
+      // 无损数字（ADR-0020）：BigInt 不能走 JSON.stringify（会抛 TypeError）
+      return value.toString();
     case 'boolean':
       return value ? 'true' : 'false';
     default:
-      // null（以及 JSON.parse 不可能产出的 undefined/function/symbol 兜底）
+      // null（以及值图不可能产出的 undefined/function/symbol 兜底）
       return 'null';
   }
 }
@@ -77,9 +82,10 @@ export function copyNodeText(args: CopyTextArgs): CopyTextResult {
   let text: string;
   switch (format) {
     case 'subtree': {
-      // 缩进按设置传入（缺省 COPY_INDENT=2；0=紧凑）；先 stringify 再判上限（已知差距同 getNodeJson）
+      // 缩进按设置传入（缺省 COPY_INDENT=2；0=紧凑）；无损序列化（BigInt → 裸数字，ADR-0020），
+      // 先序列化再判上限（已知差距同 getNodeJson）
       const indent = Number.isInteger(args.indent) && (args.indent as number) >= 0 ? Math.min(8, args.indent as number) : COPY_INDENT;
-      text = JSON.stringify(value, null, indent) ?? 'null';
+      text = serializeLossless(value, indent) ?? 'null';
       const bytes = byteLengthOf(text);
       const max = args.maxBytes ?? COPY_MAX_BYTES;
       if (bytes > max) {

@@ -67,6 +67,12 @@ import type {
 import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget, RAW_PATH_CACHE_SIZE } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
+import {
+  deepEqualJson,
+  LosslessParseError,
+  parseLossless,
+  serializeLossless,
+} from './lossless-json';
 import { EditHistory } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { scanFidelity } from './fidelity';
@@ -529,7 +535,7 @@ export class DocService {
         bytes: lowerBoundChars,
       });
     }
-    const text = JSON.stringify(value, null, 2);
+    const text = serializeLossless(value, 2) ?? 'null';
     const bytes = byteLengthOf(text);
     if (bytes > EDIT_MAX_BYTES) {
       throw new CoreError({
@@ -561,7 +567,7 @@ export class DocService {
 
   /**
    * Apply 一次子树替换（ADR-0006 / edit-spec §3）：
-   * docRevision 校验 → 5MB 文本守卫 → JSON.parse（PARSE 带行列）→ no-op 判定 → 行模型增量替换
+   * docRevision 校验 → 5MB 文本守卫 → 无损解析（PARSE 带行列；ADR-0020）→ no-op 判定 → 行模型增量替换
    * → 版本推进 → 记编辑历史。no-op 与错误都不产生任何修改。
    */
   private replaceNode(cmd: Cmd<'replaceNode'>): EditReply {
@@ -582,8 +588,9 @@ export class DocService {
     }
     const parsed = this.parseEditText(cmd.jsonText);
     const oldValue = root.rowModel.valueAt(cmd.path); // 路径不存在 → BAD_COMMAND
-    // no-op：规范化后的 JSON 等价（用户没改内容）→ 不推进版本、不记历史、无 changedRow
-    if (JSON.stringify(oldValue, null, 2) === JSON.stringify(parsed, null, 2)) {
+    // no-op：结构化等价（用户没改内容）→ 不推进版本、不记历史、无 changedRow。
+    // 不能用 JSON.stringify 比较：BigInt 会抛（ADR-0020），且深比较对键序/`-0` 的判定更明确。
+    if (deepEqualJson(oldValue, parsed)) {
       return this.editReply(root);
     }
 
@@ -595,16 +602,19 @@ export class DocService {
     });
   }
 
-  /** JSON.parse 编辑文本；失败 → PARSE（尽力还原 line/column，见 import.ts）。 */
+  /** 无损解析编辑文本（ADR-0020）；失败 → PARSE（带 line/column）。 */
   private parseEditText(text: string): unknown {
     try {
-      return JSON.parse(text) as unknown;
+      return parseLossless(text);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const position = parseErrorPosition(text, message);
+      const position =
+        err instanceof LosslessParseError
+          ? { line: err.line, column: err.column }
+          : parseErrorPosition(text, message);
       throw new CoreError({
         code: 'PARSE',
-        message: `JSON.parse failed: ${message}`,
+        message: `JSON parse failed: ${message}`,
         ...position,
       });
     }
@@ -689,7 +699,7 @@ export class DocService {
    */
   private exportDoc(cmd: Cmd<'exportDoc'>): ExportReply {
     const root = this.roots.require(cmd.rootId);
-    const text = JSON.stringify(root.rowModel.value, null, cmd.indent ?? 2);
+    const text = serializeLossless(root.rowModel.value, cmd.indent ?? 2) ?? 'null';
     return { text, bytes: byteLengthOf(text) };
   }
 
@@ -800,7 +810,7 @@ export class DocService {
 
   /**
    * 树节点路径 → 原文锚点偏移 + 行号（ADR-0019 §3）：重复键取**最后一个**源位置
-   * （与 `JSON.parse` 生效值一致）。源文本没有该路径（临时修改新增 / plain）→ null。
+   * （与无损 parser 生效值一致，ADR-0020）。源文本没有该路径（临时修改新增 / plain）→ null。
    * 结果按根做 LRU 缓存：同一节点来回对照第二次起 0ms（树→原文是单趟扫描，见 ADR §2）。
    */
   private rawOffsetOf(cmd: Cmd<'rawOffsetOf'>): RawOffsetOfReply {
