@@ -119,3 +119,12 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 - **接线**：`main.ts` 的 `SearchPanel.onCopyResult` 读 `settings.get('searchCopyFormat')` 调既有 `copyNodeToClipboard`；面板本身不读设置（保持 viewmodel 无状态依赖）。
 - **验收**：单测 724 → **725**（`searchCopyFormat` 默认/合法/非法回落）；冒烟 `smoke-settings` 23 → **24**（`set:searchCopyFormat` 默认路径 → 切子树 JSON → 切回；`DEFAULT_KEYS`/`DEFAULTS`/重启恢复对象同步 10 项）。
 - **体积**：`page.js` 33.7 → **33.9KB gz**（+0.2），`worker.js` 15.3 / `page.css` 7.3 不变。
+
+## 修订（2026-11-10）：第 11 项设置「高级预算」（#27 / ADR-0018）
+
+- **schema +1**：`Settings.advBudget: 'loose' | 'standard' | 'strict'`，默认 **`'standard'`**；按 `EXPR_BUDGET_OPTIONS` 白名单校验、非法回落默认；随整包写入 `tjv.settings.v1`（无新存储键，旧数据缺该键 → 标准档）。
+- **语义**：只影响表达式求值的三档预算（时间 / 步数 / 结果上限，数值见 ADR-0018 §3 与 `protocol/versions.ts` 的 `EXPR_BUDGETS`）；预设档位、不做自定义数值；表达式面板的「严格模式」是会话级开关，**不进**设置持久化。
+- **面板**：10 行 → **11 行**，位置在末尾（「小文档自动全部展开」之后）、标签「**高级预算**」，3 选项 segmented（宽松 / 标准 / 严格）。
+- **接线**：`main.ts` 求值时读 `settings.get('advBudget')` 传 `budget`；改档位只影响下一次执行。
+- **验收**：单测 834 → **840**（其中 `settings-state` +1 项 advBudget 默认/合法/非法回落；表达式引擎/补全/locate 共 +114）；冒烟 `smoke-settings` 24 → 26（第 11 行顺序 + `set:advBudget` 三态 + 重启恢复同步 11 项）。
+- **体积**：`page.js` / `worker.js` / `page.css` 增量已计入 ADR-0018 的整体体积记录（设置面板一行 ≈ 0）。
