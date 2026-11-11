@@ -64,7 +64,8 @@ async function reportSize(metafile) {
   console.log('\nfile'.padEnd(34), 'raw KB'.padStart(8), 'gzip KB'.padStart(8));
   for (const r of rows) console.log(r.file.padEnd(34), r.raw.padStart(8), r.gz.padStart(8));
   const page = rows.find((r) => r.file.startsWith('page.js'));
-  if (page) console.log(`\nfirst paint (page.js) gzip: ${page.gz} KB  (budget 48 KB)`);
+  // 预算演进：45（slice 6.19 前）→ 46 → 47 → 48（2026-11-11 晚）→ 50（2026-11-12，#29 / ADR-0021，用户拍板）
+  if (page) console.log(`\nfirst paint (page.js) gzip: ${page.gz} KB  (budget 50 KB)`);
 }
 
 await rm(DIST, { recursive: true, force: true });
