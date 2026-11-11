@@ -21,7 +21,8 @@
     "smoke:raw": "node scripts/smoke-raw.mjs",
     "smoke:fidelity": "node scripts/smoke-fidelity.mjs",
     "smoke:outline": "node scripts/smoke-outline.mjs",
-    "smoke:expression": "node scripts/smoke-expression.mjs"
+    "smoke:expression": "node scripts/smoke-expression.mjs",
+    "smoke:workspace": "node scripts/smoke-workspace.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
