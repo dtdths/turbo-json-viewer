@@ -63,16 +63,18 @@
 | `RootStore` | 多根注册表：`doc` / `expr:N` / `repaired`，`docRevision`/`rowVersion`、表达式根 LRU 3 | 已实现 `get/require/ids/values/put/touch/delete/clear`；**`release`/`markStale` 仍是草案**（多文档需补 `close`，见 §12、ADR-0009） | 根坐标与生命周期 |
 | `RowModel` | 可见行模型：per-open 容器 Fenwick、窗口下潜、toggle、**子树批量 toggle（#22）**、replaceNode 增量更新、path↔行号 | `window/toggle/toggleSubtree/replaceNode/rowOfPath/totalRows` | 固定行高坐标、O(depth·log n)；子树操作单趟后序重建、原子预算 |
 | `identity` | 懒 id（容器）+ `(parent, slot)` 标量句柄；路径⇄句柄；不建全局 parentMap | `idOf/handleAt/pathOf` | 双格式（路径持久化、id 运行期） |
-| `ImportPipeline` | `arrayBuffer`→`TextDecoder`→`JSON.parse`；截断闭合+provenance；**源文本保留**（ADR-0003 修订） | `load(input): LoadResult { value, meta, text }` | 源文本留给原文视图/复制原文 |
+| `ImportPipeline` | `arrayBuffer`→`TextDecoder`→**无损 parser**（ADR-0020：整数超安全范围用 BigInt）；截断闭合+provenance；**源文本保留**（ADR-0003 修订） | `load(input): LoadResult { value, meta, text }` | 源文本留给原文视图/复制原文 |
 | `RawText` | 原文行索引三模式（source/pretty/plain）+ 检查点 + `locate`；惰性构建、不物化全文 | `buildRawIndex(text,{damaged})` / `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | 每 2048 行一个检查点（50MB 19.5KiB）；窗口 p95 0.084ms |
 | `Outline` | 大纲页枚举：按容器**分页**返回子项（键/类型/项数/路径），不建第二棵树、不缓存、不看树展开态 | `outlinePage(node, path, start, count)` / `outline` 命令 | 每页 O(子项数)；10MB 样本 200 项页 <1ms（ADR-0013） |
 | `Search` | 全文档键/值扫描 → 命中集合（不建根、不扫 DOM） | `search(root, q, opts): HitSet` | 可取消、渐进返回 |
-| `Fidelity` | 源文本保真扫描（#23）：单趟线性、每 256KB **宏任务**让出、可取消；BigInt 精确判定大整数精度 + 上/下溢 + 整数键重排（键先解 JSON 转义、重复键不参与顺序判定） | `scanFidelity(text, opts): Promise<FidelityReport \| null>` / `fidelity` 命令 | 不碰值图/行模型；报告按根对象身份缓存（`WeakMap`，编辑不重扫）；只留源顺序前 100 条片段 |
+| `Fidelity` | 源文本保真扫描（#23 / ADR-0020）：单趟线性、每 256KB **宏任务**让出、可取消；报上/下溢 + 整数键重排（**整数精度流失已退场**——无损 parser 保证；数字判定与 parser 共用 `analyzeNumberLiteral`） | `scanFidelity(text, opts): Promise<FidelityReport \| null>` / `fidelity` 命令 | 不碰值图/行模型；报告按根对象身份缓存（`WeakMap`，编辑不重扫）；只留源顺序前 100 条片段 |
 | `Expr` | acorn AST + 白名单 walker + 时间/步数/结果预算 → 新根 | `eval(expr, root): ExprResult` | 无 eval/WASM |
 | `EditHistory` | `replaceNode` 的 undo/redo/reset（深度 100，old/new 快照） | `apply/undo/redo/reset` | 与行模型增量更新同事务 |
 | `Trail` | 选中节点 → `MapTrail`（O(depth)，兄弟 ±2） | `trail(root, path)` | 不遍历全文档 |
 | `Copy` | 子树 JSON / 路径 / 原值 / 键名 | `copy(root, handle, fmt)` | 大子树预算 |
-| `Measure` | 子树 JSON 体积的**字符数下界**预扫描（显式栈、分配无关、跨预算早停） | `jsonSizeLowerBoundChars(value, limit): number` | `getNodeJson` 5MB 守卫在 stringify 前拒绝超大子树（下界 ≤ 真实字节数 ⇒ 零误拒） |
+| `Measure` | 子树 JSON 体积的**字符数下界**预扫描（显式栈、分配无关、跨预算早停；BigInt 按十进制串长度计下界） | `jsonSizeLowerBoundChars(value, limit): number` | `getNodeJson` 5MB 守卫在 stringify 前拒绝超大子树（下界 ≤ 真实字节数 ⇒ 零误拒） |
+| `NumberLiteral` | JSON 数字字面量的**无损判定**单一来源（ADR-0020）：整数超安全范围 → BigInt；整数展开位数 > 10000 → Infinity；小数仍 Number | `analyzeNumberLiteral(lit): NumberLiteralInfo` | parser 与 fidelity 共用，禁止两处规则漂移 |
+| `LosslessJson` | 无损 JSON 解析/序列化/深相等（ADR-0020）：显式栈非递归、字符串自解码、`__proto__` 安全、与 `JSON.parse` 语法接受面逐例对拍；BigInt 序列化为裸十进制数字 | `parseLossless(text)` / `serializeLossless(value, indent?)` / `deepEqualJson(a,b)` | 替换 `JSON.parse` 作为导入唯一真相源；序列化器替代 5 处产品 `JSON.stringify` |
 | `Profile` | Document Profile 采样（键/路径样本、类型计数） | `profile(root)` | 异步、不阻塞首帧 |
 
 ### 3.3 viewmodel（主线程，无 DOM）
@@ -120,7 +122,7 @@
 
 **导入**（零 long task）
 ```
-page: file.arrayBuffer() ──transfer──▶ worker: TextDecoder → JSON.parse
+page: file.arrayBuffer() ──transfer──▶ worker: TextDecoder → parseLossless（ADR-0020）
                                         → Root(doc) + 首屏可见行（默认折叠）
 page: 请求首窗口 ────────────────────▶ worker: RowModel.window(0, 40)
 page: 提交行 DOM（双 rAF 后统计首帧）
@@ -149,7 +151,7 @@ SearchPanel 输入 → SearchState → core.search → HitSet(docRevision)
 **编辑**
 ```
 SubtreeEditor 打开：core.getNodeJson(path) → CodeEditor.setValue(pretty JSON)
-Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值图
+Apply：core.replaceNode(path, jsonText) → parseLossless（≤5MB；ADR-0020）→ 替换值图
 → docRevision++ / rowVersion++ → RowModel 增量更新 → EditHistory.push
 → 视图重取窗口 + 选中替换节点 + 修改计数 + 搜索清空/表达式 stale
 ```
@@ -186,7 +188,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 ## 8. 工程与测试（细节见 [build-and-test.md](build-and-test.md)）
 
-- 构建：esbuild 三入口（page/worker/sw）+ code splitting，CM6 懒加载；首屏 ≤48KB gz（2026-11-11 晚用户拍板：47 → 48，归因见 ADR-0003 修订（#31）与 ADR-0019「预算」）、懒加载 chunk 合计 ≤146KB gz（2026-11-10 用户拍板：140 → 146，+5.4 全部来自 `@codemirror/autocomplete`，见 ADR-0018「预算修订」）。
+- 构建：esbuild 三入口（page/worker/sw）+ code splitting，CM6 懒加载；首屏 ≤48KB gz（2026-11-11 晚用户拍板：47 → 48，归因见 ADR-0003 修订（#31）与 ADR-0019「预算」）、懒加载 chunk 合计 ≤146KB gz（2026-11-10 用户拍板：140 → 146，+5.4 全部来自 `@codemirror/autocomplete`，见 ADR-0018「预算修订」）；`worker.js` **无硬预算**（ADR-0020 起记录：无损 parser + BigInt 值模型实测 61.1 → 63.2KB gz，+2.1）。
 - 测试三层：vitest 单测（core/viewmodel/protocol）→ `CoreTransport` 契约测试（InProcess vs Worker）→ 真机 harness（DOM/长任务/滚动/DPR）+ 性能基准 + 视觉基线。
 - 文档不落盘、无网络、禁 eval、仅 `storage` 权限（红线复核见 ADR-0004/0005 与 build-and-test.md）。
 
@@ -248,10 +250,11 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 | 6.18 表达式视图（#27 / ADR-0018，2026-11-10） | ✅ | `src/core/expression/{whitelist,parse,validate,walk,engine,complete,locate}.ts`（**acorn 只进 worker**：单表达式子集 + default-deny 白名单 + 手写 walker；预算三刹车 时间/步数`max(base,k×N)`/结果上限；10 错误码 + 行列定位；缺失字段分级 + 拼写纠错；origins → 结果行回原路径）+ `doc-service` 的 `eval/complete/exprLocate`（结果根 `expr:N`、LRU 3、换文档丢弃）+ `protocol` 三命令/类型/`EXPR_BUDGETS` + 第 11 项设置 `advBudget`（宽松/标准/严格）+ `view/panels/expression-{panel,editor,bar}.ts`（CM6 懒加载、自写轻量上色、autocomplete source、Enter/Shift-Enter、示例/历史/严格模式/行内错误）+ `main.ts` 接线（模式切换、结果视图 = 树区换根、点结果行跳回、导出/复制结果、stale 条 + 重新执行、`3×maxTime` 看门狗）+ `dev-hook` 11 个表达式钩子；**单测 725 → 840**（+115：引擎/补全/locate 114 + 设置 1）；**冒烟 14 套全绿**（新增 `smoke-expression` **45/45**；`smoke-settings` 24 → 25）；**体积**：`page.js` 33.9 → **41.0KB gz**（预算 45）、`worker.js` 15.3 → **58.7KB**（acorn+walker）、`page.css` 7.3 → **7.8**、懒加载 132.1 → **145.4KB**（+13.2 来自 `@codemirror/autocomplete`；**预算 140 → 146 经用户 2026-11-10 拍板 A**，显式记录） | 用户可见：活动栏第 4 模式「表达式」；写 JS 子集过滤/投影 → 结果作为可展开树查看、点行跳回原文档、导出/复制结果 JSON；预算超限给确定错误码、结果超限截断带标记、文档改动后 stale 提示；**只读**（结果不可编辑、不改原文）；已知差距：看门狗触发后需重新导入（页面重载）、补全只到根级字段（类型感知 → #28）、截断只及最终结果根 |
 | 6.19 多文档工作区标签（#18 / ADR-0009，2026-11-11） | ✅ | `protocol`：`closeRoot { rootId }`（**幂等**，未知根回 `closed:false`）+ `load` 回带 `doc:N` + `MAX_DOC_TABS=8`/`TAB_STRIP_HEIGHT=32`；`core`：`RootStore.close`、`DocService.load` **不覆盖**（doc 根 id 单调不复用）、`closeRoot` 连带丢弃 `parentRootId` 指向它的 expr 根并释放编辑历史/节点数缓存/搜索 seq、**搜索抢占 seq 改按根**（`Map<rootId,seq>`，多标签致命点）；`viewmodel`：新增 `workspace-state.ts`（`WorkspaceState`/`TabState`，runtime 工厂注入「行窗口/原文窗口/搜索/编辑」每标签一份，软上限 8 不淘汰、关活动标签右邻→左邻）；`view`：新增 `tab-strip.{ts,css}` + `#tabStrip`（32px = `TAB_STRIP_HEIGHT` 写 inline、**≥2 文档才显示**（单文档 hidden 零高度零视觉变化）、`role=tablist`/`aria-selected`、roving tabindex/←→/Home/End、重绘归还焦点、零新增颜色 token）；`app`：切标签 = 换 adapter + 重挂订阅 + 恢复会话/选中/滚动/搜索（含输入框）/大纲/提示条，**回包按 rootId 丢弃**（`isActiveDocRoot` 前置门）、入口层「替换 ⇄ 在新标签中打开」+ `⌘⇧O` + `＋`、拖到标签条空白 = 新标签、关标签先 `closeRoot`（有未导出修改先 confirm）、关最后回空态、第 2+ 份大文档内存提示、dev hook **69 → 75**；**单测 840 → 899**（+59：workspace-state 36 / root-store 9 / doc-service 7 / 契约 4 / dev-hook 3）；**冒烟 15 套全绿**（新增 `smoke-workspace` **50/50**；其余 14 套计数不变）；**同日用户反馈修订**：模态入口层抬到 `z-index:32`（修「弹层不遮左面板」，初始空态仍 30）、标签**拖拽排序**（`WorkspaceState.move` + HTML5 drag + 插入指示线 + 键盘 `Alt+←/→`）、拖放暂存文件后点「在新标签中打开」**立即导入**（不再二次确认）；体积 `page.js` 41.0 → **45.6KB gz**（预算 **45 → 46** 经用户 2026-11-11 拍板，+0.7 归因见 ADR-0009「预算修订」）、`page.css` 7.8 → **8.1**、懒加载 145.4 → **145.6**（预算 146）、`worker.js` 58.7 不变 | 用户可见：≥2 个文档时工具栏下方出现 32px 标签条（文件名 + × + ＋），切标签保留各自的展开/选中/滚动/搜索态；导入仍替换当前标签，`⌘⇧O`/入口层可开新标签；关标签释放 Worker 根、关最后一个回空态；满 8 个禁用 ＋；已知差距：文件拖放落点分流由冒烟合成事件覆盖（非真机拖拽）、标签重命名/自定义导出名另见 **#29**、watchdog 重载后工作区丢失（与单文档时代一致） |
 | 6.20 原文视图 ↔ 树视图双向定位（#30 / ADR-0019，2026-11-11） | ✅ | `protocol`：新增两条只读命令 `rawPathAt { rootId, line }`（原文显示行 → 规范路径；锚点 = 行首 token 所属节点，结构行回 `null`）与 `rawOffsetOf { rootId, path }`（规范路径 → 源偏移 + 1-based 行；重复键取最后一个源位置）；均不推 `docRevision`/`rowVersion`、plain 模式回 `null`、`exact=false` 仅表示命中「成员值起点 / 容器开括号」，结构行回 `null`（不回退最近节点）；`core`：**B-1 混合**——原文→树 = 检查点 + 祖先键栈增量索引（检查点存帧链 `{isObj,closer,pos,idx}`（层数 = 下标）+ 键栈 `(kind,offset,len)`；键只存偏移、命中才拼路径；首次跳转懒建、`WeakMap<Root>`、随根关闭/换文档释放；50MB 索引 73–113KiB、命中 0.16ms 级、首次懒建 50MB≈0.2s）；树→原文 = 按需单趟扫描 + 每标签 LRU（1MB≈5ms / 10MB≈50ms / 50MB≈238ms；命中缓存或记忆锚点 0ms）；**否决**全量 `path→offset` 表（50MB≈88.9MiB，`docs/design/reassess-fidelity.md:13`）与分层采样索引；`view`：原文**行尾浮条**（`⇢`、`sticky right` 贴视口右缘、`tabIndex=-1`、结构行不渲染；2026-11-11 用户反馈由行号 gutter 改到右侧）+ 树行浮条第三钮（`⇠`）+ 两侧右键菜单项；`app`：树侧走 `expandTo` + 选中 + `.is-changed` 900ms、原文侧滚动 + `.is-flash` 900ms；每标签内存锚点记忆（不持久化）；busy + 状态栏「正在定位…」/ 失败 3s 文案；回包按 `rootId` 丢弃；**范围**：plain 两侧禁用、表达式根不涉及、多标签仅当前标签、不做分屏/连续联动、保真条保持单动作；**测试**：映射纯函数单测 + 两条新命令契约 + dev hook **75 → 82** 逐字钉住；锚点记忆由冒烟覆盖（`main.ts` 接线层无单测面）；**单测 899 → 929**；冒烟 `smoke-raw` **26 → 33/33**、`smoke-fidelity` **24 → 29/29**（#31 修订后 35/35）（不新增第 16 套）；体积 `page.js` 45.6 → **47.0KB gz**（预算 46 → **47** 经用户 2026-11-11 拍板）、`worker.js` **61.0**、`page.css` 8.1、懒加载 145.6 | 用户可见：原文行 hover 出「跳树」按钮、树行浮条/右键「跳原文」，保真痛点闭环（失真 → 查看原文 → 一键回树）；plain 修复文档两侧禁用；编辑新增节点点击后状态栏提示；已知差距：50MB 首跳≈0.2s 不可取消、原文侧 title 只到行号、重复键不区分、source 一行多值只锚首节点、原文无行级键盘导航（另开票） |
+| 6.22 无损数字值模型（#32 / ADR-0020，2026-11-12） | ✅ | `core`：新建 `number-literal.ts`（数字字面量无损判定单一来源：整数超 2^53−1 → BigInt、整数展开位数 >10000 → Infinity、小数仍 Number）+ `lossless-json.ts`（显式栈非递归 parser、字符串自解码、`__proto__` 安全、与 `JSON.parse` 语法接受面逐例对拍 + 1000 例差分 fuzz；序列化器 BigInt → 裸十进制数字、无 BigInt 时与 `JSON.stringify` 逐字节等价；`deepEqualJson` 供编辑 no-op）；`import.ts`/`repair.ts`/`doc-service.ts`（getNodeJson/replaceNode/parseEditText/exportDoc）/`copy.ts` 全线换成无损 parser + serializer + 深比较；`row-model`/`measure`/`outline`/`search` 认 BigInt（归 `number` 类、预览十进制串、下界按位数）；`expression/*` BigInt 语义（字面量 `123n` 与十进制 raw 精确；同类型算术原生、混算 `EVAL_MIXED_NUMBER`、关系比较允许混合、`Math.*` 报错、`Number()/String()` 显式转换、表达式内 `JSON.parse/stringify` 同口径；步数预算不变）；`fidelity` 改口径（`precision` 退场、数字判定共用 `analyzeNumberLiteral`、保真条文案只剩上溢/下溢/键序）；`protocol` 删 `FidelityCounts.precision`；**单测 930 → 985**；冒烟 `smoke-fidelity` 35 条重写（大整数不再报、超 cap 才报上溢）、`smoke-copy` 38→43、`smoke-export` 21→22、`smoke-edit`/`smoke-expression` 各 +3/+5；**体积**：`page.js` **47.6 不变（预算 48 未动）**、懒加载 **145.6 不变（预算 146 未动）**、`worker.js` 61.1 → **63.2KB gz**（+2.1，无硬预算，ADR-0020 §9） | 用户可见：`297532588187238660` 等大整数在树/复制（子树 JSON、原始值）/导出/编辑弹层/表达式里都是**精确十进制、无引号**；高精度小数仍按 double（已知差距、不检测）；保真条不再误报「大整数精度」；已知差距：小数无损、字面量字节往返、整数键序无损、数字搜索、深嵌套导出 RangeError、`BigInt()` 构造器未进表达式白名单、Chrome 复测待做（ADR-0020 §8） |
 | 6.21 保真条多命中导航 + 精确对照（#23 修订 / #31，2026-11-11 晚） | ✅ | `core`：`FidelityHit.parsed` 对整数型失真改为**精确整数值**（`parsedExact`：`Number.isInteger(value)` → `BigInt(value).toString()`；Infinity/非整数保持 `String(value)`）——`297532588187238660` 的 double 实为 `...656`，最短往返打印仍是 `...660`，现在报告里能看出差异；检测规则/阈值/counts 不变。`view`：保真条命中 ≥2 条时显示「`‹` 1/N `›`」（`#fidelityPrev` / `#fidelityCount` / `#fidelityNext`），单条零视觉变化、**首尾循环**（末条下一条回第一条）；条文案常驻追加当前一处「原文 X → 实际 Y」；`app`：`jumpFidelityHit(index)` 统一「查看原文 / 上一处 / 下一处」→ 状态栏**常驻**解释「失真：原文 X → 实际 Y」（直到下次跳转/换文档/切标签）→ 切原文 + `revealRepairOffset` 高亮对应行；dev hook `fidelityState` 增加 index/hitCount/counterText/prevDisabled/nextDisabled/statusState；**单测 929 → 930**（+1「显示串相同但实际不同 → parsed 精确整数」）；`smoke-fidelity` **29 → 35/35**（nav 可见/计数、逐处跳转行号、末处禁用 next、prev 回跳、状态栏精确差异 + 截图）；体积 `page.js` 47.0 → **47.6KB gz**（预算 47 → **48** 经用户 2026-11-11 晚拍板，+0.6 归因：条内导航/循环 + 条内常驻对照 + 常驻状态栏）、`page.css` 8.1 → **8.2**（+0.1 导航按钮/计数）、`worker.js` 61.1（+0.1 精确值） | 用户可见：保真条出现「‹ 1/N ›」，可逐处查看并看到「原文 vs 实际」精确差异；单命中/无命中时条不变；已知差距：`literal` 仍是源文本片段（≤48 字符截断）、不做命中明细列表/弹层 |
 | 6 表达式 + JSON 地图 + Profile | ⏳ v1.1 | 右工作区占位已留 |
 
-**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **47.6KB gz**（预算 **48**，2026-11-11 晚由 47 修订；slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取）、T2 技术债清理 +0.4（`view/highlight` 共用写入器 + `focusTree`/拖放区接线）、slice 6.7 子树菜单 +0.3、窗口状态机收口 +0.4、app 回包落地 +0.4、测试钩子移出 +1.1、搜索语义单一 oracle +0.0（`tests/`/`scripts/` 不进 bundle）、菜单交互收口 +0.7（抽 `view/menu` + `shared/menu`，两段菜单净减）、6.17 搜索结果双击复制 +0.2、**6.18 表达式视图 +7.1**、**6.19 多文档工作区 +3.9**（标签条 + 工作区状态 + 入口层两形态：预算 45 → 46 经用户 2026-11-11 拍板，见 ADR-0009「预算修订」）、**同日反馈修订 +0.7**（标签拖拽排序 / 模态层遮罩 / 拖放落点直达）、**6.20 双向定位 +1.4**（原文行尾浮条/树浮条第三钮/两侧菜单/锚点记忆/状态栏）、**6.21 保真条多命中导航 + 精确对照 +0.6**（预算 47 → 48 经用户 2026-11-11 晚拍板））、`worker.js` **61.1KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数）/ T2 `core/measure` 下界预扫 +0.3 / slice 6.7 `toggleSubtree` +0.3 / 展开态 path 口径 +0.1、**6.18 表达式引擎 acorn+walker +43.4**、**6.20 源文本映射索引 +2.3**、6.21 精确值 +0.1）、`page.css` **8.2KB gz**（T2 +0.0、6.7 +0.0、6.15 视觉口径 -0.1、ADR-0017 响应式断点 +0.1、**6.18 表达式面板/结果条/上色器 +0.5**、6.19 标签条 +0.2、同日拖拽态/指示线 +0.1、6.21 导航按钮/计数 +0.1）；懒加载 chunk 合计 **145.6KB gz ≤146**（编辑器相关，仅首次打开 CM6/表达式编辑器时加载；`page.js` 内不含 CM6；6.18 +13.3 中 **13.2 来自 `@codemirror/autocomplete`**——预算 140 → 146 经用户 2026-11-10 拍板 A，见 ADR-0018「预算修订」）；构建 ~68ms。
+**产物体积**（`node build.mjs --analyze`，**`minify:true`**——体积预算一律按 minify 后的 gz 计）：`page.js` **47.6KB gz**（预算 **48**，2026-11-11 晚由 47 修订；slice 6.3 原文视图 +3.0、slice 6.4 大纲面板 +3.6、slice 6.5 搜索选项/体积提示/树小件 +0.9、slice 6.6 保真条 +0.8（含 `NoticeBar` 抽取）、T2 技术债清理 +0.4（`view/highlight` 共用写入器 + `focusTree`/拖放区接线）、slice 6.7 子树菜单 +0.3、窗口状态机收口 +0.4、app 回包落地 +0.4、测试钩子移出 +1.1、搜索语义单一 oracle +0.0（`tests/`/`scripts/` 不进 bundle）、菜单交互收口 +0.7（抽 `view/menu` + `shared/menu`，两段菜单净减）、6.17 搜索结果双击复制 +0.2、**6.18 表达式视图 +7.1**、**6.19 多文档工作区 +3.9**（标签条 + 工作区状态 + 入口层两形态：预算 45 → 46 经用户 2026-11-11 拍板，见 ADR-0009「预算修订」）、**同日反馈修订 +0.7**（标签拖拽排序 / 模态层遮罩 / 拖放落点直达）、**6.20 双向定位 +1.4**（原文行尾浮条/树浮条第三钮/两侧菜单/锚点记忆/状态栏）、**6.21 保真条多命中导航 + 精确对照 +0.6**（预算 47 → 48 经用户 2026-11-11 晚拍板））、`worker.js` **63.2KB gz**（原文索引 +2.3 / 大纲 +0.2 / 正则搜索 +0.5 / 保真扫描 +2.2（含指数精度、按类别计数）/ T2 `core/measure` 下界预扫 +0.3 / slice 6.7 `toggleSubtree` +0.3 / 展开态 path 口径 +0.1、**6.18 表达式引擎 acorn+walker +43.4**、**6.20 源文本映射索引 +2.3**、6.21 精确值 +0.1、**6.22 无损 parser + BigInt 值模型/表达式/保真改口径 +2.1**）、`page.css` **8.2KB gz**（T2 +0.0、6.7 +0.0、6.15 视觉口径 -0.1、ADR-0017 响应式断点 +0.1、**6.18 表达式面板/结果条/上色器 +0.5**、6.19 标签条 +0.2、同日拖拽态/指示线 +0.1、6.21 导航按钮/计数 +0.1）；懒加载 chunk 合计 **145.6KB gz ≤146**（编辑器相关，仅首次打开 CM6/表达式编辑器时加载；`page.js` 内不含 CM6；6.18 +13.3 中 **13.2 来自 `@codemirror/autocomplete`**——预算 140 → 146 经用户 2026-11-10 拍板 A，见 ADR-0018「预算修订」）；构建 ~68ms。
 **真实扩展验证**：`scripts/smoke-extension.mjs` 以 unpacked 扩展加载 `dist/`，`chrome.runtime.getURL('worker.js')` 创建 module worker，粘贴导入 10MB、展开至 37,205 行、滚动 312k px —— 0 长任务、0 console 错误。
 
 **slice 4 搜索验收**（2026-10-29，CfT 156 / M4 / headless；`scripts/smoke-search.mjs` 66/66、`scripts/smoke-extension-search.mjs` 30/30）：
@@ -359,7 +362,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 
 **slice 6.6 验收**（2026-11-09，CfT headless 1440×900；`smoke-fidelity` **24/24**）：
 
-- **精确数量（按类别）**：失真 fixture（`big` 19 位、`exp` 19 位带指数、`exact` 19 位但精确、`1e400`、`1e-400`、字符串里的 19 位数字、高精度小数、重复整数键对象、整数键乱序对象、无损整数键对象）→ `counts{number:4, precision:2, overflow:1, underflow:1, keyOrder:1, total:5}`、文案「检测到 5 处失真：大整数精度 2 处 · 数字上溢 1 处 · 数字下溢 1 处 · 整数键顺序 1 处」；**`exact` / 字符串内数字 / 高精度小数 / 重复整数键都未被计入**（可证伪）；`hits[0]` = `precision`、`literal=1234567890123456789`、`parsed=1234567890123456800`。
+- **精确数量（按类别，ADR-0020 口径）**：失真 fixture（大整数 `297532588187238660`、`1234567890123456789e0`、`1e400`、`1e-400`、`1e10001` 超 cap、字符串里的 19 位数字、高精度小数、重复整数键对象、整数键乱序对象、无损整数键对象）→ `counts{number:4, overflow:2, underflow:2, keyOrder:1, total:5}`、文案「检测到 5 处失真：数字上溢 2 处 · 数字下溢 2 处 · 整数键顺序 1 处」；**大整数 / `1e400` / 字符串内数字 / 高精度小数 / 重复整数键都未被计入**（可证伪）；`hits[0]` = `overflow`、`literal=1e10001`、`parsed=Infinity`。
 - **跳原文**：点「查看原文」→ `mode:'raw'`、`flash` 行 = `rawLocate(hits[0].offset).line` = **2**（fixture 中 `big` 所在行），该行文本含 `1234567890123456789`；跳转后保真条仍在。
 - **无失真**：`{"a":1,"b":[1,2,3],"c":{"d":true}}` → `status:'none'`、条不出现、jump 隐藏。
 - **关闭只关条**：`×` 后 `barVisible=false`，但 `status:'found'`、`counts.total=5` 仍在（报告不丢）。
@@ -419,7 +422,7 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
   - 虚拟窗口 `spacer` 与树同源受 `MAX_SCROLL_PX` 封顶（>1.4M 行底部不可达，与 ADR-0001 §4 缩放映射一起未实现）；`childInfo` 判定展开行是 O(已加载子项) 扫描（大数组翻页后点 caret 有毫秒级成本）。
   - 非根容器的页请求失败**无内联错误提示**（`setOpen`/`loadMore` 返回 false、折叠再展开会重试；「加载失败，重试」哨兵留 v1.1）；虚拟窗口计算与搜索共用 `shared/window.computeVirtualWindow`（code review 收口，不再各写一份）。
 - ~~**保真提示（#23）**：实现从未做~~ → **已实现**（2026-11-09 slice 6.6 / ADR-0003 修订）。落地形态：`core/fidelity.ts` 单趟线性扫描 + `fidelity {rootId}` 只读命令（首帧后 app 主动拉取、每 256KB 让出、可取消、报告按根对象身份缓存）+ 第三条 32px 保真条（精确数量 +「查看原文」跳第一个失真行）。`.mock/1.json` 上**与原型逐条对拍一致**：>15 位候选 57 → 精确后真失真 **2**（`offset 14871 / 339094`），key-order 0。剩余差距：
-  - **高精度小数不检测**（`0.1234567890123456789`）：ADR §2 的 BigInt 精确法不适用于小数，字符串往返比较会引入格式误报 → v1 不报，记差距。（带指数的尾数精度**已检测**：`1234567890123456789e0` 报 precision。）
+  - **高精度小数不检测**（`0.1234567890123456789`）：ADR-0020 起小数仍按 `number` 丢精度、不检测（整数已无损，不再有 precision 类别）；这是 ADR-0020 §8 的已知差距。
   - **重复键 / `-0` / 孤立代理项**仍只记录不标记（ADR §4 不变）；**重复的下标键不参与键序判定**（`{"1":a,"2":b,"1":c}` 不报 key-order，真损失是重复键吞并）。单对象已见下标键追踪上限 `FIDELITY_KEY_TRACK_MAX=4096`，超过后放弃重复键追踪（超大数组样式对象的已知边界）。
   - `LoadReply.meta` **不挂** `FidelityReport`（票内初估的 `DocumentMeta.fidelity` 未采纳）：报告走 `fidelity {rootId}` 命令 + `WeakMap<Root, report>` + app 会话变量——扫描发生在首帧之后，`meta` 装不下「后到的报告」（ADR 修订 §6 已登记为显式偏差）。
   - `57 → 2` 的**真实样本口径没有自动化回归**（`.mock/1.json` 未入 git）；现有替代是单测「57 个 >15 位数字里 55 个可精确表示、2 个不可 → `counts.number=2`」+ ADR 里的手写对拍记录。
@@ -465,6 +468,13 @@ Apply：core.replaceNode(path, jsonText) → JSON.parse（≤5MB）→ 替换值
 **其它想法（仅记录、未拍板）**：**树行右键菜单增加「展开/收起子节点」切换**（#22；现状菜单只有复制 4 项 + 编辑，展开/收起只能靠 caret/Enter/工具栏）。
 核心待拍板 = 「其下子节点」语义：切**该容器本身**的展开态（复用 `toggle`，无需新协议）还是**递归展开/收起整棵子树**（需 core 新能力 + `ROW_BUDGET` 护栏）；
 其余问题（菜单顺序/启用态/空容器/根/锚点/快捷键）已记在 #22。用户要求**做的时候先 grill**，未拍板前不实现；新增项归 #21 视觉走查。
+
+**无损数字（#32 / ADR-0020，2026-11-12）**：导入真相源从 `JSON.parse` 换成**无损 parser**（`parseLossless`）；值图数字载体是 `number | bigint`，但对外 `JsonKind` 仍是 `number`。四条不变式（改这块必看）：
+
+- **parser 与 `JSON.parse` 语法接受面逐例一致**（重复键最后赢、`__proto__` 不污染原型、BOM/尾逗号/前导零拒绝、深嵌套显式栈）——差异只允许在「数字值」上（整数无损）。
+- **整数无损、小数有损**：整数超安全范围 → BigInt；整数展开位数 > `BIGINT_DIGIT_CAP(10000)` → Infinity + 保真报 overflow；高精度小数仍 Number（已知差距，不报）。`-0` 保留。
+- **序列化单一入口**：导出/复制/编辑回填都走 `serializeLossless`（BigInt → 裸十进制数字，无 BigInt 时与 `JSON.stringify` 逐字节等价）；禁止对值图直接 `JSON.stringify`（BigInt 会抛 TypeError）。
+- **保真判定单一来源**：`fidelity` 与 parser 共用 `analyzeNumberLiteral`；`precision` 类别已退场，只剩 overflow/underflow/key-order。
 
 **双向定位（#30 / ADR-0019，2026-11-11）**：原文视图 ↔ 树视图按 **B-1 混合**映射互相跳转（原文→树 = 检查点 + 祖先键栈增量索引，首次跳转懒建；树→原文 = 按需单趟扫描 + 每标签 LRU）。四条不变式（改这块必看）：
 

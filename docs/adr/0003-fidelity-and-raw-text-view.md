@@ -1,9 +1,14 @@
 # ADR-0003：保真以 JSON.parse 为准；失真用 BigInt 精确检测；原始文本视图用检查点 pretty 行走器
 
-- 状态：Accepted
+- 状态：Accepted（**2026-11-11 起部分被 ADR-0020 取代**：见下方修订指针）
 - 日期：2026-10-27
 - 依据：`docs/design/reassess-fidelity.md`；`.mock/1.json` + 构造病态 fixture；CfT 156 / Node v24（同 V8）。
 - 相关票：#7（IR/保真）、#11（原始文本/导入）
+
+> **修订指针（2026-11-11，#32 / ADR-0020）**：本文档以下两条结论**已失效**，以 ADR-0020 为准——
+> 1. 「维持 `JSON.parse` 为唯一真相源、不换成自研解析器」→ 改为**自研无损 parser**（整数超安全范围用 BigInt；`JSON.parse` 只保留给编辑器前端 lint）。
+> 2. 「大整数精度流失（`precision`）检测」→ **退场**（整数由 parser 保证精确，不再失真）；保真报告保留 `overflow` / `underflow` / `key-order`，且数字判定与 parser 共用 `analyzeNumberLiteral`。
+> 原文（含 §2 检测规则表、§3 `FidelityCounts` 形状）保留为历史记录；`app/main.ts` 保真条文案不再有「大整数精度」类别。
 
 ## 背景
 
