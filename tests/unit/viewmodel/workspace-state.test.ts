@@ -26,11 +26,13 @@ function docMeta(name: string, bytes: number): DocumentMeta {
 
 /** 默认文档快照；多标签用例里用 overrides 改 rootId / 名字 / 版本。 */
 function tabInput(overrides: Partial<TabInput> = {}): TabInput {
+  const name = overrides.name ?? 'doc.json';
+  const bytes = overrides.bytes ?? 128;
   return {
     rootId: 'doc:1',
-    name: 'doc.json',
-    bytes: 128,
-    meta: docMeta('doc.json', 128),
+    name,
+    bytes,
+    meta: overrides.meta ?? docMeta(name, bytes),
     docRevision: 1,
     rowVersion: 1,
     totalRows: 20,
@@ -90,8 +92,8 @@ describe('WorkspaceState — add 与标签 id', () => {
     expect(ws.ids).toEqual(['tab:1', 'tab:2']);
 
     expect(ws.view().tabs).toEqual([
-      { id: 'tab:1', name: 'a.json', active: false },
-      { id: 'tab:2', name: 'b.json', active: true },
+      { id: 'tab:1', name: 'a.json', originalName: 'a.json', active: false },
+      { id: 'tab:2', name: 'b.json', originalName: 'b.json', active: true },
     ]);
   });
 
@@ -262,7 +264,7 @@ describe('WorkspaceState — replace（替换导入）', () => {
     expect(tab?.rowVersion).toBe(3);
     expect(tab?.totalRows).toBe(50);
     expect(tab?.selected).toBeNull(); // 旧根的 path 对新根无意义
-    expect(ws.view().tabs).toEqual([{ id: 'tab:1', name: 'b.json', active: true }]);
+    expect(ws.view().tabs).toEqual([{ id: 'tab:1', name: 'b.json', originalName: 'b.json', active: true }]);
   });
 
   it('未激活标签上 replace：size / activeId 都不变', () => {
@@ -576,16 +578,55 @@ describe('WorkspaceState — 订阅与不可变视图', () => {
     expect(second).toEqual(first);
 
     // 改快照里的数组 / 对象 / 标量，都不影响下一次 view()
-    first.tabs.push({ id: 'tab:99', name: 'hack.json', active: false });
+    first.tabs.push({ id: 'tab:99', name: 'hack.json', originalName: 'hack.json', active: false });
     first.tabs[0]!.name = 'hacked.json';
     first.activeId = 'tab:99';
-    expect(ws.view().tabs).toEqual([{ id: 'tab:1', name: 'a.json', active: true }]);
+    expect(ws.view().tabs).toEqual([{ id: 'tab:1', name: 'a.json', originalName: 'a.json', active: true }]);
     expect(ws.view().activeId).toBe('tab:1');
 
     // ids 是副本
     const ids = ws.ids;
     ids.push('tab:99');
     expect(ws.ids).toEqual(['tab:1']);
+  });
+});
+
+describe('WorkspaceState — 显示名改名（#29 / ADR-0021）', () => {
+  it('update(name) 只改显示名；原文件名保留在 meta.name（originalName 不变）', () => {
+    const { ws } = makeWorkspace();
+    ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }));
+
+    ws.update('tab:1', { name: '订单 2024' });
+
+    expect(ws.view().tabs).toEqual([
+      { id: 'tab:1', name: '订单 2024', originalName: 'a.json', active: true },
+    ]);
+    expect(ws.active()?.name).toBe('订单 2024');
+    expect(ws.active()?.meta.name).toBe('a.json');
+  });
+
+  it('replace（替换导入）把显示名重置为新文档名，不保留旧改名', () => {
+    const { ws } = makeWorkspace();
+    ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }));
+    ws.update('tab:1', { name: '订单 2024' });
+
+    ws.replace('tab:1', tabInput({ rootId: 'doc:2', name: 'b.json' }));
+
+    expect(ws.view().tabs).toEqual([{ id: 'tab:1', name: 'b.json', originalName: 'b.json', active: true }]);
+  });
+
+  it('改名不额外创建 runtime、不影响别的标签', () => {
+    const { ws, created } = makeWorkspace();
+    ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }));
+    ws.add(tabInput({ rootId: 'doc:2', name: 'b.json' }));
+
+    ws.update('tab:1', { name: 'A 改名' });
+
+    expect(created()).toBe(2);
+    expect(ws.view().tabs).toEqual([
+      { id: 'tab:1', name: 'A 改名', originalName: 'a.json', active: false },
+      { id: 'tab:2', name: 'b.json', originalName: 'b.json', active: true },
+    ]);
   });
 });
 
@@ -625,8 +666,8 @@ describe('WorkspaceState — 双标签切换保留各自视图状态（组合用
     expect(ws.view()).toEqual({
       hidden: false,
       tabs: [
-        { id: 'tab:1', name: 'a.json', active: true },
-        { id: 'tab:2', name: 'b.json', active: false },
+        { id: 'tab:1', name: 'a.json', originalName: 'a.json', active: true },
+        { id: 'tab:2', name: 'b.json', originalName: 'b.json', active: false },
       ],
       activeId: 'tab:1',
       canAdd: true,

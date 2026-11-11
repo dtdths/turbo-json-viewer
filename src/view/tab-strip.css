@@ -81,6 +81,20 @@
   white-space: nowrap;
 }
 
+/* 就地改名输入框（#29 / ADR-0021）：占标题位，32px 条内 20px 高；字号继承（视觉契约禁 raw px 字号） */
+.tabstrip__rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
 /* ---------------------------- 关闭按钮 ---------------------------- */
 
 .tabstrip__close {

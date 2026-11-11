@@ -52,7 +52,10 @@ export interface TabState extends TabInput {
 
 export interface TabView {
   id: string;
+  /** 显示名（默认 = 导入文件名；改过名后与 originalName 不同，2026-11-12 / ADR-0021） */
   name: string;
+  /** 导入时的原文件名（只读，用于悬停「原名：…」追溯） */
+  originalName: string;
   active: boolean;
 }
 
@@ -239,6 +242,7 @@ export class WorkspaceState {
       tabs: this.tabs.map((tab) => ({
         id: tab.id,
         name: tab.name,
+        originalName: tab.meta.name,
         active: tab.id === this.activeIdValue,
       })),
       activeId: this.activeIdValue,

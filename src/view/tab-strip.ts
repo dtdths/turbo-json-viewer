@@ -20,6 +20,7 @@
  * 重绘时若焦点原本在条内，归还给活动标签（避免 render 丢焦点）。
  */
 import { TAB_STRIP_HEIGHT } from '../protocol/versions';
+import { DOC_NAME_MAX, displayTitle } from '../shared/doc-name';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const TAB_SELECTOR = '.tabstrip__tab';
@@ -28,7 +29,7 @@ const CLOSE_SELECTOR = '.tabstrip__close';
 /** 标签条要渲染的纯视图数据（viewmodel 的 `WorkspaceView` 与之逐字对齐）。 */
 export interface TabStripView {
   hidden: boolean;
-  tabs: { id: string; name: string; active: boolean }[];
+  tabs: { id: string; name: string; originalName: string; active: boolean }[];
   activeId: string | null;
   canAdd: boolean;
   max: number;
@@ -41,6 +42,8 @@ export interface TabStripOptions {
   onAdd(): void;
   /** 拖拽排序（#18 修订 2026-11-11）：把 id 移到最终下标 toIndex；语义由 app/viewmodel 定 */
   onMove(id: string, toIndex: number): void;
+  /** 标签改名（ADR-0021）：原始输入交 app 层清洗，空串 = 保持原名；语义由 app 定 */
+  onRename(id: string, name: string): void;
 }
 
 /** `＋` 图标（16 网格；尺寸由 CSS 的 `.iconbtn svg` 决定）。 */
@@ -87,6 +90,9 @@ export class TabStrip {
   private dragId: string | null = null;
   /** 插入指示线（绝对定位在 host 内，不参与布局） */
   private dropEl: HTMLDivElement | null = null;
+  /** 就地改名中的输入框（null = 未在改名）；重绘/切标签时静默丢弃 */
+  private editing: { id: string; input: HTMLInputElement; title: HTMLElement; tabEl: HTMLElement } | null =
+    null;
 
   constructor(host: HTMLElement, opts: TabStripOptions) {
     const items = host.querySelector<HTMLElement>('#tabStripItems');
@@ -107,6 +113,7 @@ export class TabStrip {
     this.host.style.height = `${TAB_STRIP_HEIGHT}px`;
     // 事件绑定在容器上（render 后不重复绑；标签 ≤8，委托不会有性能问题）
     this.host.addEventListener('click', this.onClick);
+    this.host.addEventListener('dblclick', this.onDblClick);
     this.host.addEventListener('keydown', this.onKeyDown);
     // 拖拽排序：委托到 host（render 后不重复绑）；指示线是 host 的绝对定位子元素
     this.host.addEventListener('dragstart', this.onDragStart);
@@ -127,6 +134,8 @@ export class TabStrip {
   render(view: TabStripView): void {
     // 重绘会移除焦点所在节点，先记住焦点是否在条内（hidden 时不归还，避免抢导入层焦点）
     const hadFocus = !view.hidden && this.host.contains(document.activeElement);
+    // 改名中的输入框会被整条重绘移除：静默丢弃（未提交即等于 Esc，且不抢焦点）
+    this.editing = null;
     this.view = view;
 
     this.host.hidden = view.hidden;
@@ -147,6 +156,7 @@ export class TabStrip {
   dispose(): void {
     if (!this.mounted) return;
     this.host.removeEventListener('click', this.onClick);
+    this.host.removeEventListener('dblclick', this.onDblClick);
     this.host.removeEventListener('keydown', this.onKeyDown);
     this.host.removeEventListener('dragstart', this.onDragStart);
     this.host.removeEventListener('dragover', this.onDragOver);
@@ -165,7 +175,10 @@ export class TabStrip {
 
   /* ------------------------------ 内部 ------------------------------ */
 
-  private buildTab(tab: { id: string; name: string; active: boolean }, isTabStop: boolean): HTMLElement {
+  private buildTab(
+    tab: { id: string; name: string; originalName: string; active: boolean },
+    isTabStop: boolean,
+  ): HTMLElement {
     const el = document.createElement('div');
     el.className = 'tabstrip__tab';
     el.setAttribute('role', 'tab');
@@ -174,8 +187,8 @@ export class TabStrip {
     el.tabIndex = isTabStop ? 0 : -1;
     // 拖拽排序（#18 修订 2026-11-11）：标签本身可拖
     el.draggable = true;
-    // 文件名超长时 CSS ellipsis 省略，悬停 title 看全名
-    el.title = tab.name;
+    // 文件名超长时 CSS ellipsis 省略，悬停 title 看全名（改过名时附「原名」）
+    el.title = displayTitle(tab.name, tab.originalName);
 
     const title = document.createElement('span');
     title.className = 'tabstrip__title';
@@ -217,6 +230,80 @@ export class TabStrip {
   private focusTab(id: string | null): void {
     const el = this.findTab(id);
     el?.focus({ preventScroll: true });
+  }
+
+  /* ---------------------------- 就地改名（ADR-0021） ---------------------------- */
+
+  /**
+   * 进入就地编辑：标题 span 换成 input（值 = 当前显示名，Enter 提交 / Esc 取消 / 失焦提交）。
+   * 编辑期间关掉 `draggable`，避免与拖拽排序抢手势；只动 DOM，清洗与状态写入由 app 回调决定。
+   */
+  private beginRename(tabEl: HTMLElement): void {
+    const id = tabEl.dataset.tabId;
+    if (!id) return;
+    if (this.editing) {
+      if (this.editing.id === id) {
+        this.editing.input.focus();
+        this.editing.input.select();
+        return;
+      }
+      this.cancelRename();
+    }
+    const title = tabEl.querySelector<HTMLElement>('.tabstrip__title');
+    if (!title) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tabstrip__rename';
+    input.value = title.textContent ?? '';
+    input.maxLength = DOC_NAME_MAX;
+    input.spellcheck = false;
+    input.setAttribute('aria-label', '标签名（Enter 保存，Esc 取消）');
+    // 编辑框自己吃掉键盘/点击，别让 roving tabindex 的宿主处理器把焦点抢走（抢走 = 立即失焦提交）
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.commitRename();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        this.cancelRename();
+      }
+    });
+    input.addEventListener('click', (event) => event.stopPropagation());
+    input.addEventListener('dblclick', (event) => event.stopPropagation());
+    input.addEventListener('blur', () => {
+      if (this.editing?.input === input) this.commitRename();
+    });
+    tabEl.draggable = false;
+    title.replaceWith(input);
+    this.editing = { id, input, title, tabEl };
+    input.focus();
+    input.select();
+  }
+
+  /** 提交改名意图（空串也上报，由 app 决定「保持原名」）并还原 DOM；状态刷新走 app 的 render。 */
+  private commitRename(): void {
+    const editing = this.editing;
+    if (!editing) return;
+    this.editing = null;
+    const value = editing.input.value;
+    this.restoreTitle(editing);
+    this.opts.onRename(editing.id, value);
+    this.focusTab(editing.id);
+  }
+
+  /** 取消改名：还原标题、丢弃输入、焦点回标签。 */
+  private cancelRename(): void {
+    const editing = this.editing;
+    if (!editing) return;
+    this.editing = null;
+    this.restoreTitle(editing);
+    this.focusTab(editing.id);
+  }
+
+  private restoreTitle(editing: { input: HTMLInputElement; title: HTMLElement; tabEl: HTMLElement }): void {
+    editing.input.replaceWith(editing.title);
+    editing.tabEl.draggable = true;
   }
 
   /* ---------------------------- 拖拽排序 ---------------------------- */
@@ -332,6 +419,17 @@ export class TabStrip {
     }
   };
 
+  /** 双击标题 = 就地改名（单击仍是切换；关闭/＋不参与）。 */
+  private readonly onDblClick = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    const title = target?.closest<HTMLElement>('.tabstrip__title');
+    if (!title || !this.items.contains(title)) return;
+    const tabEl = title.closest<HTMLElement>(TAB_SELECTOR);
+    if (!tabEl) return;
+    event.preventDefault();
+    this.beginRename(tabEl);
+  };
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     const target = event.target as HTMLElement | null;
     const tabEl = target?.closest<HTMLElement>(TAB_SELECTOR) ?? null;
@@ -340,6 +438,13 @@ export class TabStrip {
     const tabs = this.tabEls();
     const index = tabs.indexOf(tabEl);
     if (index < 0) return;
+
+    // F2：就地改名（与双击标题等价，键盘入口；ADR-0021）
+    if (event.key === 'F2') {
+      event.preventDefault();
+      this.beginRename(tabEl);
+      return;
+    }
 
     // Alt+←/→：把当前标签左/右移一位（拖拽排序的键盘等价入口，a11y）
     if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
