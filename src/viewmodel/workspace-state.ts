@@ -5,8 +5,8 @@
  * runtime adapter（行窗口 / 搜索 / 编辑 / 原文窗口）。runtime 由 app 通过工厂注入
  * （`createRuntime`），本模块**不认识 CoreApi**——单测注入假对象即可脱 DOM 覆盖状态机。
  *
- * 分层：本文件只 import `protocol/*` 与同层 `viewmodel/*` 的 **type**，不 import `src/app/`
- * （依赖方向 app → view → viewmodel → protocol，见 docs/architecture/seams.md §1）。
+ * 分层：本文件只 import `protocol/*`（含 `MAX_DOC_TABS` 常量值）与同层 `viewmodel/*` 的 **type**，
+ * 不 import `src/app/`（依赖方向 app → view → viewmodel → protocol，见 docs/architecture/seams.md §1）。
  *
  * 关键语义（ADR-0009 §3–§4）：
  *   - 每标签独立：rootId / 文档版本字段 / selected / runtime（seq、滚动、命中集、编辑历史）。

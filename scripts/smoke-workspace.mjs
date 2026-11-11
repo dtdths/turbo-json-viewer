@@ -213,6 +213,16 @@ try {
       await sleep(200);
       out.exprRun = await h.expressionRunText('$');
       out.exprActiveTab1 = h.expressionState().active;
+      // M1 回归：结果根上的展开/收起/全部展开必须照常生效（ADR-0018 §1），不能把回包丢掉
+      // 结果根是新建 RowModel（默认折叠）→ 展开 $.items 才是「真正变行数」的动作
+      const rvBefore = h.state().rowVersion;
+      await h.togglePath('$.items', true);
+      await sleep(300);
+      out.exprToggle = { rv: h.state().rowVersion, rows: h.state().totalRows };
+      out.exprToggleApplied = (out.exprToggle.rv ?? 0) > rvBefore;
+      await h.expandAll();
+      await sleep(400);
+      out.exprExpand = { rv: h.state().rowVersion, rows: h.state().totalRows };
       // 切到 tab2：结果视图必须不跟过去、结果条不残留，树回到 tab2 的文档树
       out.exprSwitch = h.tabSwitch(tab2);
       await sleep(350);
@@ -225,6 +235,21 @@ try {
       h.tabSwitch(tab1);
       await sleep(400);
       out.exprBack = { active: h.expressionState().active, panel: document.body.dataset.panel ?? null };
+      // M2 回归：表达式结果视图里导入（替换当前标签）→ 先回文档树，标签存档不得被 expr 版本污染
+      const docC = ${JSON.stringify(DOC_C)};
+      await h.loadText(JSON.stringify(docC), 'expr-import.json');
+      await sleep(500);
+      out.exprImport = {
+        active: h.expressionState().active,
+        barHidden: document.getElementById('exprBar').hidden,
+        root: h.state().rootId,
+        rows: h.state().totalRows,
+      };
+      h.tabSwitch(tab2);
+      await sleep(300);
+      h.tabSwitch(tab1);
+      await sleep(450);
+      out.exprImportBack = { root: h.state().rootId, rows: h.state().totalRows };
       // 回到 tab2，保持 phase 4 的「活动标签 = tab2」前提
       h.tabSwitch(tab2);
       await sleep(300);
@@ -483,6 +508,17 @@ const checks = {
     report.exprOnTab2?.active === false &&
     report.exprOnTab2?.barHidden === true &&
     report.exprOnTab2?.treeRoot === report.tab2RootNow,
+  'expression:result-root-expand':
+    report.exprToggleApplied === true &&
+    (report.exprExpand?.rows ?? 0) > (report.exprToggle?.rows ?? 0) &&
+    (report.exprExpand?.rv ?? 0) > (report.exprToggle?.rv ?? 0),
+  'expression:import-exits-view':
+    report.exprImport?.active === false &&
+    report.exprImport?.barHidden === true &&
+    (report.exprImport?.rows ?? 99) <= 10,
+  'expression:import-keeps-tab-clean':
+    report.exprImportBack?.root === report.exprImport?.root &&
+    report.exprImportBack?.rows === report.exprImport?.rows,
   'expression:restore-on-back':
     report.exprBack?.active === true &&
     report.exprBack?.panel === 'expression' &&

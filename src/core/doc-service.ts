@@ -240,8 +240,9 @@ export class DocService {
   private async load(cmd: Cmd<'load'>): Promise<LoadReply> {
     const loadId = cmd.loadId;
     this.latestLoadId = loadId;
-    // 新 load 抢占所有在途旧 load。注意 loadId 抢占是**全局**的（不是按标签）：页面必须串行化导入
-    // （一次只发一个 load），否则第二个 load 会以 CANCELLED 取消第一个——多标签导入由页面排队。
+    // 新 load 抢占所有在途旧 load。注意 loadId 抢占是**全局**的（不是按标签）：页面侧用入口层 busy
+    // 拒绝并发导入（paste/drop 在 busy 时直接 return），并把「已被作废的 load 回包」用 closeRoot 释放，
+    // 因此不会留下孤儿 doc 根；若将来要支持并发导入，需要按标签排队而不是靠抢占。
     for (const [id, ctrl] of this.pendingLoads) {
       if (id !== loadId) ctrl.cancelled = true;
     }

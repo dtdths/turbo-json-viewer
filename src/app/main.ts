@@ -199,10 +199,10 @@ interface TabExtras {
   fidelity: FidelityReport | null;
   /** 最近一次成功的表达式结果（会话内保留；换文档即清） */
   exprView: ExprViewState | null;
-  /** 进入表达式结果视图前的文档会话快照（返回文档树时 restore） */
-  docSessionBeforeExpr: SessionState | null;
   /** 树的滚动位置（切回来时恢复，ADR-0009 §3「滚动锚点」） */
   scrollTopPx: number;
+  /** 搜索选项（Aa / .*）：与每标签 SearchState 的选项快照同源，切标签不串味（ADR-0014 §2.5） */
+  searchOpts: { caseSensitive: boolean; regex: boolean };
   /** 原文视图的滚动位置（切回来时恢复） */
   rawScrollTopPx: number;
 }
@@ -215,9 +215,9 @@ function extrasOf(tabId: string): TabExtras {
       rawMetaInfo: null,
       fidelity: null,
       exprView: null,
-      docSessionBeforeExpr: null,
       scrollTopPx: 0,
       rawScrollTopPx: 0,
+      searchOpts: { caseSensitive: false, regex: false },
     };
     tabExtras.set(tabId, extras);
   }
@@ -377,6 +377,8 @@ let fidelitySeq = 0;
 
 /** 编辑会话（slice 5 / #16 / ADR-0006）：当前编辑目标 + 修改计数/撤销可用性。 */
 let editingPath: string | null = null;
+/** 编辑器打开时所属的 doc 根（切标签 / 换文档后 Apply 必须丢弃，ADR-0009 §3） */
+let editingRootId: string | null = null;
 let ctxPath: string | null = null;
 
 /* ---------------- 工作区接线（#18 / ADR-0009）：活动标签 ↔ 模块级视图态 ---------------- */
@@ -414,9 +416,9 @@ function saveActiveSession(): void {
   extras.rawMetaInfo = rawMetaInfo;
   extras.fidelity = fidelity;
   extras.exprView = exprView;
-  extras.docSessionBeforeExpr = docSessionBeforeExpr;
   extras.scrollTopPx = tree.scrollTopPx();
   extras.rawScrollTopPx = rawView.scrollTopPx();
+  extras.searchOpts = { ...searchOpts };
   workspace.update(tab.id, {
     docRevision: session.docRevision,
     rowVersion: session.rowVersion,
@@ -447,6 +449,7 @@ function bindTab(tab: TabState): void {
   rawMetaInfo = extras.rawMetaInfo;
   fidelity = extras.fidelity;
   exprView = extras.exprView;
+  searchOpts = { ...extras.searchOpts };
   // 表达式结果视图不跨标签自动激活：切回来时若左面板是表达式，由 setPanel('expression') 的
   // 既有恢复链路决定（见 switchTab）；这里一律先按「文档树」绑定会话。
   exprViewActive = false;
@@ -494,14 +497,26 @@ function restoreActiveTabView(): void {
   searchJumped = false;
   applySearchToTree();
   renderSearch();
+  // 切回时该标签有在途搜索：Worker 侧回包早已丢失（seq 被新查询取代），重跑一次
+  if (searchState.pending && searchState.query !== '') void runSearch(searchState.query);
   // 大纲：按新根重新打开（面板开合是工作区级，数据按标签）
-  void outlineState.open(tab.rootId);
+  void outlineState.open(tab.rootId).then(() => {
+    if (workspace.activeId === tab.id) setSelection(selected);
+  });
   renderTabChrome();
   // 表达式结果条：新标签没有激活的结果视图 → 隐藏（结果本体按标签保留在 extras）
   renderExpressionBar();
   // 原文视图：正看原文 → 为该标签重新 open（本标签已有索引元信息时 open 会复用 worker 侧索引）
-  if (isRawView()) void setViewMode('raw', { persist: false });
-  else updateStatus();
+  if (isRawView()) {
+    const savedRaw = extras.rawScrollTopPx;
+    void setViewMode('raw', { persist: false }).then(() => {
+      // 切标签期间别把滚动写到别的标签上；savedRaw=0 就是回顶（无需额外动作）
+      if (workspace.activeId !== tab.id || !isRawView() || savedRaw <= 0) return;
+      rawView.scrollToPx(savedRaw);
+      rawSource.scrollTo(savedRaw);
+      rawSource.requestWindow();
+    });
+  } else updateStatus();
 }
 
 /** 切标签：存档旧标签 → 换绑定 → 重绘（不关根、不重解析，ADR-0009 §3）。 */
@@ -514,6 +529,10 @@ function switchTab(id: string): void {
     saveActiveSession();
   }
   if (!workspace.activate(id)) return;
+  // 编辑器是文档级会话：切标签即关闭（半开的 Apply 不得落到新标签）
+  if (subtreeEditor.isOpen()) subtreeEditor.close();
+  editingPath = null;
+  editingRootId = null;
   const tab = activeTab();
   if (!tab) return;
   bindTab(tab);
@@ -543,6 +562,8 @@ async function closeTab(id: string, opts: { force?: boolean } = {}): Promise<voi
   tabExtras.delete(id);
   // closeRoot 幂等（未知根回 closed:false）；失败不阻断关闭
   void core.closeRoot(result.removed.rootId).catch(() => undefined);
+  // 关到只剩 1 个 → 标签条隐藏：焦点必须离开被移除的标签，回树（a11y）
+  if (workspace.size === 1) focusTree();
   if (workspace.size === 0) {
     enterEmptyState();
     return;
@@ -669,12 +690,17 @@ function applyLanding(plan: LandingPlan): void {
 }
 
 /**
- * 回包是否属于**当前活动标签的文档根**（多标签 / ADR-0009 §2）：
+ * 回包是否属于**当前显示根**（多标签 / ADR-0009 §2 + ADR-0018 §1）：
  * 切标签后，旧根的在途回包必须丢弃，不能写进新标签的会话（版本号巧合靠不住）。
+ * 注意「显示根」可以是**活动标签的文档根**，也可以是**表达式结果根**（exprViewActive）——
+ * 结果视图上的展开/收起/全部展开/跳转回包打的是 expr 根，不能被当成跨标签回包丢掉
+ * （丢了 UI 不动但 Worker 的 rowVersion 已推进 → 后续窗口请求 STALE_ROOT）。
  */
 function isActiveDocRoot(rootId: string): boolean {
   const tab = activeTab();
-  return tab !== null && !exprViewActive && rootId === tab.rootId;
+  if (!tab) return false;
+  const shownRoot = exprViewActive && exprView ? exprView.rootId : tab.rootId;
+  return rootId === shownRoot;
 }
 
 function metrics(): { rowHeight: number; viewportRows: number } {
@@ -1086,6 +1112,11 @@ type ImportMode = 'initial' | 'replace' | 'new-tab';
 /** 外部拖放 → 替换层里暂存的文件（等待用户确认，Q6-A） */
 let pendingFile: File | null = null;
 
+/** 入口层是否正在解析（busy 期间拒绝新的 paste / drop，避免并发导入互相抢占）。 */
+function importLayerBusy(): boolean {
+  return importLayerOpen() && empty.classList.contains('is-busy');
+}
+
 function importLayerOpen(): boolean {
   return !empty.classList.contains('is-hidden');
 }
@@ -1224,9 +1255,15 @@ async function importBuffer(
   name: string,
   target?: 'replace' | 'new-tab',
 ): Promise<void> {
+  const resolvedTarget = target ?? currentImportTarget();
+  // 软上限在**解析前**判：满 8 个时不要先把 50MB 解析完再拒绝。
+  // 注意空工作区的 canAdd 也是 false（activeId=null），第一个标签必须放行。
+  if (resolvedTarget === 'new-tab' && workspace.activeId !== null && !workspace.view().canAdd) {
+    showToast(`最多 ${workspace.max} 个标签，请先关闭不用的标签`, 3000, 'error');
+    return;
+  }
   const loadId = ++loadSeq;
   const inLayer = importLayerOpen();
-  const resolvedTarget = target ?? currentImportTarget();
   if (inLayer) {
     clearPendingFile();
     setImportError(null);
@@ -1241,7 +1278,11 @@ async function importBuffer(
       // ADR-0011 §1/§5：设置关闭修复/自适应时按偏好导入
       opts: { repair: settings.get('repairTruncated'), adaptiveExpand: settings.get('adaptiveExpand') },
     });
-    if (loadId !== loadSeq) return;
+    if (loadId !== loadSeq) {
+      // 回包已被更新的导入 / 关闭入口层作废：Worker 已经建好新根，必须释放，否则孤儿根泄漏
+      void core.closeRoot(reply.rootId).catch(() => undefined);
+      return;
+    }
     onLoaded(reply, resolvedTarget);
   } catch (error) {
     if (loadId !== loadSeq) return;
@@ -1272,9 +1313,9 @@ function resetTabStateForNewDoc(tab: TabState): void {
   extras.rawMetaInfo = null;
   extras.fidelity = null;
   extras.exprView = null;
-  extras.docSessionBeforeExpr = null;
   extras.scrollTopPx = 0;
   extras.rawScrollTopPx = 0;
+  extras.searchOpts = { caseSensitive: false, regex: false };
   rawOpenSeq += 1;
   fidelitySeq += 1;
   fidelityPending = false;
@@ -1300,6 +1341,9 @@ function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
   };
   const active = workspace.active();
   const replaceTarget = target === 'replace' ? active : null;
+  // 0) 表达式结果视图是临时换根：先回文档树，否则下面 saveActiveSession 会把 expr 根的
+  //    rowVersion/totalRows/selected 当成文档版本存进标签（切回来 STALE_ROOT + 行数错）
+  if (exprViewActive) backToDocTree({ silent: true });
   // 1) 切走前存档当前活动标签（版本字段 / 选中 / 滚动）
   if (active) saveActiveSession();
   const oldRootId = replaceTarget?.rootId ?? null;
@@ -1364,6 +1408,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 document.addEventListener('paste', (event: ClipboardEvent) => {
   if (isEditableTarget(event.target)) return;
+  if (importLayerBusy()) return;
   const text = event.clipboardData?.getData('text/plain');
   if (!text || !text.trim()) return;
   if (!session.rootId) {
@@ -1384,6 +1429,7 @@ window.addEventListener('dragover', (event: DragEvent) => {
 });
 window.addEventListener('drop', (event: DragEvent) => {
   event.preventDefault();
+  if (importLayerBusy()) return;
   const file = event.dataTransfer?.files?.[0];
   if (!file) return;
   if (!session.rootId) {
@@ -1621,9 +1667,13 @@ async function openEditor(path: string): Promise<void> {
     return;
   }
   if (!session.rootId || subtreeEditor.isOpen()) return;
+  const rootId = session.rootId;
   try {
-    const reply = await core.getNodeJson({ rootId: session.rootId, path });
+    const reply = await core.getNodeJson({ rootId, path });
+    // 在途期间切了标签 / 换了文档：不再打开编辑器（否则会把旧文档的 path 用到新文档）
+    if (rootId !== session.rootId || !isActiveDocRoot(rootId)) return;
     editingPath = path;
+    editingRootId = rootId;
     await subtreeEditor.open({
       path,
       kind: reply.kind ?? 'object',
@@ -1648,16 +1698,26 @@ async function openEditor(path: string): Promise<void> {
 }
 
 async function applyEditText(text: string): Promise<void> {
-  if (!session.rootId || !editingPath) return;
+  const rootId = editingRootId;
+  if (!session.rootId || !editingPath || rootId === null) return;
+  // 编辑器打开后换了标签 / 文档：拒绝写入（同一 path 在新文档里可能真的存在，core 拦不住）
+  if (rootId !== session.rootId || !isActiveDocRoot(rootId)) {
+    subtreeEditor.close();
+    editingPath = null;
+    editingRootId = null;
+    showToast('文档已切换，本次编辑已取消', 3000, 'error');
+    return;
+  }
   const path = editingPath;
   subtreeEditor.setError(null);
   subtreeEditor.setBusy(true);
   try {
-    const reply = await core.replaceNode({ rootId: session.rootId, path, docRevision: session.docRevision, jsonText: text });
+    const reply = await core.replaceNode({ rootId, path, docRevision: session.docRevision, jsonText: text });
     // 搜索 stale / 大纲刷新已在 applyLanding（edit 意图的 landing 计划）内统一
     applyModelReply(reply);
     subtreeEditor.close();
     editingPath = null;
+    editingRootId = null;
   } catch (error) {
     const coreError = CoreError.from(error);
     subtreeEditor.setError({ message: coreError.message, line: coreError.line, column: coreError.column });
@@ -1804,10 +1864,11 @@ function currentExportName(): string | null {
 /** 文件导出（既有行为）：Blob + `<a download>`，文件名带 -edited / -truncated-repaired。 */
 async function exportDoc(): Promise<void> {
   if (!session.rootId || !meta) return;
+  // 文件名必须在 await 前定：导出期间切标签会用新标签的名字命名旧内容
+  const name = currentExportName() ?? 'document.json';
   setExportButtonsDisabled(true);
   try {
     const { text, bytes } = await core.exportDoc(session.rootId, 2);
-    const name = currentExportName() ?? 'document.json';
     const blob = new Blob([text], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -2146,8 +2207,8 @@ function queueSearch(query: string): void {
  * 过期回包由 SearchState 丢弃；docRevision 不匹配 → 清空并提示重搜。
  */
 async function runSearch(query: string): Promise<boolean> {
-  const loadAtStart = loadSeq;
-  // 多标签（ADR-0009 §2）：切标签 / 换根后迟到回包必须丢弃，不能写进当前标签的命中集
+  // 多标签（ADR-0009 §2）：切标签 / 换根后迟到回包必须丢弃，不能写进当前标签的命中集。
+  // 判据只用 rootId（换文档必换根）；不再用 loadSeq——它是全局量，会把别的标签的在途搜索误杀。
   const rootAtStart = session.rootId;
   const trimmed = query.trim();
   const seq = searchState.begin(trimmed, searchOpts);
@@ -2163,7 +2224,6 @@ async function runSearch(query: string): Promise<boolean> {
 
   try {
     const reply = await core.search({ rootId: session.rootId, seq, query: trimmed, opts: searchOpts });
-    if (loadAtStart !== loadSeq) return false;
     if (rootAtStart !== session.rootId || reply.rootId !== session.rootId) return false;
     const accepted = searchState.apply(
       {
@@ -2908,7 +2968,8 @@ function workspaceHookState(): WorkspaceHookState {
     canAdd: view.canAdd,
     hidden: view.hidden,
     tabs: workspace.ids.map((id) => {
-      const tab = workspace.get(id) as TabState;
+      const tab = workspace.get(id);
+      if (!tab) return null;
       const live = id === view.activeId && !exprViewActive;
       return {
         id,
@@ -2919,7 +2980,7 @@ function workspaceHookState(): WorkspaceHookState {
         totalRows: live ? session.totalRows : tab.totalRows,
         editCount: tab.runtime.editState.count,
       };
-    }),
+    }).filter((entry): entry is NonNullable<typeof entry> => entry !== null),
     strip: {
       hidden: stripEl.hidden,
       heightPx: Math.round(stripEl.getBoundingClientRect().height),

@@ -156,6 +156,9 @@ export class TabStrip {
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'tabstrip__close';
+    // roving tabindex：标签本身是唯一 Tab 停靠点，关闭按钮不进 Tab 序列
+    // （键盘关闭走标签上的 Delete / Backspace，见 onKeyDown）
+    close.tabIndex = -1;
     close.dataset.tabClose = tab.id;
     // 不带 ✕ 文案，读屏靠 aria-label；× 图标 visual 隐藏
     close.setAttribute('aria-label', `关闭 ${tab.name}`);
@@ -220,6 +223,15 @@ export class TabStrip {
     const tabs = this.tabEls();
     const index = tabs.indexOf(tabEl);
     if (index < 0) return;
+
+    // 键盘关闭：Delete / Backspace 关当前（被聚焦的）标签（关闭按钮不进 Tab 序列）
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      const id = tabEl.dataset.tabId;
+      if (!id) return;
+      event.preventDefault();
+      this.opts.onClose(id);
+      return;
+    }
 
     let next: number;
     switch (event.key) {
