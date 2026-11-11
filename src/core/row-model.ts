@@ -1,7 +1,8 @@
 /**
  * core/row-model — 固定行高可见行模型（ADR-0002）。
  *
- * IR = JSON.parse 值图（唯一真相源） + 展开集合。
+ * IR = JSON 值图（唯一真相源；ADR-0020 起数字载体是 `number | bigint`——BigInt 归
+ * `number` 类、显示为十进制串）+ 展开集合。
  * 每个 open 容器维护一份 Fenwick（子项**可见行数**前缀和），窗口按「下潜 O(depth·log n)」定位：
  *   - 不建扁平行表；不建全局 parentMap；节点身份这里不需要（行只带路径）。
  *   - 根永远 open；load 后 totalRows = 1 + 根容器子项数（顶层字段可见、容器默认折叠）。
@@ -39,6 +40,9 @@ export function jsonKind(node: unknown): JsonKind {
       return 'string';
     case 'number':
       return 'number';
+    case 'bigint':
+      // 无损数字（ADR-0020）：BigInt 归 `number` 类，不新增 JsonKind 成员
+      return 'number';
     case 'boolean':
       return 'boolean';
     case 'object':
@@ -52,7 +56,7 @@ export function childCountOf(container: Container): number {
   return Array.isArray(container) ? container.length : Object.keys(container).length;
 }
 
-/** 标量的 JSON 原文（字符串带引号/转义；数字用 JSON 规则）。 */
+/** 标量的 JSON 原文（字符串带引号/转义；数字用 JSON 规则，BigInt 用十进制串）。 */
 export function scalarPreview(node: unknown): string {
   if (node === null) return 'null';
   switch (typeof node) {
@@ -60,10 +64,13 @@ export function scalarPreview(node: unknown): string {
       return JSON.stringify(node);
     case 'number':
       return JSON.stringify(node);
+    case 'bigint':
+      // 无损数字（ADR-0020）：BigInt 不能走 JSON.stringify（会抛 TypeError）
+      return node.toString();
     case 'boolean':
       return node ? 'true' : 'false';
     default:
-      // JSON.parse 不会产生 undefined/function/symbol；防御性兜底成 null
+      // 值图不产生 undefined/function/symbol；防御性兜底成 null
       return 'null';
   }
 }

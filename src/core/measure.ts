@@ -38,7 +38,7 @@ function isContainer(value: unknown): value is object {
 
 /**
  * 标量的下界（字符数）：不拼串、不算转义，只取最少可能的字符数。
- * 入参只应来自 `JSON.parse` 的值图（JSON 值域：string / number / boolean / null / 容器）。
+ * 入参只应来自值图（ADR-0020：JSON 值域，数字载体 `number | bigint`）。
  */
 function scalarLowerBound(value: unknown): number {
   switch (typeof value) {
@@ -48,6 +48,9 @@ function scalarLowerBound(value: unknown): number {
     case 'number':
       // "0" 1 个字符；“-0”/“1e+21”/“1.5” 等都 ≥1
       return 1;
+    case 'bigint':
+      // 无损数字（ADR-0020）：序列化输出就是十进制串本身（负号含在内）
+      return value.toString().length;
     case 'boolean':
       return 1; // "true"(4) / "false"(5) 都 ≥1
     case 'object':

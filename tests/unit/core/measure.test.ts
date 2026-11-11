@@ -181,3 +181,24 @@ describe('jsonSizeLowerBoundChars — 早停', () => {
     expect(bounded).toBeLessThanOrEqual(prettyChars(value));
   });
 });
+
+describe('measure — 无损数字（BigInt，ADR-0020）', () => {
+  it('BigInt 标量下界 = 十进制串长度（负数含负号），不超过真实序列化长度', () => {
+    // 序列化输出就是十进制串本身；用 String() 长度对齐（JSON.stringify 对 BigInt 会抛）
+    expect(jsonSizeLowerBoundChars(297532588187238660n, Infinity)).toBe('297532588187238660'.length);
+    expect(jsonSizeLowerBoundChars(-123456789012345678901n, Infinity)).toBe(
+      '-123456789012345678901'.length,
+    );
+    // 容器里：对象 `{"a":<digits>}` 的 pretty 形态长度 = 下界 + 容器开销；下界 ≤ 真实长度
+    const obj = { a: 297532588187238660n };
+    const lower = jsonSizeLowerBoundChars(obj, Infinity);
+    const real = '{\n  "a": 297532588187238660\n}'.length;
+    expect(lower).toBeLessThanOrEqual(real);
+    expect(lower).toBeGreaterThan('297532588187238660'.length);
+  });
+
+  it('BigInt 不改变数字类下界语义（≥1、早停可用）', () => {
+    expect(jsonSizeLowerBoundChars(1n, Infinity)).toBe(1);
+    expect(jsonSizeLowerBoundChars(10n ** 400n, 10)).toBeGreaterThan(10); // 早停：超 limit
+  });
+});

@@ -170,3 +170,18 @@ describe('core/outline — 分页与夹取', () => {
     expect(first.children).not.toBe(second.children);
   });
 });
+
+describe('outline — 无损数字（BigInt，ADR-0020）', () => {
+  it('BigInt 子项 kind=number、count=0（不展开）', () => {
+    const page = outlinePage({ big: 297532588187238660n, small: 1 }, '$', 0, 10);
+    expect(page.children.map((c) => [c.key, c.kind, c.count, c.path])).toEqual([
+      ['big', 'number', 0, '$.big'],
+      ['small', 'number', 0, '$.small'],
+    ]);
+  });
+
+  it('BigInt 标量根：kind=number 且 total=0', () => {
+    const page = outlinePage(297532588187238660n, '$', 0, 10);
+    expect(page).toMatchObject({ kind: 'number', total: 0, start: 0, children: [] });
+  });
+});

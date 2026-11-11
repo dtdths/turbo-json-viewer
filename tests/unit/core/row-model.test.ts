@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { CoreError } from '../../../src/protocol/errors';
-import { RowModel, countAllExpandedRows, previewOf, truncateText } from '../../../src/core/row-model';
+import {
+  RowModel,
+  countAllExpandedRows,
+  isContainer,
+  jsonKind,
+  previewOf,
+  scalarPreview,
+  shortPreview,
+  summarizeContainer,
+  truncateText,
+} from '../../../src/core/row-model';
 import { ROOT_PATH } from '../../../src/shared/path';
 
 const DOC = {
@@ -748,5 +758,76 @@ describe('RowModel — 展开态 path 口径（ADR-0002 修订 2026-11-09）', (
     model.collapseAll();
     expect(model.openPaths()).toEqual(['$']);
     expect(model.isOpenAt('$.empty')).toBe(false); // 空容器不是展开态
+  });
+});
+
+describe('RowModel — BigInt（值图数字载体，归 number 类 / ADR-0020）', () => {
+  /** 超安全范围的整数：无损解析后是 BigInt，但用户可见类型仍是 number。 */
+  const BIG = 297532588187238660n;
+  const BIG_TEXT = '297532588187238660';
+  const NEG_BIG = -123456789012345678901n;
+
+  it('jsonKind：BigInt 归 number（不是 null，也不新增 kind）', () => {
+    expect(jsonKind(BIG)).toBe('number');
+    expect(jsonKind(NEG_BIG)).toBe('number');
+    expect(jsonKind(0n)).toBe('number');
+    expect(jsonKind(1)).toBe('number'); // 普通 number 不受影响
+  });
+
+  it('isContainer：BigInt 是 primitive，不是容器', () => {
+    expect(isContainer(BIG)).toBe(false);
+    expect(isContainer(NEG_BIG)).toBe(false);
+  });
+
+  it('scalarPreview：十进制串（不能用 JSON.stringify——对 BigInt 会抛）', () => {
+    expect(scalarPreview(BIG)).toBe(BIG_TEXT);
+    expect(scalarPreview(NEG_BIG)).toBe('-123456789012345678901'); // 负号保留
+    expect(() => scalarPreview(BIG)).not.toThrow();
+    expect(scalarPreview(1)).toBe('1'); // 普通 number 仍走 JSON 规则
+  });
+
+  it('previewOf / shortPreview / 摘要：不出现 null', () => {
+    expect(previewOf(BIG, false)).toBe(BIG_TEXT);
+    expect(shortPreview(BIG)).toBe(BIG_TEXT);
+    expect(previewOf({ a: BIG }, false)).toBe('"a": ' + BIG_TEXT); // 折叠摘要取标量十进制串
+    expect(summarizeContainer([BIG, 1])).toBe(BIG_TEXT + ', 1');
+  });
+
+  it('超长 BigInt 的命中预览按 HIT_PREVIEW_CHARS 截断（90 位大整数）', () => {
+    const huge = 123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890n;
+    const preview = shortPreview(huge);
+    expect(preview.length).toBe(80);
+    expect(preview.endsWith('…')).toBe(true);
+    expect(preview).toBe(huge.toString().slice(0, 79) + '…');
+  });
+
+  it('行模型：BigInt 字段行 kind=number、preview 十进制串、非容器', () => {
+    const rows = new RowModel({ id: BIG, small: 7 }).window(0, 10);
+    expect(rows.map((row) => [row.path, row.kind, row.preview])).toEqual([
+      ['$', 'object', '{…}'],
+      ['$.id', 'number', BIG_TEXT],
+      ['$.small', 'number', '7'],
+    ]);
+    const idRow = rows[1];
+    expect(idRow).toMatchObject({ kind: 'number', preview: BIG_TEXT, count: 0, open: false, hasChildren: false });
+    expect(rows.some((row) => row.kind === 'null')).toBe(false);
+  });
+
+  it('行模型：BigInt 标量根文档只有一行，kind/preview 正常', () => {
+    const model = new RowModel(BIG);
+    expect(model.totalRows).toBe(1);
+    const [row] = model.window(0, 1);
+    expect(row).toMatchObject({ path: '$', depth: 0, kind: 'number', preview: BIG_TEXT, count: 0 });
+  });
+
+  it('countAllExpandedRows：BigInt 节点按 1 行计（不展开）', () => {
+    expect(countAllExpandedRows(BIG, 10)).toBe(1);
+    expect(countAllExpandedRows({ a: BIG, b: [NEG_BIG, 1] }, 100)).toBe(5);
+  });
+
+  it('BigInt 不参与容器展开：toggle 该路径抛 BAD_COMMAND', () => {
+    const model = new RowModel({ id: BIG });
+    expect(codeOf(() => model.toggle('$.id', true))).toBe('BAD_COMMAND');
+    expect(model.totalRows).toBe(2);
   });
 });

@@ -268,3 +268,18 @@ describe('searchDocument — 正则模式：取消与 limit 不回归', () => {
     expect(result.truncated).toBe(true);
   });
 });
+
+describe('search — 无损数字（BigInt，ADR-0020）口径不变', () => {
+  it('数字值仍不参与搜索：大整数的十进制串不命中；键名/字符串值照常命中', () => {
+    const doc = { id: 297532588187238660n, note: '297532588187238660' };
+    // 值本身不搜（现状口径）；但字符串值命中
+    const byValue = searchDocument(doc, '297532588187238660', {});
+    expect(byValue.hits.map((h) => [h.path, h.field])).toEqual([['$.note', 'value']]);
+    // 键名照常命中
+    const byKey = searchDocument(doc, 'id', {});
+    expect(byKey.hits.map((h) => [h.path, h.field])).toEqual([['$.id', 'key']]);
+    // 命中 kind 不出现 null（BigInt 归 number 类）
+    const byNote = searchDocument({ a: 1n, note: 'x' }, 'x', {});
+    expect(byNote.hits.every((h) => h.kind === 'string')).toBe(true);
+  });
+});
