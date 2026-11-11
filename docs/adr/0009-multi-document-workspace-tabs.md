@@ -1,6 +1,6 @@
 # ADR-0009：多文档标签 —— 一个 Worker、每标签一个 doc 根、`closeRoot` 显式释放
 
-- 状态：**Implemented**（设计定稿 2026-10-30；实现 2026-11-11，见文末「实现结果」）
+- 状态：**Implemented**（设计定稿 2026-10-30；实现 2026-11-11，见文末「实现结果」；同日按用户反馈修订：标签拖拽排序 / 模态层遮罩 / 拖放落点直达，见「修订（2026-11-11 下午）」）
 - 日期：2026-10-30
 - 依据：`docs/design/direction.md`（C 工作台；§11 标签条例外修订）、ADR-0001（Worker 常驻 / 行窗口 / 多视图根）、ADR-0002（行模型 / 身份）、`CONTEXT.md`（工作区 / 文档标签）
 - 相关票：#18（多文档工作区与标签页，本 ADR 的票）、#11（导入层 / 最近文档）、#1（架构地图）、#9（查看器操作语义）
@@ -108,21 +108,32 @@ core `RootStore.close` + `DocService.load` 不覆盖 + `closeRoot` 释放旁路�
 
 ### 验收结果（本机实测 2026-11-11）
 
-- `npm run check`：tsc + **893 单测（34 文件）全绿** + build（#18 新增 53 条：workspace-state 30 / root-store 9 / doc-service 7 / 契约 4 / dev-hook 3，840 → 893）。
-- **15 套真机冒烟串行全绿**（新增第 15 套 `smoke-workspace` **45/45**；其余 14 套计数不变：search 97、extension-search 56、outline 53、expression 45、copy 38、raw 26、settings 25、fidelity 24、expand 21、export 21、edit 14、repair 14 + `smoke`/`smoke:ext` 打 OK）。
+- `npm run check`：tsc + **899 单测（34 文件）全绿** + build（#18 新增 59 条：workspace-state 36 / root-store 9 / doc-service 7 / 契约 4 / dev-hook 3，840 → 899）。
+- **15 套真机冒烟串行全绿**（新增第 15 套 `smoke-workspace` **50/50**；其余 14 套计数不变：search 97、extension-search 56、outline 53、expression 45、copy 38、raw 26、settings 25、fidelity 24、expand 21、export 21、edit 14、repair 14 + `smoke`/`smoke:ext` 打 OK）。
   `smoke-workspace` 覆盖：单文档零视觉变化（标签条 hidden、布局高度 0、树视口不变）/ 入口层「替换 ⇄ 新标签」切换与 `＋` /
   32px 与 `role=tablist`/`aria-selected` / 每标签独立展开态·滚动·选中·搜索（含面板输入框回填）/ **表达式结果视图不跨标签串味、结果根上照常展开/全部展开（ADR-0018 §1）、在结果视图里导入不污染标签存档** / 替换标签后另一标签不受影响 /
   关活动标签相邻接管、关最后回空态 / 软上限 8（`＋` 禁用 + title）/ 第 2 份大文档内存提示（小文档不提示）/ 深亮两套截图。
-- 体积（minify gz）：`page.js` **41.0 → 44.9KB**（预算 45，**未超、未修订预算**）、`worker.js` **58.7** 不变、
-  `page.css` 7.8 → **8.0**、懒加载 chunk 合计 145.4 → **145.6KB**（预算 146）。标签条与工作区代码在首屏 `page.js`，未进懒加载。
+- 体积（minify gz）：`page.js` **41.0 → 45.6KB**（预算 46，2026-11-11 由 45 修订 +0.7，见「预算修订」）、`worker.js` **58.7** 不变、
+  `page.css` 7.8 → **8.1**、懒加载 chunk 合计 145.4 → **145.6KB**（预算 146）。标签条与工作区代码在首屏 `page.js`，未进懒加载。
 - 截图：`.spike/smoke/workspace-{two-tabs,light,empty}.png`。
 
 ### 已知差距 / 本轮不做
 
 - **拖放按落点分流**（标签条空白 vs 文档视图）只有代码与手测，**没有自动化覆盖**（headless 里造 DataTransfer 不可靠）。
 - **watchdog 重载后工作区丢失**（`restartAfterWatchdog` 走页面重载；会话恢复本就不在 v1，ADR §4 明确不做）。
-- **标签顺序拖拽排序**未做（设计没要求）；满 8 提示用按钮 `title`，无额外弹窗。
+- **标签顺序拖拽排序**已于同日实现（见「修订（2026-11-11 下午）」）；满 8 提示用按钮 `title`，无额外弹窗。
+- **标签重命名 / 自定义导出文件名**未做，另开票 **#29**（待拍板）。
 - `loadId` 抢占仍是**全局**的（不是按标签）：页面用入口层 busy 拒绝并发 paste/drop，并把被作废的 load 回包
   用 `closeRoot` 释放（不留孤儿根）；真要做并发导入需按标签排队，另行设计。
 - **closeRoot 后堆回落**只有单测层面的「真丢引用」，没有 `performance.memory` 级实测（Worker 堆不在主线程 API 可见范围）。
 - 表达式结果视图切标签不自动重进（切走回文档树、结果按标签保留；再点左面板「表达式」即恢复）。
+
+## 修订（2026-11-11 下午，按用户反馈）
+
+用户实测反馈三件事，全部落地（提交见 dev 分支同日后续提交）：
+
+1. **模态入口层没遮住左面板**（bug）：`.side--left` 是 `z-index:31`（保留给「初始空态里点设置/切面板」，见 ADR-0016 §2.6 与 bug #2 的修复），而入口层遮罩是 `z-index:30` → 替换 / 新标签模态层下左面板仍是亮的、还能点。修法：只把**模态形态**（`replace` / `new-tab`）抬到 `z-index:32`，初始空态仍是 30。回归：`smoke-workspace` 新增 `tab-add:layer-covers-left-panel`（左面板中心点命中的不是左面板 + 层 z-index=32）。
+2. **标签拖拽排序**（用户明确要求做）：`WorkspaceState.move(id, toIndex)`（夹取越界、顺序真的变了才通知、活动标签不变）+ `TabStrip` 的 HTML5 drag 交互（标签 `draggable`、插入指示线 2px 靛蓝绝对定位、拖到条外 = 取消）+ **键盘等价入口 `Alt+←/→`**。回归：单测 +6（36 条）、`smoke-workspace` 新增 `drag:indicator` / `drag:reorder`。
+3. **拖文件到文档视图后点「在新标签中打开」要二次确认**（体验 bug）：入口层里已暂存拖放文件时，切到「新标签」形态现在**立即以新标签导入**（此前只是切换形态，还得再点一次「替换当前文档」）。回归：`smoke-workspace` 新增 `drag:pending-layer` / `drag:pending-new-tab-immediate`（合成 `DataTransfer` + `drop` 覆盖真实链路）。
+
+**预算修订（2026-11-11 下午，用户拍板）**：`page.js` 首屏 gz 预算 **45 → 46KB**。归因：拖拽排序 + 模态层遮罩 + 拖放落点直达 共 **+0.7KB**（44.9 → 45.6）。按 ADR-0013 / ADR-0018 先例**显式改动 + 记录归因**，不是静默豁免；`page.css` 8.0 → 8.1、懒加载 145.6（预算 146）不变。
