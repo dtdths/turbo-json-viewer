@@ -64,7 +64,7 @@ async function reportSize(metafile) {
   console.log('\nfile'.padEnd(34), 'raw KB'.padStart(8), 'gzip KB'.padStart(8));
   for (const r of rows) console.log(r.file.padEnd(34), r.raw.padStart(8), r.gz.padStart(8));
   const page = rows.find((r) => r.file.startsWith('page.js'));
-  if (page) console.log(`\nfirst paint (page.js) gzip: ${page.gz} KB  (budget 46 KB)`);
+  if (page) console.log(`\nfirst paint (page.js) gzip: ${page.gz} KB  (budget 47 KB)`);
 }
 
 await rm(DIST, { recursive: true, force: true });
