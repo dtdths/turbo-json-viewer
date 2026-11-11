@@ -35,6 +35,7 @@ const DEFAULT_KEYS = [
   'exportMode',
   'repairTruncated',
   'adaptiveExpand',
+  'advBudget',
 ];
 
 const DEFAULTS = {
@@ -48,6 +49,7 @@ const DEFAULTS = {
   exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
+  advBudget: 'standard',
 };
 
 const server = await startStaticServer(REPO_ROOT);
@@ -230,6 +232,15 @@ try {
           ?.getAttribute('aria-pressed'),
       };
 
+      // 高级预算档位（设置面板第 11 项，ADR-0018 §7）：默认标准 → 切宽松 → 切回标准
+      out.advBudget = { initial: h.settingsState().advBudget };
+      clickSeg('advBudget', 'loose');
+      await sleep(80);
+      out.advBudget.afterClick = h.settingsState().advBudget;
+      clickSeg('advBudget', 'standard');
+      await sleep(80);
+      out.advBudget.back = h.settingsState().advBudget;
+
       // 关闭自动修复 → 截断文本直接报错，且当前文档不变
       clickCheck('repairTruncated');
       await sleep(80);
@@ -381,6 +392,11 @@ const checks = {
     report.exportMode?.value === 'clipboard' &&
     report.exportMode?.splitLabel === '复制 JSON 到剪贴板' &&
     report.exportMode?.panelChecked === 'true',
+  // 第 11 项设置（ADR-0018 §7）：默认标准、可切宽松、可切回
+  'set:advBudget':
+    report.advBudget?.initial === 'standard' &&
+    report.advBudget?.afterClick === 'loose' &&
+    report.advBudget?.back === 'standard',
   'set:repair-off':
     report.repairOff?.value === false &&
     /PARSE/.test(report.repairOff?.toast ?? '') &&
@@ -409,6 +425,7 @@ const checks = {
         exportMode: 'clipboard',
         repairTruncated: false,
         adaptiveExpand: false,
+        advBudget: 'standard',
       }),
   'persist:theme':
     report.reloaded?.theme === 'light' && report.reloaded?.settings?.theme === 'light',
