@@ -101,6 +101,8 @@ describe('lossless-json — parseLossless 与 JSON.parse 对拍（ADR-0020 §4.3
       '-1e-7',
       '""',
       '"a\\u0041\\n\\"b\\\\"',
+      '"\\ud800"', // 孤立代理项：JSON.parse 接受，parser 也必须接受
+      '"x\\udc00y"',
       '[]',
       '{}',
       '[1,2,[3,{"a":null}]]',
@@ -162,8 +164,16 @@ describe('lossless-json — parseLossless 与 JSON.parse 对拍（ADR-0020 §4.3
     expect((parseLossless('297532588187238660') as bigint).toString()).toBe('297532588187238660');
   });
 
-  it('1e400 → BigInt 10^400；1e10001 → Infinity（cap）', () => {
-    expect(parseLossless('1e400')).toBe(10n ** 400n);
+  it('1e400 → BigInt 10^400；导出 401 位整数后本 parser 可无损再导入（ADR §10.2）', () => {
+    const big = 10n ** 400n;
+    expect(parseLossless('1e400')).toBe(big);
+    const text = serializeLossless({ n: big }, 2) as string;
+    expect(text).toContain(big.toString()); // 裸数字字面量（无引号、无 n）
+    expect(text.length).toBeGreaterThan(400);
+    expect(parseLossless(text)).toEqual({ n: big }); // 导出 → 再导入精确一致
+  });
+
+  it('1e10001 → Infinity（展开位数超 cap）', () => {
     expect(parseLossless('1e10001')).toBe(Infinity);
   });
 
@@ -173,8 +183,8 @@ describe('lossless-json — parseLossless 与 JSON.parse 对拍（ADR-0020 §4.3
     expect(typeof parseLossless(text)).toBe('number');
   });
 
-  it('深嵌套：50k 层不爆栈（显式栈；1M 层实测见 bench）', () => {
-    const depth = 50_000;
+  it('深嵌套：1,000,000 层不爆栈（ADR-0020 §4.3#3；显式栈）', () => {
+    const depth = 1_000_000;
     const text = '['.repeat(depth) + ']'.repeat(depth);
     const root = parseLossless(text);
     let node: unknown = root;

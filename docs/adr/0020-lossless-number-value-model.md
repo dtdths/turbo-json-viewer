@@ -167,7 +167,7 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
 ## 6. 表达式语义（Q4 落地）
 
 - **字面量**：允许 `123n`（撤销 `BigIntLiteral` 静态拒绝）；**严格 JSON 数字语法**的字面量按 `acorn` 的 `raw` 走 `analyzeNumberLiteral`（否则 `$.uid > 1234567890123456789` 右侧先丢精度）；JS 专属写法（数字分隔符 `1_000`、`0x/0o/0b`、sloppy legacy octal `0777`）**保持 acorn `node.value` 的 JS 语义**（`isJsonNumberLiteral` 单一判定）——审查修复：否则 `1_000` 会变 NaN、`0777` 会变十进制 777。
-- **算术 `+ - * / %`**：两边都是 BigInt → 原生（`/` 截断；**除零/模零给 `EVAL_DIV_BY_ZERO`**，不能落成泛化 PARSE 错误）；一边 BigInt 一边非 BigInt（且不是字符串拼接）→ `EVAL_MIXED_NUMBER`（文案「超大整数不能与普通数字混算：<op>`」）；`+` 遇字符串仍按 JS 拼接（`${1n}`/`String(1n)` 正常出 `'1'`）。
+- **算术 `+ - * / %`**：两边都是 BigInt → 原生（`/` 截断；**除零/模零给 `EVAL_DIV_BY_ZERO`**，不能落成泛化 PARSE 错误）；一边 BigInt 一边非 BigInt（且不是字符串拼接）→ `EVAL_MIXED_NUMBER`（文案「超大整数不能进行该运算：<op>」；同一 code 也用于一元 `+` / `Math.*`，所以文案不写死「混算」）；`+` 遇字符串仍按 JS 拼接（`${1n}`/`String(1n)` 正常出 `'1'`）。
 - **比较 `< <= > >=`**：任一侧 BigInt → 原生关系比较（JS 允许 BigInt 与 Number 混合比较，不做有损转换）；字符串比较路径不变。
 - **`Math.*`**：任一实参是 BigInt → `EVAL_MIXED_NUMBER`（对齐原生 `TypeError`）。
 - **显式转换**：`Number(bigint)` → `Number(value)`（允许、可能丢精度，用户显式选择）；`String(bigint)`/模板串 → 十进制串。
@@ -178,7 +178,7 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
 ## 7. 保真报告（ADR-0003 修订）
 
 - **整数 precision 退场**：整数由 parser 保证精确，检测恒 0 → 删除该类别（`FidelityCounts.precision`、`reason:'precision'`、文案分支）。「自检」移到单测（同一字面量：`BigInt(lit) === value`）。
-- **保留**：`overflow`（整数超 cap → Infinity；非整数小数 → Infinity，如 `1.5e400`）、`underflow`（非整数小数 → 0，如 `1e-400`）、`key-order`（JS 对象整数字符串键重排，改数字表示修不了）。
+- **保留**：`overflow`（整数超展开位数上限 → Infinity；或**非整数**小数上溢，如「401 位整数部分 + 小数」）、`underflow`（非整数小数 → 0，如 `1e-400`）、`key-order`（JS 对象整数字符串键重排，改数字表示修不了）。注意 `1e400` / `1.5e400` 数值上是整数 → BigInt 精确，**不报** overflow（与 §4.1 一致）。
 - 数字判定**与 parser 共用** `analyzeNumberLiteral`，禁止两份规则漂移。
 - 保真条 DOM/导航/常驻对照/状态栏/跳原文能力**全部保留**（ADR-0003 2026-11-11 晚修订不变），只改计数类别与文案。
 - `parsed` 对照：overflow 显示 `Infinity`、underflow 显示 `0`；不再有「原文 X → 实际 Y（大整数精度）」这一支。
@@ -212,7 +212,7 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
   3. `1e10001`：保持 `Infinity` + 保真报 `overflow`（且**不再**报大整数精度）。
   4. `0.1234567890123456789`：保持现状（number，精度丢、不报）。
   5. 键序失真仍报、导航/对照/跳原文不受影响。
-  6. 表达式：`filter(x => x.id > 1234567890123456789)` 精确、`x.id + 1` 报「超大整数不能与普通数字混算」、`String(x.id)` 正常。
+  6. 表达式：`filter(x => x.id > 1234567890123456789)` 精确（单测钉住裸字面量与 `n` 后缀两种形态）、`x.id + 1` 报 `EVAL_MIXED_NUMBER`（文案「超大整数不能进行该运算：+」）、`String(x.id)` 正常。
   7. 编辑：回填 → 不修改 Apply 为 no-op；改动小数/结构后 Apply 正常。
 - 体积：`node build.mjs --analyze` 记录 page/worker/css/懒加载；page ≤48、懒加载 ≤146。
 - 性能：50MB/10MB 首帧与值图堆用 Chrome harness 复测（Node 数字只作对照），数字进 §11。
@@ -225,11 +225,12 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
   - BigInt 值消费方：`row-model.jsonKind`（bigint → `number`）/`scalarPreview`（十进制串）、`measure.scalarLowerBound`（位数）、`outline`/`search` 随 row-model 自然正确（搜索口径不变）。
   - 表达式：`validate` 允许 `BigIntLiteral`；`walk.evalLiteral` 用 `raw` 走无损判定、允许 `123n`；同类型算术原生；混算/一元 `+`/`Math.*` → `EVAL_MIXED_NUMBER`；关系比较任一侧 BigInt 走原生；`display`/`toNumberValue`/`toPropertyKey`/`sanitize`/`kindOf` 补 BigInt；表达式内 `JSON.parse/stringify` 改用无损处理器；步数预算不变。
   - 保真：`fidelity.classifyNumber` 改用 `analyzeNumberLiteral`（整数精确 → 不报；超 cap/小数上溢 → `overflow`；小数下溢 → `underflow`），删 `precision`/`parsedExact`/本地 `normalizeDecimal`；`protocol/types.ts` 删 `FidelityCounts.precision` 与 `reason:'precision'`；`app/main.ts` 条文案去掉「大整数精度」。
-  - `protocol/types.ts` 新增 `ExprErrorCode = 'EVAL_MIXED_NUMBER'` + `shared/expression-copy.ts` 文案「超大整数不能与普通数字混算：{0}」。
-- **单测**：930 → **968**（`number-literal` 9、`lossless-json` 16（含 1000 例差分 fuzz 与语法拒绝面对拍、50k 层深嵌套、`__proto__`、重复键、`-0`）、row-model/measure/search/outline BigInt 用例、表达式 BigInt 用例、fidelity 口径重写）。`npx tsc --noEmit` 干净。
-- **冒烟**：15 套串行全绿；受影响套件计数变化——`smoke-fidelity` **35/35**（fixture 按新口径重写：大整数/`1e400` 不再报、超 cap 才报 overflow；导航/循环/常驻对照/跳原文不变、与修复条并存仍绿）、`smoke-copy` **38 → 43**（树行/子树/根子树/原始值/键名精确十进制）、`smoke-export` **21 → 22**（导出剪贴板逐字含裸大整数）、`smoke-edit` +3（编辑器回填精确、no-op 不推版本、编辑后仍精确）、`smoke-expression` **45 → 50**（读/算术/混合关系/混算错误/数组过滤/字符串转换）。
+  - `protocol/types.ts` 新增 `ExprErrorCode = 'EVAL_MIXED_NUMBER'` / `'EVAL_DIV_BY_ZERO'` + `shared/expression-copy.ts` 文案「超大整数不能进行该运算：{0}」/「除数为 0」。
+- **单测**：930 → **971**（`number-literal` 9、`lossless-json` 17（含 1000 例差分 fuzz 与语法拒绝面对拍、孤立代理项、**1,000,000 层深嵌套**、`__proto__`、重复键、`-0`、`1e400` 导出 401 位→再导入）、row-model/measure/search/outline BigInt 用例、表达式 BigInt 用例、fidelity 口径重写）。`npx tsc --noEmit` 干净。
+- **冒烟**：15 套串行全绿；受影响套件计数变化——`smoke-fidelity` **35/35**（fixture 按新口径重写：大整数/`1e400` 不再报、超 cap 才报 overflow；导航/循环/常驻对照/跳原文不变、与修复条并存仍绿）、`smoke-copy` **38 → 43**（树行/子树/根子树/原始值/键名精确十进制）、`smoke-export` **21 → 22**（导出剪贴板逐字含裸大整数）、`smoke-edit` +3（编辑器回填精确、no-op 不推版本、编辑后仍精确）、`smoke-expression` **45 → 52**（读/算术/混合关系/混算错误/数组过滤/字符串转换/JS 字面量语义/BigInt 除零）。
 - **体积**（`node build.mjs --analyze`）：`page.js` **47.6KB gz / 预算 48（未变，0 增长）**；懒加载 chunk 合计 **145.6KB gz / 预算 146（未变）**；`worker.js` 61.1 → **63.2KB gz（+2.1，无硬预算，记录）**；`page.css` 8.2 不变。
 - **性能 / Chrome 复测（2026-11-12，仓内 headless harness + `.spike/samples/50mb.json`）**：50MB `loadText` → 首行 **427ms**（仓库旧基线 150.2ms，**2.8×**，与 Node bench 的 2.80× 一致）；保真扫描 **256.6ms**（首帧后异步）、**0 个长任务**（解析在 Worker 内，不阻塞主线程）、0 异常 / 0 console error。10MB 首帧仍 9ms（`smoke-fidelity` 实测）。
+  - **已知缺口（如实登记，未做假）**：Chrome 内 **worker 值图堆**未直接采样——CDP 对 dedicated worker 无稳定 attach 路径，现有 harness 只测了页面侧首帧/长任务；值图堆以 **Node bench 2.1×（+140.9MB @50MB）** 作对照。若后续要硬性核对 Chrome 堆，需给 harness 加 `Target.setAutoAttach` 或 Worker 内自报 `performance` 指标（另开票）。
 - **push 前双轴审查修复（2026-11-12，Standards 轴 1 硬违规 + 4 judgement call 收口）**：① 表达式数字字面量只有严格 JSON 语法走无损判定（新增 `isJsonNumberLiteral`），修复 `1_000`/`0777` 回归并加单测；② BigInt 除零/模零 → 新增 `EVAL_DIV_BY_ZERO`（文案「除数为 0」），不再被泛化成 `PARSE_ERR_ROOT_SHAPE`；③ `EVAL_MIXED_NUMBER` 文案改「超大整数不能进行该运算：{0}」（覆盖混算/一元 `+`/`Math.*`，不再只写「混算」）；④ BigInt 混合关系比较的单一原生断言收进 `nativeRelational()` 并加边界单测（`1n < 1.5` / `-1n > -1.5` / `1n < '2'` 等）；⑤ 三处数字语法扫描加交叉注释（parser 严格 / fidelity 宽松是有意的，判定仍单一来源）。
 - **与 ADR 的偏差**：无设计级偏离；两处实现口径细化——① `1.5e400` 数值上是整数（15×10^399）→ 走 BigInt 精确（不是 Infinity），「非整数上溢」需 401 位整数部分 + 小数才出现；② 编辑 no-op 用 `deepEqualJson`（键序敏感、`-0` 用 `Object.is`），与旧 stringify 比较语义对齐。
 

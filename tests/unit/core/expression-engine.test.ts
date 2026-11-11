@@ -833,6 +833,13 @@ describe('core/expression — BigInt 语义（ADR-0020 §6）', () => {
   });
 
   it('数组方法可处理 BigInt（filter/比较），结果保留精确值', () => {
+    // ADR §10.6 的验收形态：filter 里用**十进制大整数字面量**（不带 n）做阈值
+    expect(
+      valueOf('rows.filter(x => x.v > 1234567890123456789)', { doc: BIG_DOC }),
+    ).toEqual([{ v: 3000000000000000000n }]);
+    expect(
+      valueOf('rows.filter(x => x.v > 1234567890123456789n)', { doc: BIG_DOC }),
+    ).toEqual([{ v: 3000000000000000000n }]);
     expect(valueOf('rows.filter(x => x.v > 1)', { doc: BIG_DOC })).toEqual([
       { v: 2 },
       { v: 3000000000000000000n },
