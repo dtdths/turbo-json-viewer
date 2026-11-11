@@ -35,8 +35,21 @@ describe('scanFidelity — 大整数精度流失（precision）', () => {
       reason: 'precision',
       offset: text.indexOf('1234567890123456789'),
       literal: '1234567890123456789',
-      parsed: '1234567890123456800',
+      // #23 修订（2026-11-11 晚）：parsed = double 的精确整数值（BigInt），不是最短往返字符串
+      parsed: '1234567890123456768',
     });
+  });
+
+  it('显示串相同但实际不同（用户 2026-11-11 反馈）：parsed 给精确整数，能看出差异', async () => {
+    const text = '{"product_flag_extend":297532588187238660}';
+    const report = await scan(text);
+    // 原文 660 不是 64 的倍数 → double 实为 ...656；String(double) 仍打印为 ...660
+    expect(report.hits[0]).toMatchObject({
+      reason: 'precision',
+      literal: '297532588187238660',
+      parsed: '297532588187238656',
+    });
+    expect(report.hits[0]?.parsed).not.toBe(report.hits[0]?.literal);
   });
 
   it('19 位但可精确表示（2^18 的十进制幂）→ 0 条', async () => {

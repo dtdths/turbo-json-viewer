@@ -184,6 +184,15 @@ export interface FidelityHookState {
   jumpVisible: boolean;
   viewMode: 'tree' | 'raw';
   statusRows: string;
+  /** 多命中导航（#31 / ADR-0003 修订 2026-11-11 晚）：当前序号（0-based）与命中条数 */
+  index: number;
+  hitCount: number;
+  /** 计数文案（`1/2`；<2 条命中时为空串） */
+  counterText: string;
+  prevDisabled: boolean;
+  nextDisabled: boolean;
+  /** 状态栏文案（精确差异提示「原文 X → 实际 Y」落在这里） */
+  statusState: string;
 }
 
 /** 双向定位快照（#30 / ADR-0019）：busy + 本标签记住的对照锚点。 */
@@ -425,6 +434,7 @@ export interface DevHookDeps {
   rawMetaInfo(): RawMeta | null;
   fidelityReport(): FidelityReport | null;
   fidelityPending(): boolean;
+  fidelityIndex(): number;
   exportLastAction(): ExportLastAction | null;
   /** 导出文件名（含 -edited / -truncated-repaired 后缀）。 */
   exportFileName(): string | null;
@@ -501,6 +511,9 @@ export interface DevHookDeps {
     fidelityNotice: NoticeBar;
     fidelityJump: HTMLButtonElement;
     fidelityClose: HTMLButtonElement;
+    fidelityPrev: HTMLButtonElement;
+    fidelityNext: HTMLButtonElement;
+    fidelityCount: HTMLElement;
     exportBtn: HTMLButtonElement;
     exportMenu: HTMLElement;
     exportMenuBtn: HTMLButtonElement;
@@ -729,6 +742,12 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       jumpVisible: !ui.fidelityJump.hidden,
       viewMode: deps.viewModeAttr() === 'raw' ? 'raw' : 'tree',
       statusRows: ui.statusRows.textContent ?? '',
+      index: deps.fidelityIndex(),
+      hitCount: (fidelity?.hits ?? []).length,
+      counterText: ui.fidelityCount.textContent ?? '',
+      prevDisabled: ui.fidelityPrev.disabled,
+      nextDisabled: ui.fidelityNext.disabled,
+      statusState: ui.repairStatusState.textContent ?? '',
     };
   };
 

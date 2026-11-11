@@ -65,6 +65,7 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
     rawMetaInfo: () => null,
     fidelityReport: () => null,
     fidelityPending: () => false,
+    fidelityIndex: () => 0,
     exportLastAction: () => null,
     exportFileName: () => null,
     tree: {
@@ -220,6 +221,9 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
       fidelityNotice: { text: () => '' } as unknown as DevHookDeps['ui']['fidelityNotice'],
       fidelityJump: fakeElement() as HTMLButtonElement,
       fidelityClose: fakeElement() as HTMLButtonElement,
+      fidelityPrev: fakeElement({ disabled: true }) as HTMLButtonElement,
+      fidelityNext: fakeElement({ disabled: false }) as HTMLButtonElement,
+      fidelityCount: fakeElement({ textContent: '' }),
       exportBtn: fakeElement({ textContent: '导出' }) as HTMLButtonElement,
       exportMenu: fakeElement({ hidden: true }),
       exportMenuBtn: fakeElement() as HTMLButtonElement,
@@ -362,6 +366,12 @@ describe('dev hook — API 契约与纯快照组装', () => {
       jumpVisible: true,
       viewMode: 'raw',
       statusRows: '1,000 行',
+      index: 0,
+      hitCount: 1,
+      counterText: '',
+      prevDisabled: true,
+      nextDisabled: false,
+      statusState: '',
     });
   });
 

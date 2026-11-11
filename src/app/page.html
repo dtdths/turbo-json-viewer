@@ -109,6 +109,10 @@
     <div class="noticebar" id="fidelityBar" role="status" aria-live="polite" hidden>
       <svg class="noticebar__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.2 13.4H1.8Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/><path d="M8 6.2v3.2M8 11.6v.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
       <span class="noticebar__text" id="fidelityText" data-notice-text>—</span>
+      <!-- 多命中导航（#31 / ADR-0003 修订 2026-11-11 晚）：1/N 计数 + 上一处/下一处 -->
+      <button class="iconbtn noticebar__nav" type="button" id="fidelityPrev" aria-label="上一处失真" title="上一处失真" hidden>‹</button>
+      <span class="noticebar__count" id="fidelityCount" hidden>1/1</span>
+      <button class="iconbtn noticebar__nav" type="button" id="fidelityNext" aria-label="下一处失真" title="下一处失真" hidden>›</button>
       <button class="linkbtn noticebar__action" type="button" id="fidelityJump" data-notice-action>查看原文</button>
       <button class="iconbtn noticebar__close" type="button" id="fidelityClose" data-notice-close aria-label="关闭保真提示">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 4.6 6.8 6.8M11.4 4.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>

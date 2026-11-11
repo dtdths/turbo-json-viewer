@@ -59,6 +59,34 @@ kbd {
   color: var(--text-2);
 }
 .noticebar__action { flex: 0 0 auto; border-bottom: none; font-size: var(--text-caption); white-space: nowrap; }
+/* 多命中导航（#31 / ADR-0003 修订 2026-11-11 晚）：条内「‹ 1/N ›」，不新增提示条 */
+.noticebar__nav {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  color: var(--warn);
+  font: inherit;
+  font-size: var(--text-body);
+  line-height: 1;
+  cursor: pointer;
+}
+.noticebar__nav:hover:not(:disabled) { background: var(--bg-hover); }
+.noticebar__nav:disabled { opacity: 0.35; cursor: default; }
+.noticebar__nav[hidden] { display: none; }
+.noticebar__count {
+  flex: 0 0 auto;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.noticebar__count[hidden] { display: none; }
 .noticebar__close { flex: 0 0 auto; color: var(--muted); }
 
 /* 修复条展开列表（绝对定位盖树）：保留 .repairbar__op / __at（冒烟按类查询） */

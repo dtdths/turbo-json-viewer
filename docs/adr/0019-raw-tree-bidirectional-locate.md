@@ -122,7 +122,7 @@ export interface RawOffsetOfReply {
 - **编辑态**：映射永远以**原始源文本**为准（临时编辑只改值图、不改源文本）。树行无原文位置（编辑新增的节点）→ 保留按钮、**点击后状态栏提示**（不做逐行预扫描禁用，见「已知差距」）；plain 模式整列入口关闭。原文→树目标路径已不存在（编辑删除/改名）→ 跳**最近仍存在的祖先** + 状态栏提示；记忆锚点失效 → 回退精确反推。
 - **失败反馈**：状态栏约 3s 临时文案（映射失败 / 路径不存在），可重试；不新增提示条/对话框。
 - **延迟 UX**：触发按钮进 busy + 状态栏「正在定位…」；**不提供取消**（最坏 ~300ms）；切标签/换文档按 `rootId` 丢弃迟到回包。
-- **范围**：表达式结果视图不涉及（只有树形态、expr 行无源偏移）；多标签只在当前标签内；保真条保持单动作（闭环靠原文侧按钮）。
+- **范围**：表达式结果视图不涉及（只有树形态、expr 行无源偏移）；多标签只在当前标签内；保真条多命中导航已由 #31 修订补上（原为单动作；见 ADR-0003 修订 2026-11-11 晚），闭环仍靠原文侧按钮。
 
 ### 5. 锚点记忆（app 层，per-tab）
 
@@ -152,7 +152,7 @@ export interface RawOffsetOfReply {
 ## 明确不做（本 slice）
 
 - 连续滚动联动 / 左右分屏对照（另一个 effort）。
-- 原文视图行级键盘导航（另开票）；保真条多命中 prev/next。
+- 原文视图行级键盘导航（另开票）；~~保真条多命中 prev/next~~（已由 #31 修订补上，见 ADR-0003 修订）。
 - 表达式结果行 → 原文（结果行无源偏移；已有 `exprLocate` → 原文档树）。
 - 原文行内字符级锚点（只到「行首 token 所属节点」）。
 
@@ -195,7 +195,7 @@ export interface RawOffsetOfReply {
 - 单测 **899 → 929**：新增 `tests/unit/core/path-index.test.ts` 24 条（offset↔path、转义键/Unicode、深嵌套 300、重复键取最后一个、结构行 null、`cpEvery` 1/2/3/64/2048 结果一致、大文件内存 sanity、`tokenStartAt` source/pretty/plain）；契约新增 3 条 × 2 适配器 = 6 条（双向只读、plain 回 null、未知根 `NO_ROOT`、表达式根 `BAD_COMMAND`、容器开括号 `exact:false`、重复键最后一个）。
 - 锚点记忆在 `app/main.ts` 接线层（每标签 `TabExtras.anchor`）：`main.ts` 无单测 harness（与既有接线一致），由 `smoke-raw` 的 `locate:anchor-remembered` + `smoke-fidelity` 的 `locate:tree-to-raw-anchor` 两条浏览器断言覆盖。
 - dev hook **75 → 82**（`locateState / rawPathAt / rawOffsetOf / rawLocateClick / treeLocateClick / rawCtxOpen / rawCtxClick`），`tests/unit/app/dev-hook.test.ts` 逐字钉住。
-- 冒烟：`smoke-raw` **26 → 33/33**（+7：行尾浮条与 aria/行号可见/不在 gutter、宽行横滚 sticky 贴右缘、原文→树选中、锚点记忆、树→原文回跳、结构行无按钮、右键菜单闭环）；`smoke-fidelity` **24 → 29/29**（+4 痛点闭环 + 1 截图存在性）；**不新增第 16 套**。深/亮截图：`.spike/smoke/raw-locate.png`、`.spike/smoke/fidelity-locate.png`。
+- 冒烟：`smoke-raw` **26 → 33/33**（+7：行尾浮条与 aria/行号可见/不在 gutter、宽行横滚 sticky 贴右缘、原文→树选中、锚点记忆、树→原文回跳、结构行无按钮、右键菜单闭环）；`smoke-fidelity` **24 → 29/29**（#31 修订后 35/35）（+4 痛点闭环 + 1 截图存在性）；**不新增第 16 套**。深/亮截图：`.spike/smoke/raw-locate.png`、`.spike/smoke/fidelity-locate.png`。
 - 0 page 异常 / 0 console error（两套冒烟断言）。
 - 体积见「预算」节（`page.js` 47.0/47、`worker.js` 61.0、`page.css` 8.1、懒加载 145.6）。
 

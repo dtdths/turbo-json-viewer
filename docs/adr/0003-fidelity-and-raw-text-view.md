@@ -260,3 +260,29 @@ interface FidelityReport {
   `Frame` 改判别联合（数组帧不再分配对象专属字段）；删掉永不产出的 `'skipped'`/`skippedReason`；
   去掉 `revealFirstFidelityHit` 这层 Middle Man；`indexKeyValue`/`keyIndexValue` 注明是「规范实现 + 零分配快速路径」，
   不是待合并的重复代码。
+
+## 修订（2026-11-11 晚）：多命中导航 + 精确对照（#31，ADR 原决定 §4 的 v1.1 项提前落地）
+
+用户反馈两件事：① 保真条「查看原文」只跳第一处，无法定位第二处；② 对比原文与树，显示值一模一样，
+困惑「为何说失真」。第 ② 条的事实：`297532588187238660` 不是该量级 double 步长（64）的倍数，
+`JSON.parse` 实际得到 `...656`（差 4）；但 JS 打印 double 用**最短往返十进制**，恰好仍是 `...660`，
+所以原文/树/导出串都看不出差异。检测器用 BigInt 精确判定，不是误报——缺口在**呈现层**。
+
+**决策**
+
+1. **`FidelityHit.parsed` 改为精确整数值**（`core/fidelity.ts` 的 `parsedExact`）：`Number.isInteger(value)`
+   时用 `BigInt(value).toString()`（如 `...660` 的 `parsed` 是 `...656`），Infinity / 非整数保持 `String(value)`。
+   检测规则、候选阈值、counts 全部不变——只改「解析后」的呈现口径，让显示串相同也能看出差异。
+2. **保真条多命中导航**（`#fidelityBar` 内）：命中 ≥2 条时显示「`‹` 1/N `›`」；`查看原文` / 上一处 / 下一处
+   都走 `jumpFidelityHit(index)`：更新计数与按钮禁用态 → 状态栏约 3s 解释 → 切原文 + `revealRepairOffset`
+   高亮对应行（与修复摘要 `at` 同一条链路）。单条命中零视觉变化；多条才出现导航。
+3. **精确差异提示**：跳任一处时状态栏给「失真：原文 X → 实际 Y」（上溢/下溢/键序有各自人话文案），
+   约 3s 后恢复常驻态（复用 #30 的 `showStatusHint`）。
+4. **预算**：`page.js` **47 → 48KB gz**（用户 2026-11-11 晚拍板；本次 +0.5：条内导航 + 精确对照状态栏）。
+
+**验收**：单测新增「显示串相同但实际不同 → parsed 精确整数」回归（`tests/unit/core/fidelity.test.ts`）；
+`smoke-fidelity` **29 → 35/35**（新增 nav 可见/计数、逐处跳转行号、末处禁用 next、prev 回跳、状态栏精确差异 5 条
++ 截图 `fidelity-nav.png`）；`page.js` 47.5/48、`page.css` 8.2、`worker.js` 61.1；深/亮截图
+`.spike/smoke/fidelity-nav-light.png`。
+
+**范围外（仍不做）**：命中明细列表/弹层；扫描检测规则与阈值；`literal` 仍是源文本片段（≤48 字符截断）。

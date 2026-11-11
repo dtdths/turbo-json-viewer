@@ -166,7 +166,7 @@ try {
       d.hits[4]?.kind === 'key-order' &&
       d.hits.every((h) => typeof h.offset === 'number' && h.snippet.length <= 48) &&
       d.hits[0].literal === '1234567890123456789' &&
-      d.hits[0].parsed === '1234567890123456800',
+      d.hits[0].parsed === '1234567890123456768',
     { hits: (d.hits || []).map((h) => ({ kind: h.kind, reason: h.reason, offset: h.offset, literal: h.literal, parsed: h.parsed })) },
   );
 
@@ -181,6 +181,8 @@ try {
     out.jump = await window.__tjv.fidelityJump();
     await sleep(150);
     out.after = window.__tjv.fidelityState();
+    // 精确差异提示（#31 / ADR-0003 修订 2026-11-11 晚）
+    out.status = document.getElementById('statusState')?.textContent ?? '';
     return out;
   })()`);
   report.jump = phase2;
@@ -231,6 +233,77 @@ try {
     'locate:tree-to-raw-anchor',
     phase2b.toRaw?.clicked === true && phase2b.afterBack?.mode === 'raw' && Number(phase2b.afterBack?.flash) === 2,
     { clicked: phase2b.toRaw?.clicked, mode: phase2b.afterBack?.mode, flash: phase2b.afterBack?.flash },
+  );
+
+  // ---- phase 2c：多命中导航（#31 / ADR-0003 修订 2026-11-11 晚）：‹ 1/5 › + 精确差异状态栏 ----
+  const phase2c = await page.eval(`(async () => {
+    const out = {};
+    const { sleep } = window.__fid;
+    const h = window.__tjv;
+    const cnt = () => document.getElementById('fidelityCount')?.textContent ?? '';
+    const prev = () => document.getElementById('fidelityPrev');
+    const next = () => document.getElementById('fidelityNext');
+    const status = () => document.getElementById('statusState')?.textContent ?? '';
+    out.navVisible =
+      !next().hidden && !prev().hidden && !document.getElementById('fidelityCount').hidden;
+    out.initial = { counter: cnt(), prevDisabled: prev().disabled, nextDisabled: next().disabled };
+    out.hits = h.fidelityState().hits;
+    // 逐条期望行号（offset → rawLocate）
+    out.expected = [];
+    for (const hit of out.hits) {
+      const located = await h.rawLocate(hit.offset);
+      out.expected.push(located ? located.line : null);
+    }
+    out.steps = [];
+    for (let k = 0; k < 4; k++) {
+      next().click();
+      await sleep(320);
+      out.steps.push({
+        counter: cnt(),
+        flash: h.rawState().flash,
+        prevDisabled: prev().disabled,
+        nextDisabled: next().disabled,
+        status: status(),
+      });
+    }
+    out.atLast = { counter: cnt(), nextDisabled: next().disabled, status: status(), flash: h.rawState().flash };
+    prev().click();
+    await sleep(320);
+    out.afterPrev = { counter: cnt(), flash: h.rawState().flash, status: status() };
+    out.final = h.fidelityState();
+    return { fidNav: out };
+  })()`);
+  report.nav = phase2c.fidNav;
+  await page.screenshot(path.join(SHOTS, 'fidelity-nav.png'));
+  const nav = phase2c.fidNav || {};
+  const navSteps = nav.steps || [];
+  const expectedLines = nav.expected || [];
+  check(
+    'nav:visible-and-counter',
+    nav.navVisible === true && nav.initial?.counter === '1/5' && nav.initial?.prevDisabled === true && nav.initial?.nextDisabled === false,
+    { navVisible: nav.navVisible, initial: nav.initial },
+  );
+  check(
+    'nav:next-steps-jump-lines',
+    navSteps.length === 4 &&
+      JSON.stringify(navSteps.map((s) => s.counter)) === JSON.stringify(['2/5', '3/5', '4/5', '5/5']) &&
+      navSteps.every((s, k) => Number(s.flash) === expectedLines[k + 1]),
+    { counters: navSteps.map((s) => s.counter), flashes: navSteps.map((s) => s.flash), expectedLines },
+  );
+  check(
+    'nav:last-disables-next',
+    nav.atLast?.counter === '5/5' && nav.atLast?.nextDisabled === true && /键顺序/.test(nav.atLast?.status ?? ''),
+    { atLast: nav.atLast },
+  );
+  check(
+    'nav:prev-back',
+    nav.afterPrev?.counter === '4/5' && Number(nav.afterPrev?.flash) === expectedLines[3] && /下溢/.test(nav.afterPrev?.status ?? ''),
+    { afterPrev: nav.afterPrev, expectFlash: expectedLines[3] },
+  );
+  check(
+    'exact:status-explains-precision',
+    /→/.test(phase2?.status ?? '') && (phase2?.status ?? '').includes('1234567890123456768'),
+    { status: phase2?.status },
   );
 
   // ---- phase 3：无失真文档 → 条不出现 ----
@@ -328,7 +401,7 @@ try {
   check('page:no-exceptions', exceptions.length === 0, { exceptions });
   check('page:no-console-error', consoleErrors.length === 0, { consoleErrors });
 
-  for (const shot of ['fidelity-bar.png', 'fidelity-jump.png', 'fidelity-locate.png', 'fidelity-clean.png', 'fidelity-coexist.png', 'fidelity-10mb.png']) {
+  for (const shot of ['fidelity-bar.png', 'fidelity-jump.png', 'fidelity-locate.png', 'fidelity-nav.png', 'fidelity-clean.png', 'fidelity-coexist.png', 'fidelity-10mb.png']) {
     const file = path.join(SHOTS, shot);
     check('screenshot:' + shot, existsSync(file), { path: file });
   }

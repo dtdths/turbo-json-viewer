@@ -39,6 +39,7 @@ import type {
   EvalSuccess,
   ExprBudgetLevel,
   ExprCompletion,
+  FidelityHit,
   FidelityReport,
   JsonKind,
   RawMeta,
@@ -141,6 +142,9 @@ const fidelityBar = el('fidelityBar');
 const fidelityNotice = new NoticeBar(fidelityBar);
 const fidelityJump = el<HTMLButtonElement>('fidelityJump');
 const fidelityClose = el<HTMLButtonElement>('fidelityClose');
+const fidelityPrev = el<HTMLButtonElement>('fidelityPrev');
+const fidelityNext = el<HTMLButtonElement>('fidelityNext');
+const fidelityCount = el('fidelityCount');
 const viewTreeBtn = el<HTMLButtonElement>('viewTreeBtn');
 const viewRawBtn = el<HTMLButtonElement>('viewRawBtn');
 const rawHost = el('raw');
@@ -387,6 +391,8 @@ let rawOpenSeq = 0;
 
 /** 保真报告（#23 / ADR-0003 修订）：只在当前文档会话内存；null = 未扫/无报告。 */
 let fidelity: FidelityReport | null = null;
+/** 保真条多命中导航的当前命中序号（#31 / ADR-0003 修订 2026-11-11 晚） */
+let fidelityIndex = 0;
 /** 扫描在途标记（dev hook / 冒烟判定用；不显示进度） */
 let fidelityPending = false;
 /** 保真扫描代次（换文档递增，迟到回包丢弃） */
@@ -1562,10 +1568,16 @@ repairClose.addEventListener('click', () => {
   // 只关提示条：provenance 仍留在 meta 上（状态栏角标 + 导出后缀继续生效）
   repairBar.hidden = true;
 });
-// 保真提示条（#23）：主点击 = 跳原文第一个失真（与修复摘要 at 同链路）；关闭只关条（报告保留，组件内处理）
+// 保真提示条（#23 / #31 修订）：主点击 / 上一处 / 下一处 = 跳对应失真行（与修复摘要 at 同链路）；
+// 关闭只关条（报告保留，组件内处理）
 fidelityNotice.onAction(() => {
-  const hit = fidelity?.hits[0];
-  if (hit) void revealRepairOffset(hit.offset);
+  jumpFidelityHit(fidelityIndex);
+});
+fidelityPrev.addEventListener('click', () => {
+  jumpFidelityHit(fidelityIndex - 1);
+});
+fidelityNext.addEventListener('click', () => {
+  jumpFidelityHit(fidelityIndex + 1);
 });
 // 修复摘要的 `at` → 跳到原文对应行（#8 / ADR-0003 修订 §5）
 repairOps.addEventListener('click', (event: MouseEvent) => {
@@ -2559,8 +2571,12 @@ function resetFidelity(): void {
   fidelitySeq += 1;
   fidelity = null;
   fidelityPending = false;
+  fidelityIndex = 0;
   fidelityNotice.hide();
   fidelityNotice.setActionVisible(false);
+  fidelityPrev.hidden = true;
+  fidelityNext.hidden = true;
+  fidelityCount.hidden = true;
 }
 
 /**
@@ -2602,7 +2618,24 @@ function scheduleFidelityScan(): void {
 function renderFidelity(): void {
   const report = fidelity;
   const total = report?.counts.total ?? 0;
-  fidelityNotice.setActionVisible((report?.hits.length ?? 0) > 0);
+  const hits = report?.hits ?? [];
+  const hitCount = hits.length;
+  // 多命中导航（#31）：≥2 条命中才显示「‹ 1/N ›」；单条命中保持原样（零视觉变化）
+  const nav = hitCount > 1;
+  fidelityPrev.hidden = !nav;
+  fidelityNext.hidden = !nav;
+  fidelityCount.hidden = !nav;
+  if (nav) {
+    if (fidelityIndex > hitCount - 1) fidelityIndex = hitCount - 1;
+    if (fidelityIndex < 0) fidelityIndex = 0;
+    fidelityCount.textContent = `${fidelityIndex + 1}/${hitCount}`;
+    fidelityPrev.disabled = fidelityIndex <= 0;
+    fidelityNext.disabled = fidelityIndex >= hitCount - 1;
+  } else {
+    fidelityIndex = 0;
+    fidelityCount.textContent = '';
+  }
+  fidelityNotice.setActionVisible(hitCount > 0);
   if (!report || total === 0) {
     fidelityNotice.hide();
     return;
@@ -2615,6 +2648,32 @@ function renderFidelity(): void {
   if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
   const tail = report.truncated ? `（仅列前 ${report.hits.length} 条）` : '';
   fidelityNotice.show(`检测到 ${total} 处失真：${parts.join(' · ')}${tail}`);
+}
+
+/**
+ * 一条失真的「人话解释」（#31）：数字类给**原文 vs 实际精确值**（`parsed` 已是 BigInt 精确整数，
+ * 显示串相同也能看出差异）；键序类只说明被重排。
+ */
+function describeFidelityHit(hit: FidelityHit): string {
+  if (hit.kind === 'key-order') return '失真：整数样式的键顺序被重排';
+  const literal = hit.literal ?? hit.snippet;
+  if (hit.reason === 'overflow') return `失真：原文 ${literal} → 实际 Infinity（数字上溢）`;
+  if (hit.reason === 'underflow') return `失真：原文 ${literal} → 实际 0（数字下溢）`;
+  return `失真：原文 ${literal} → 实际 ${hit.parsed ?? '?'}`;
+}
+
+/**
+ * 跳到第 index 条失真（#31 / ADR-0003 修订 2026-11-11 晚）：更新计数/按钮态 → 状态栏解释
+ * （约 3s）→ 切原文并高亮对应行（复用 revealRepairOffset 的单一链路）。
+ */
+function jumpFidelityHit(index: number): void {
+  const hits = fidelity?.hits ?? [];
+  if (hits.length === 0) return;
+  fidelityIndex = Math.max(0, Math.min(Math.floor(index), hits.length - 1));
+  renderFidelity();
+  const hit = hits[fidelityIndex];
+  showStatusHint(describeFidelityHit(hit));
+  void revealRepairOffset(hit.offset);
 }
 
 /* ---------------- 视图切换：树 / 原文（#11 / ADR-0003 修订） ---------------- */
@@ -2977,6 +3036,7 @@ function buildDevHookDeps(): DevHookDeps {
     rawMetaInfo: () => rawMetaInfo,
     fidelityReport: () => fidelity,
     fidelityPending: () => fidelityPending,
+    fidelityIndex: () => fidelityIndex,
     exportLastAction: () => exportLastAction,
     exportFileName: () =>
       meta ? exportName(meta.name, editState.dirty, meta.repair?.status === 'repaired') : null,
@@ -3080,6 +3140,9 @@ function buildDevHookDeps(): DevHookDeps {
       fidelityNotice,
       fidelityJump,
       fidelityClose,
+      fidelityPrev,
+      fidelityNext,
+      fidelityCount,
       exportBtn,
       exportMenu,
       exportMenuBtn,

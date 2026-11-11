@@ -342,6 +342,23 @@ function normalizeDecimal(lit: string): { digits: string; exp: number } | null {
 }
 
 /**
+ * 「解析后」的**精确**显示串（#23 修订 2026-11-11）：整数型 double 用 BigInt 给出真实整数值。
+ *
+ * 动机：`String(value)` 是最短往返十进制，可能与原文**同串**（例：`297532588187238660`
+ * 的 double 实为 `...656`，但打印仍是 `...660`），呈现层看不出差异。BigInt 只在 value 为
+ * 整数时可用（大整数失真命中恒满足）；Infinity / 非整数保持 String。
+ */
+function parsedExact(value: number): string {
+  if (!Number.isFinite(value)) return String(value);
+  if (!Number.isInteger(value)) return String(value);
+  try {
+    return BigInt(value).toString();
+  } catch {
+    return String(value);
+  }
+}
+
+/**
  * 数字字面量 → 失真类别 + 「解析后」对照（不失真返回 null）。
  * 高精度小数（含 `.` 且无指数）v1 不报（ADR 修订 §2）。
  * 只返回判定结果、不构造 `FidelityHit`：海量命中时只为保留的 ≤100 条分配片段。
@@ -370,8 +387,8 @@ function classifyNumber(
   const value = Number(lit);
 
   if (hasExp) {
-    if (!Number.isFinite(value)) return { reason: 'overflow', parsed: String(value) };
-    if (value === 0 && mantissaNonZero) return { reason: 'underflow', parsed: String(value) };
+    if (!Number.isFinite(value)) return { reason: 'overflow', parsed: parsedExact(value) };
+    if (value === 0 && mantissaNonZero) return { reason: 'underflow', parsed: parsedExact(value) };
     // 带指数的数字同样会被圆整（`1234567890123456789e0`、`1.234567890123456789e18`）：
     // 用十进制规范化做精确比对（只对有效数字 >15 位的候选做，成本可忽略）。
     const literalForm = normalizeDecimal(lit);
@@ -382,7 +399,7 @@ function classifyNumber(
         numberForm.digits !== literalForm.digits ||
         numberForm.exp !== literalForm.exp
       ) {
-        return { reason: 'precision', parsed: String(value) };
+        return { reason: 'precision', parsed: parsedExact(value) };
       }
     }
     return null;
@@ -395,7 +412,7 @@ function classifyNumber(
   while (digitStart < lit.length && lit.charCodeAt(digitStart) === 48) digitStart += 1;
   if (lit.length - digitStart <= 15) return null;
   // >15 位的整数也可能直接把 double 撑爆（如 400 位）：同样被 JSON.parse 改写，报 overflow
-  if (!Number.isFinite(value)) return { reason: 'overflow', parsed: String(value) };
+  if (!Number.isFinite(value)) return { reason: 'overflow', parsed: parsedExact(value) };
   let exact: bigint;
   try {
     exact = BigInt(lit);
@@ -403,7 +420,7 @@ function classifyNumber(
     return null; // 非法整数文本（如 `0123`）：宽松跳过，不误报
   }
   if (exact === BigInt(value)) return null;
-  return { reason: 'precision', parsed: String(value) };
+  return { reason: 'precision', parsed: parsedExact(value) };
 }
 
 /* ------------------------------ 扫描 ------------------------------ */
