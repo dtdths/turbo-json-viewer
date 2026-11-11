@@ -24,7 +24,8 @@ export interface ContractHarness {
 
 export type HarnessFactory = () => ContractHarness;
 
-const DOC_ROOT = 'doc';
+/** doc 根 id 由 Worker 单调分配（`doc:1`、`doc:2`…，ADR-0009 §2）；断言一律用 LoadReply.rootId。 */
+const DOC_ROOT_PATTERN = /^doc:\d+$/;
 
 const BASIC_DOC = { a: 1, b: { c: 2 } };
 const BASIC_TEXT = JSON.stringify(BASIC_DOC);
@@ -101,7 +102,8 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
 
     it('load：文档根/版本/总行数/meta，首窗口按 rowVersion 返回行', async () => {
       const loaded = await load(BASIC_TEXT);
-      expect(loaded).toMatchObject({ rootId: DOC_ROOT, docRevision: 1, rowVersion: 1, totalRows: 4 });
+      expect(loaded.rootId).toMatch(DOC_ROOT_PATTERN);
+      expect(loaded).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 4 });
       expect(loaded.meta).toMatchObject({ name: 'doc.json', source: 'paste' });
       expect(loaded.meta.bytes).toBe(new TextEncoder().encode(BASIC_TEXT).byteLength);
 
@@ -112,7 +114,14 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
         start: 0,
         count: 10,
       });
-      expect(win).toMatchObject({ rootId: DOC_ROOT, rowVersion: 1, seq: 1, start: 0, count: 10, totalRows: 4 });
+      expect(win).toMatchObject({
+        rootId: loaded.rootId,
+        rowVersion: 1,
+        seq: 1,
+        start: 0,
+        count: 10,
+        totalRows: 4,
+      });
       expect(windowPaths(win)).toEqual(['$', '$.a', '$.b', '$.b.c']);
     });
 
@@ -135,6 +144,42 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
         h.api.window({ rootId: 'no-such-root', rowVersion: 1, seq: 1, start: 0, count: 5 }),
       );
       expect(noRoot.code).toBe('NO_ROOT');
+    });
+
+    /* ----------------------------- closeRoot ----------------------------- */
+
+    it('closeRoot：未知根幂等 closed:false；关闭后该根 window → NO_ROOT，重复关闭仍幂等', async () => {
+      const loaded = await load(BASIC_TEXT);
+
+      // 未知根：回包而不是抛错（页面重复关 / 迟到关都安全）
+      expect(await h.api.closeRoot('no-such-root')).toEqual({ rootId: 'no-such-root', closed: false });
+
+      expect(await h.api.closeRoot(loaded.rootId)).toEqual({ rootId: loaded.rootId, closed: true });
+
+      const gone = await errorOf(
+        h.api.window({ rootId: loaded.rootId, rowVersion: loaded.rowVersion, seq: 1, start: 0, count: 5 }),
+      );
+      expect(gone.code).toBe('NO_ROOT');
+
+      // 幂等：再关一次 → closed:false（不抛）
+      expect(await h.api.closeRoot(loaded.rootId)).toEqual({ rootId: loaded.rootId, closed: false });
+    });
+
+    it('多 doc 根：两次 load 得到不同 doc:N 且并存，关掉一根不影响另一根', async () => {
+      const first = await load(BASIC_TEXT, 1);
+      const second = await load(COLLAPSED_TEXT, 2);
+      expect(first.rootId).toMatch(DOC_ROOT_PATTERN);
+      expect(second.rootId).toMatch(DOC_ROOT_PATTERN);
+      expect(second.rootId).not.toBe(first.rootId);
+
+      // 两个根并存：各自 stats 独立
+      expect(await h.api.stats(first.rootId)).toMatchObject({ rootId: first.rootId, totalRows: 4 });
+      expect(await h.api.stats(second.rootId)).toMatchObject({ rootId: second.rootId, totalRows: 2 });
+
+      expect((await h.api.closeRoot(first.rootId)).closed).toBe(true);
+      expect((await errorOf(h.api.stats(first.rootId))).code).toBe('NO_ROOT');
+      // 另一个标签的根照常可用
+      expect(await h.api.stats(second.rootId)).toMatchObject({ rootId: second.rootId, docRevision: 1, rowVersion: 1 });
     });
 
     /* --------------------------- toggle / expand --------------------------- */
@@ -183,7 +228,7 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
     it('expandTo：展开祖先链并返回目标行号', async () => {
       const loaded = await load(JSON.stringify({ a: { b: { c: 1 } }, pad: new Array(600).fill(0) }));
       const reply = await h.api.expandTo({ rootId: loaded.rootId, path: '$.a.b.c' });
-      expect(reply).toMatchObject({ rootId: DOC_ROOT, rowVersion: 2, row: 3, totalRows: 5 });
+      expect(reply).toMatchObject({ rootId: loaded.rootId, rowVersion: 2, row: 3, totalRows: 5 });
 
       const win = await h.api.window({ rootId: loaded.rootId, rowVersion: reply.rowVersion, seq: 1, start: 0, count: 10 });
       expect(windowPaths(win)).toEqual(['$', '$.a', '$.a.b', '$.a.b.c', '$.pad']);
@@ -207,7 +252,7 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
     it('search：命中带 seq/docRevision；正则语法错 → BAD_PATTERN', async () => {
       const loaded = await load(JSON.stringify({ name: 'alice', other: 'ALICE' }));
       const reply = await h.api.search({ rootId: loaded.rootId, seq: 42, query: 'alice' });
-      expect(reply).toMatchObject({ seq: 42, rootId: DOC_ROOT, docRevision: 1, total: 2, truncated: false });
+      expect(reply).toMatchObject({ seq: 42, rootId: loaded.rootId, docRevision: 1, total: 2, truncated: false });
       expect(reply.hits.map((hit) => hit.path)).toEqual(['$.name', '$.other']);
 
       const bad = await errorOf(
@@ -363,7 +408,7 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       const before = await h.api.stats(loaded.rootId);
 
       const reply = await h.api.fidelity({ rootId: loaded.rootId });
-      expect(reply).toMatchObject({ rootId: DOC_ROOT, docRevision: 1 });
+      expect(reply).toMatchObject({ rootId: loaded.rootId, docRevision: 1 });
       expect(reply.report.counts).toMatchObject({
         number: 1,
         precision: 1,
@@ -382,7 +427,7 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
     it('stats 只读快照；getTrail / profile 的未实现错误映射为 BAD_COMMAND', async () => {
       const loaded = await load(BASIC_TEXT);
       expect(await h.api.stats(loaded.rootId)).toEqual({
-        rootId: DOC_ROOT,
+        rootId: loaded.rootId,
         docRevision: 1,
         rowVersion: 1,
         totalRows: 4,

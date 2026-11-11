@@ -12,7 +12,11 @@ import { describe, expect, it } from 'vitest';
 import { DocService } from '../../../src/core/doc-service';
 import type { EditHistoryState, EditReply, LoadReply } from '../../../src/protocol/messages';
 
-const DOC_ROOT = 'doc';
+/**
+ * 「最近一次成功 load」的 doc 根 id：Worker 单调分配 `doc:N`（ADR-0009 §2），不再写死 `'doc'`；
+ * 由下面的 `load()` 辅助更新（MATRIX 里的闭包在用例执行时读它，所以是 let）。
+ */
+let DOC_ROOT = 'doc';
 
 /** > ADAPTIVE_EXPAND_ROWS(500)：load 后保持默认折叠，`$.items` 可单层展开。 */
 const COLLAPSED_DOC = JSON.stringify({ items: Array.from({ length: 600 }, (_, i) => i) });
@@ -29,7 +33,9 @@ const REQUIRED_KEYS = ['rootId', 'docRevision', 'rowVersion', 'totalRows', 'hist
 const OPTIONAL_KEYS = ['changedRow', 'changedPath'];
 
 async function load(svc: DocService, data: string): Promise<LoadReply> {
-  return svc.dispatch({ t: 'load', loadId: 1, source: 'paste', data, name: 'doc.json' });
+  const reply = await svc.dispatch({ t: 'load', loadId: 1, source: 'paste', data, name: 'doc.json' });
+  DOC_ROOT = reply.rootId;
+  return reply;
 }
 
 /** 读版本快照（stats 是只读命令，不推版本）。 */

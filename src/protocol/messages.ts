@@ -49,6 +49,9 @@ export type Command =
       opts?: LoadOptions;
     }
   | { t: 'cancelLoad'; loadId: number }
+  /* 关闭根（#18 / ADR-0009 §2）：显式释放一个视图根（标签 × → 页面关 doc 根）。
+   * 对未知根**幂等**回包（closed:false），不抛错；在途窗口/搜索回包由页面按 rootId 丢弃。 */
+  | { t: 'closeRoot'; rootId: RootId }
   | { t: 'window'; rootId: RootId; rowVersion: Rev; seq: number; start: number; count: number }
   | { t: 'toggle'; rootId: RootId; path: Path; open: boolean }
   /* 子树批量展开/收起（#22 / ADR-0002 修订 2026-11-09）：作用域限定在该容器子树内，原子 + 预算护栏 */
@@ -97,6 +100,15 @@ export interface LoadReply {
   rowVersion: Rev;
   totalRows: number;
   meta: DocumentMeta;
+}
+
+/**
+ * 关闭根回包（#18 / ADR-0009 §2）：`closed:false` = 该根本就不存在（幂等，不抛错）。
+ * 页面据此从工作区移除标签；已关闭根的迟到回包按 rootId 丢弃。
+ */
+export interface CloseRootReply {
+  rootId: RootId;
+  closed: boolean;
 }
 
 /** 编辑历史状态（undo/redo/reset 与「已临时修改 N 处」徽标共用，见 #16 / ADR-0006） */
@@ -180,6 +192,7 @@ export interface FidelityReply {
 export interface ReplyByKind {
   load: LoadReply;
   cancelLoad: void;
+  closeRoot: CloseRootReply;
   window: RowWindow;
   toggle: EditReply;
   toggleSubtree: EditReply;

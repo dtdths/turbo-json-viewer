@@ -1,8 +1,13 @@
 /**
  * core/root-store — 多视图根的容器（ADR-0001 §3 / ADR-0002 §6）。
  *
- * 骨架 slice 只有 doc 根；接口按多根写：表达式结果根最多保留最近 3 个（LRU），
- * 修复文档根（repaired）也走同一张表。行模型/窗口/搜索都以 rootId 为坐标。
+ * 接口按多根写：doc 根由 Worker 分配、**单调不复用**（`doc:1`、`doc:2`…，ADR-0009 §2），
+ * 因此多份文档可以同时存在；表达式结果根最多保留最近 3 个（LRU），修复文档根（repaired）
+ * 也走同一张表。行模型/窗口/搜索都以 rootId 为坐标。
+ *
+ * 释放：表达式根由 LRU 收口；doc 根不进 LRU，由页面发 `closeRoot` 走 `close()` 显式释放
+ * （未知根幂等）。doc 根与表达式根都可关——关闭 doc 根时由 `DocService` 连带丢弃
+ * `parentRootId` 指向它的表达式根。
  */
 import { CoreError } from '../protocol/errors';
 import type { DocumentMeta, ExprBudgetLevel, RootId } from '../protocol/types';
@@ -11,8 +16,6 @@ import type { RawTextIndex } from './raw-text';
 import type { RowModel } from './row-model';
 
 export type RootKind = 'doc' | 'expression' | 'repaired';
-
-export const DOC_ROOT_ID: RootId = 'doc';
 
 /** 表达式结果根保留最近 3 个（ir-spec §4.2） */
 export const MAX_EXPRESSION_ROOTS = 3;
@@ -129,6 +132,19 @@ export class RootStore {
     const at = this.lru.indexOf(rootId);
     if (at >= 0) this.lru.splice(at, 1);
     return this.roots.delete(rootId);
+  }
+
+  /**
+   * 关闭根（#18 / ADR-0009 §2）：从根表删除并清掉 LRU 邻接，返回被删的根（未知根 → undefined）。
+   *
+   * 只负责 RootStore 自身状态（`roots` + `lru`）；历史 / 节点数缓存 / 在途回包等旁路状态
+   * 由 `DocService.closeRoot` 一并释放。**幂等**：删两次第二次返回 undefined（不抛）。
+   */
+  close(rootId: RootId): Root | undefined {
+    const root = this.roots.get(rootId);
+    if (root === undefined) return undefined;
+    this.delete(rootId);
+    return root;
   }
 
   clear(): void {

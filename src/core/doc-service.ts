@@ -21,11 +21,17 @@
  * 保真（#23 / ADR-0003 修订 2026-11-09）：`fidelity` 只读扫描源文本，**不推版本**；
  * 报告按根对象身份缓存（源文本不变不重扫），文档替换/关闭即取消（CANCELLED）。
  *
+ * 多文档标签（#18 / ADR-0009 §2）：doc 根 id 由 Worker 单调分配（`doc:1`、`doc:2`…，**永不复用**），
+ * 第二次 load 得到**新根**而非原地覆盖；迟到的窗口/搜索回包靠「rootId 不复用 + 页面按 rootId 丢弃」
+ * 判定，不能依赖版本号巧合。`closeRoot` 显式释放一个根（未知根幂等），连带丢弃 `parentRootId`
+ * 指向它的 expression 根；search 抢占 seq 因此**按根独立**（每个标签的 seq 都从 1 起）。
+ *
  * 骨架 slice：getNodeJson / replaceNode / undo / redo / reset / getTrail / profile 只保证签名，
  * 一律抛 BAD_COMMAND('not implemented in skeleton slice')。
  */
 import { CoreError } from '../protocol/errors';
 import type {
+  CloseRootReply,
   Command,
   CopyReply,
   CoreEvent,
@@ -65,7 +71,7 @@ import { scanFidelity } from './fidelity';
 import { jsonSizeLowerBoundChars } from './measure';
 import { childCountOf, isContainer, jsonKind, RowModel, type ReplaceResult } from './row-model';
 import { outlinePage } from './outline';
-import { DOC_ROOT_ID, RootStore, type ExprRootMeta, type Root, type RootSource } from './root-store';
+import { RootStore, type ExprRootMeta, type Root, type RootSource } from './root-store';
 import { buildRawIndex, type RawTextIndex } from './raw-text';
 import { searchDocument } from './search';
 import { evaluateExpression, countDocumentNodes } from './expression/engine';
@@ -102,7 +108,7 @@ interface RootMutation {
 /** 把 start/count/offset 夹到 [min, max] 的整数（非有限值 → min）。 */
 export class DocService {
   private readonly roots = new RootStore();
-  /** 每根一份编辑历史（多文档标签时按 rootId 隔离；见 ADR-0009 预留） */
+  /** 每根一份编辑历史（多文档标签按 rootId 隔离；closeRoot 时随根释放，ADR-0009 §2） */
   private readonly histories = new Map<RootId, EditHistory>();
   private readonly listeners = new Set<(event: CoreEvent) => void>();
   private readonly pendingLoads = new Map<number, { cancelled: boolean }>();
@@ -115,12 +121,23 @@ export class DocService {
   /** 表达式根 id 序号（`expr:1`、`expr:2`…；LRU 由 RootStore 收口） */
   private nextExprId = 0;
   /**
+   * doc 根 id 序号（`doc:1`、`doc:2`…）：**单调不复用**，所以「旧根被关闭后再 load」不会拿到旧 id。
+   * 迟到的窗口/搜索回包因此不可能命中新根（ADR-0009 §2 / §后果）。
+   */
+  private nextDocId = 0;
+  /**
    * 文档节点数缓存（表达式步数预算用，ADR-0018 §3）：键 = doc 根 id，
    * 值 = { docRevision, count }——编辑推进 docRevision 后自动失效重算；首求值才计算（不拖慢导入）。
    */
   private readonly nodeCountCache = new Map<RootId, { docRevision: number; count: number }>();
   private latestLoadId = -1;
-  private latestSearchSeq = -1;
+  /**
+   * 搜索抢占 seq：**按根各自单调**（`Map<rootId, seq>`）。
+   * 多标签下每个标签的 `SearchState.seq` 都从 1 起——若共用全局 number，B 标签的 seq=1 会被
+   * A 标签的 seq=5 当成过期（CANCELLED），属多文档致命 bug（ADR-0009 §后果）。
+   * `cancelSearch(seq)` 的全局 Set 保留原语义（app 不调用它）。
+   */
+  private readonly latestSearchSeq = new Map<RootId, number>();
   private closed = false;
 
   dispatch<C extends Command>(cmd: C): Promise<ReplyOf<C>> {
@@ -140,8 +157,10 @@ export class DocService {
     this.listeners.clear();
     this.pendingLoads.clear();
     this.cancelledSearches.clear();
+    this.latestSearchSeq.clear();
     this.roots.clear();
     this.histories.clear();
+    this.nodeCountCache.clear();
   }
 
   /* ------------------------------ dispatch ------------------------------ */
@@ -155,6 +174,8 @@ export class DocService {
       case 'cancelLoad':
         this.cancelLoad(cmd.loadId);
         return undefined;
+      case 'closeRoot':
+        return this.closeRoot(cmd);
       case 'window':
         return this.window(cmd);
       case 'toggle':
@@ -219,7 +240,8 @@ export class DocService {
   private async load(cmd: Cmd<'load'>): Promise<LoadReply> {
     const loadId = cmd.loadId;
     this.latestLoadId = loadId;
-    // 新 load 抢占所有在途旧 load
+    // 新 load 抢占所有在途旧 load。注意 loadId 抢占是**全局**的（不是按标签）：页面必须串行化导入
+    // （一次只发一个 load），否则第二个 load 会以 CANCELLED 取消第一个——多标签导入由页面排队。
     for (const [id, ctrl] of this.pendingLoads) {
       if (id !== loadId) ctrl.cancelled = true;
     }
@@ -252,8 +274,13 @@ export class DocService {
       const totalRows = rowModel.totalRows;
 
       const now = Date.now();
+      // doc 根 id 由 Worker **单调分配、永不复用**（`doc:1`、`doc:2`…，ADR-0009 §2）：第二次 load
+      // 得到一个新根而不是原地覆盖旧根；旧根由页面在新 load 成功后发 `closeRoot` 释放。
+      // 新 id 天然干净 → 不需要清上一份文档的历史 / 节点数缓存，也**不能**丢弃别的标签的
+      // expression 根（它们仍引用各自 doc 根的活值图）。
+      const rootId: RootId = `doc:${++this.nextDocId}`;
       const root: Root = {
-        rootId: DOC_ROOT_ID,
+        rootId,
         kind: 'doc',
         value,
         rowModel,
@@ -266,12 +293,6 @@ export class DocService {
         lastUsedAt: now,
       };
       this.roots.put(root);
-      // 新文档：上一份文档的表达式结果根全部作废（它们引用旧值图；保留会指向已死数据）
-      this.dropExpressionRoots();
-      // 新文档：丢弃上一份文档的编辑历史（rootId 复用同一 DOC_ROOT_ID）——否则 ⌘Z / reset 会
-      // 把旧文档的条目应用到新文档（值图被静默改写）；历史是「打开时状态」的撤销记录，换根即失效。
-      this.histories.delete(root.rootId);
-      this.nodeCountCache.delete(root.rootId);
       return {
         rootId: root.rootId,
         docRevision: root.docRevision,
@@ -288,6 +309,42 @@ export class DocService {
     const pending = this.pendingLoads.get(loadId);
     if (pending) pending.cancelled = true;
     if (this.latestLoadId === loadId) this.latestLoadId = -1;
+  }
+
+  /* ------------------------------ closeRoot ------------------------------ */
+
+  /**
+   * 关闭根（#18 / ADR-0009 §2）：释放该根的行模型索引 / 展开集合 / 值图引用（让 GC 回收 73MB 级堆）。
+   *
+   * - **幂等**：未知根 → `{ rootId, closed: false }`，不抛错（页面重复关 / 迟到关都安全）。
+   * - **连带丢弃子根**：先删除 `parentRootId === 该根` 的 expression 根——它们的元素引用父根值图，
+   *   父根一关即失效（不删会变成悬空的活引用，既泄漏又可能被 LRU 留着）。
+   * - **真释放**：编辑历史 / 节点数缓存 / 搜索抢占 seq 一并删除（这些都是按 rootId 的旁路状态）。
+   * - doc 根与 expression 根都允许关（页面只关 doc 根；表达式根平时由 LRU 收口）。
+   * - 在途窗口/搜索回包不在这里取消：由页面按 rootId 丢弃（ADR-0009 §2，不需要新错误码）；
+   *   在途 fidelity 扫描靠根身份校验自然变成 CANCELLED。
+   */
+  private closeRoot(cmd: Cmd<'closeRoot'>): CloseRootReply {
+    const root = this.roots.get(cmd.rootId);
+    if (root === undefined) return { rootId: cmd.rootId, closed: false };
+
+    // 连带丢弃直接子根（当前只有 expression 用 parentRootId；本轮 id 快照避免边遍历边改）
+    for (const rootId of this.roots.ids()) {
+      if (rootId !== root.rootId && this.roots.get(rootId)?.parentRootId === root.rootId) {
+        this.roots.close(rootId);
+        this.dropRootState(rootId);
+      }
+    }
+    this.roots.close(root.rootId);
+    this.dropRootState(root.rootId);
+    return { rootId: root.rootId, closed: true };
+  }
+
+  /** 释放一个根的旁路状态（编辑历史 / 节点数缓存 / 搜索抢占 seq）；不负责从 RootStore 删根。 */
+  private dropRootState(rootId: RootId): void {
+    this.histories.delete(rootId);
+    this.nodeCountCache.delete(rootId);
+    this.latestSearchSeq.delete(rootId);
   }
 
   /* ------------------------------- window ------------------------------- */
@@ -398,17 +455,23 @@ export class DocService {
 
   private async search(cmd: Cmd<'search'>): Promise<SearchReply> {
     const root = this.roots.require(cmd.rootId);
-    if (cmd.seq > this.latestSearchSeq) this.latestSearchSeq = cmd.seq;
+    // seq 抢占**按根**：多标签下每个标签的 seq 都从 1 起，共用全局 number 会互相误杀（ADR-0009 §后果）
+    if (cmd.seq > (this.latestSearchSeq.get(root.rootId) ?? -1)) {
+      this.latestSearchSeq.set(root.rootId, cmd.seq);
+    }
     const seq = cmd.seq;
+    // 同一根内「后到抢占先到」+ 全局取消集合（cancelSearch 保持原语义）
+    const isSuperseded = (): boolean =>
+      this.cancelledSearches.has(seq) || (this.latestSearchSeq.get(root.rootId) ?? -1) > seq;
     try {
       // 让出一拍：同 tick 后到的搜索可以抢占
       await Promise.resolve();
-      if (this.cancelledSearches.has(seq) || this.latestSearchSeq > seq) {
+      if (isSuperseded()) {
         throw new CoreError({ code: 'CANCELLED', message: `search ${seq} superseded` });
       }
       const result = searchDocument(root.value, cmd.query, {
         ...cmd.opts,
-        shouldCancel: () => this.cancelledSearches.has(seq) || this.latestSearchSeq > seq,
+        shouldCancel: isSuperseded,
       });
       return {
         seq,
@@ -844,13 +907,6 @@ export class DocService {
       });
     }
     return { path: locateOriginalPath(root.rowModel.value, root.expr.origins, cmd.path) };
-  }
-
-  /** 换文档：释放上一份文档的全部表达式结果根（引用已死；LRU 邻接状态一并清理）。 */
-  private dropExpressionRoots(): void {
-    for (const rootId of this.roots.ids()) {
-      if (this.roots.get(rootId)?.kind === 'expression') this.roots.delete(rootId);
-    }
   }
 
   private historyOf(rootId: RootId): EditHistory {

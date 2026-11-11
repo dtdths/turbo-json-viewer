@@ -9,6 +9,13 @@ export const ROW_HEIGHT = 24;
 export const OVERSCAN = 8;
 /** 浏览器单容器 scrollHeight 上限 */
 export const MAX_SCROLL_PX = 33_554_428;
+
+/* --------------------- 多文档标签（#18 / ADR-0009） --------------------- */
+
+/** 文档标签软上限：满 8 个后「＋」禁用并提示；**不自动淘汰**（ADR-0009 §4） */
+export const MAX_DOC_TABS = 8;
+/** 标签条高度（px）：仅 ≥2 个文档时显示，单文档的树视口高度不变（ADR-0009 §1） */
+export const TAB_STRIP_HEIGHT = 32;
 /** 可见行软预算：超过则拒绝继续「全部展开」 */
 export const ROW_BUDGET = 1_000_000;
 /** 子树编辑器文本上限 */

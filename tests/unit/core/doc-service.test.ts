@@ -6,7 +6,12 @@ import { EDIT_MAX_BYTES, OUTLINE_PAGE_MAX } from '../../../src/protocol/versions
 
 const DOC = { a: 1, b: { c: 2 } };
 const JSON_TEXT = JSON.stringify(DOC);
-const DOC_ROOT = 'doc';
+
+/**
+ * 「最近一次成功 load」的 doc 根 id：Worker 单调分配 `doc:N`（ADR-0009 §2），不再写死 `'doc'`。
+ * 由下面的 `load()` 辅助更新；直接 `svc.dispatch({t:'load'})` 的用例需自己写回。
+ */
+let DOC_ROOT = 'doc';
 
 /** > ADAPTIVE_EXPAND_ROWS(500) 节点的合成文档：load 后保持默认折叠，自适应展开不介入。 */
 const COLLAPSED_DOC = JSON.stringify({ items: Array.from({ length: 600 }, (_, i) => i) });
@@ -21,7 +26,9 @@ async function errorOf(promise: Promise<unknown>): Promise<CoreError> {
 }
 
 async function load(svc: DocService, data: string | ArrayBuffer = JSON_TEXT, loadId = 1): Promise<LoadReply> {
-  return svc.dispatch({ t: 'load', loadId, source: 'paste', data, name: 'doc.json' });
+  const reply = await svc.dispatch({ t: 'load', loadId, source: 'paste', data, name: 'doc.json' });
+  DOC_ROOT = reply.rootId;
+  return reply;
 }
 
 function windowPaths(reply: { rows: { path: string }[] }): string[] {
@@ -70,21 +77,22 @@ describe('DocService — load', () => {
     expect(typeof err.column).toBe('number');
   });
 
-  it('重新 load 替换 doc 根并重置版本', async () => {
+  it('重新 load 得到新的 doc 根（id 不复用）并重置版本', async () => {
     const svc = new DocService();
-    await load(svc);
+    const first = await load(svc);
     const second = await load(svc, '{"x": 1, "y": 2}', 2);
     expect(second).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 3 });
+    expect(second.rootId).not.toBe(first.rootId); // doc:N 单调不复用（ADR-0009 §2）
     const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 1, seq: 1, start: 0, count: 10 });
     expect(windowPaths(win)).toEqual(['$', '$.x', '$.y']);
   });
 
-  it('重新 load 清空旧编辑历史：上一份文档的 undo 记录不得残留', async () => {
+  it('重新 load 后旧编辑历史不残留（新根天然没有历史）', async () => {
     const svc = new DocService();
     await loadEditDoc(svc);
     await svc.dispatch({ t: 'replaceNode', rootId: DOC_ROOT, path: '$.n', docRevision: 1, jsonText: '42' });
     expect((await svc.dispatch({ t: 'stats', rootId: DOC_ROOT })).rowVersion).toBe(2);
-    // 换文档（同一 doc rootId）：旧历史必须被丢弃，否则 ⌘Z 会把上一份文档的编辑应用到新文档
+    // 换文档 = 新根（新 rootId）：⌘Z 不得把上一份文档的编辑应用到新文档
     await load(svc, EDIT_DOC_TEXT, 2);
     expect((await errorOf(svc.dispatch({ t: 'undo', rootId: DOC_ROOT }))).code).toBe('NO_HISTORY');
     const reset = await svc.dispatch({ t: 'reset', rootId: DOC_ROOT });
@@ -152,12 +160,7 @@ describe('DocService — toggle / expandTo 的版本语义', () => {
   it('expandTo 展开祖先链并给出目标行号', async () => {
     const svc = new DocService();
     // > 500 节点：保持默认折叠，$.a.b 仍需展开
-    await svc.dispatch({
-      t: 'load',
-      loadId: 1,
-      source: 'paste',
-      data: JSON.stringify({ a: { b: { c: 1 } }, pad: new Array(600).fill(0) }),
-    });
+    await load(svc, JSON.stringify({ a: { b: { c: 1 } }, pad: new Array(600).fill(0) }));
     const reply = await svc.dispatch({ t: 'expandTo', rootId: DOC_ROOT, path: '$.a.b.c' });
     expect(reply).toMatchObject({ rootId: DOC_ROOT, rowVersion: 2, row: 3, totalRows: 5 });
     const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: 2, seq: 1, start: 0, count: 10 });
@@ -196,6 +199,24 @@ describe('DocService — search / stats', () => {
     expect((await errorOf(first)).code).toBe('CANCELLED');
     expect((await second).total).toBe(1);
   });
+
+  it('搜索抢占 seq 按根独立：A 根的 seq 不误杀 B 根的 seq=1（多标签回归）', async () => {
+    const svc = new DocService();
+    const a = await load(svc, '{"name":"alice"}');
+    const b = await load(svc, '{"name":"alice"}', 2);
+
+    // A 标签跑到 seq=5（每个标签的 SearchState.seq 都从 1 起）
+    expect((await svc.dispatch({ t: 'search', rootId: a.rootId, seq: 5, query: 'alice' })).total).toBe(1);
+    // B 标签 seq=1：若 seq 仍是全局 number 会被 A 的 5 当成过期 → CANCELLED；按根独立必须正常回包
+    const first = await svc.dispatch({ t: 'search', rootId: b.rootId, seq: 1, query: 'alice' });
+    expect(first).toMatchObject({ rootId: b.rootId, seq: 1, total: 1 });
+
+    // 同一根内仍是「后到抢占先到」
+    const superseded = svc.dispatch({ t: 'search', rootId: b.rootId, seq: 2, query: 'alice' });
+    const latest = svc.dispatch({ t: 'search', rootId: b.rootId, seq: 3, query: 'alice' });
+    expect((await errorOf(superseded)).code).toBe('CANCELLED');
+    expect((await latest).seq).toBe(3);
+  });
 });
 
 describe('DocService — load 抢占 / 取消', () => {
@@ -206,6 +227,7 @@ describe('DocService — load 抢占 / 取消', () => {
 
     expect((await errorOf(first)).code).toBe('CANCELLED');
     const reply = await second;
+    DOC_ROOT = reply.rootId; // 直接 dispatch 的 load 不会更新 DOC_ROOT，此处写回
     expect(reply.totalRows).toBe(2);
 
     const win = await svc.dispatch({ t: 'window', rootId: DOC_ROOT, rowVersion: reply.rowVersion, seq: 1, start: 0, count: 10 });
@@ -1526,24 +1548,28 @@ describe('DocService — fidelity（保真扫描 / #23）', () => {
     const old = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
     expect(old.report.counts.total).toBe(2);
 
-    // 单文档（v1）rootId 恒为 'doc'：替换后同一 id 指向新根，旧报告不能被复用
+    // 多文档（#18）：重新 load 得到**新 rootId**（doc:N 不复用），旧根的报告不可能被新根复用
     const reloaded = await load(svc, '{"a":1}', 2);
+    expect(reloaded.rootId).not.toBe(old.rootId);
     const fresh = await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
     expect(fresh.docRevision).toBe(reloaded.docRevision);
     expect(fresh.report).not.toBe(old.report);
     expect(fresh.report.counts).toMatchObject({ number: 0, keyOrder: 0, total: 0 });
   });
 
-  it('扫描中途换文档 → CANCELLED（分段让出 + 根身份校验；app 静默丢弃）', async () => {
+  it('扫描中途关闭根 → CANCELLED（分段让出 + 根身份校验；app 静默丢弃）', async () => {
     const svc = new DocService();
-    // > 2 × FIDELITY_YIELD_BYTES(256KB)：确保换文档发生在第二次让出之后
+    // > 2 × FIDELITY_YIELD_BYTES(256KB)：确保关闭发生在第二次让出之后
     await load(svc, JSON.stringify({ pad: 'x'.repeat(1024 * 1024) }));
+    const oldRoot = DOC_ROOT;
 
-    const pending = svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT });
-    const reload = load(svc, '{"a":1}', 2);
+    const pending = svc.dispatch({ t: 'fidelity', rootId: oldRoot });
+    const closing = svc.dispatch({ t: 'closeRoot', rootId: oldRoot });
 
     expect((await errorOf(pending)).code).toBe('CANCELLED');
-    await reload; // 新文档正常可用
+    expect(await closing).toEqual({ rootId: oldRoot, closed: true });
+    // 关根后重开新文档正常可用
+    await load(svc, '{"a":1}', 2);
     expect((await svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT })).report.status).toBe('none');
   });
 
@@ -1552,5 +1578,135 @@ describe('DocService — fidelity（保真扫描 / #23）', () => {
     await load(svc, FIDELITY_TEXT);
     svc.close();
     expect((await errorOf(svc.dispatch({ t: 'fidelity', rootId: DOC_ROOT }))).code).toBe('CLOSED');
+  });
+});
+
+/* ============ 多文档标签：多 doc 根 / closeRoot（#18 / ADR-0009） ============ */
+
+/** 不是合法 doc:N / expr:N 的未知根：closeRoot 幂等路径用。 */
+const UNKNOWN_ROOT = 'doc:999';
+
+describe('DocService — 多 doc 根 / closeRoot（#18 / ADR-0009）', () => {
+  it('两次 load 得到两个并存的 doc 根：id 形如 doc:N 且不复用，窗口/版本各自独立', async () => {
+    const svc = new DocService();
+    const first = await load(svc, '{"a":{"x":1}}');
+    const firstRoot = first.rootId;
+    const second = await load(svc, COLLAPSED_DOC, 2);
+    const secondRoot = second.rootId;
+
+    expect(firstRoot).toMatch(/^doc:\d+$/);
+    expect(secondRoot).toMatch(/^doc:\d+$/);
+    expect(secondRoot).not.toBe(firstRoot);
+    // 新根版本从 1 起（不是「覆盖旧根」的原地替换语义）
+    expect(second).toMatchObject({ docRevision: 1, rowVersion: 1 });
+
+    // 两个根并存：各自窗口可用，行互不影响
+    const firstWin = await svc.dispatch({ t: 'window', rootId: firstRoot, rowVersion: 1, seq: 1, start: 0, count: 10 });
+    expect(windowPaths(firstWin)).toEqual(['$', '$.a', '$.a.x']);
+    const secondWin = await svc.dispatch({ t: 'window', rootId: secondRoot, rowVersion: 1, seq: 1, start: 0, count: 10 });
+    expect(windowPaths(secondWin)).toEqual(['$', '$.items']);
+
+    // 各自版本独立：展开第二个根的子树不动第一个根的 rowVersion
+    expect((await svc.dispatch({ t: 'toggle', rootId: secondRoot, path: '$.items', open: true })).rowVersion).toBe(2);
+    expect((await svc.dispatch({ t: 'stats', rootId: firstRoot })).rowVersion).toBe(1);
+    // 旧根的窗口回包不会因为新根存在而 stale（rootId 不复用承担 stale 判定，ADR-0009 §后果）
+    const stillValid = await svc.dispatch({ t: 'window', rootId: firstRoot, rowVersion: 1, seq: 2, start: 0, count: 10 });
+    expect(stillValid.totalRows).toBe(3);
+  });
+
+  it('closeRoot 未知根：幂等回 closed:false，不抛错', async () => {
+    const svc = new DocService();
+    expect(await svc.dispatch({ t: 'closeRoot', rootId: UNKNOWN_ROOT })).toEqual({
+      rootId: UNKNOWN_ROOT,
+      closed: false,
+    });
+    expect(await svc.dispatch({ t: 'closeRoot', rootId: 'nope' })).toEqual({ rootId: 'nope', closed: false });
+  });
+
+  it('closeRoot 关闭 doc 根：该根一律 NO_ROOT，另一个根照常可用；重复关闭幂等', async () => {
+    const svc = new DocService();
+    const a = await load(svc, '{"a":1}');
+    const b = await load(svc, '{"b":2}', 2);
+
+    expect(await svc.dispatch({ t: 'closeRoot', rootId: a.rootId })).toEqual({ rootId: a.rootId, closed: true });
+    expect(
+      (await errorOf(svc.dispatch({ t: 'window', rootId: a.rootId, rowVersion: 1, seq: 1, start: 0, count: 5 }))).code,
+    ).toBe('NO_ROOT');
+    expect((await errorOf(svc.dispatch({ t: 'stats', rootId: a.rootId }))).code).toBe('NO_ROOT');
+
+    // 另一个根不受影响
+    expect(await svc.dispatch({ t: 'stats', rootId: b.rootId })).toMatchObject({ rootId: b.rootId, totalRows: 2 });
+
+    // 幂等：再关一次 → closed:false（不抛）
+    expect(await svc.dispatch({ t: 'closeRoot', rootId: a.rootId })).toEqual({ rootId: a.rootId, closed: false });
+  });
+
+  it('closeRoot 连带丢弃 parentRootId 指向它的 expression 根', async () => {
+    const svc = new DocService();
+    const doc = await load(svc, '{"items":[1,2,3]}');
+    const evaled = await svc.dispatch({
+      t: 'eval',
+      rootId: doc.rootId,
+      seq: 1,
+      text: '$.items',
+      strict: false,
+      budget: 'standard',
+    });
+    expect(evaled.ok).toBe(true);
+    if (evaled.ok !== true) return;
+    const exprRoot = evaled.rootId;
+    expect(exprRoot).toMatch(/^expr:\d+$/);
+    // 关闭前 expression 根可读
+    expect((await svc.dispatch({ t: 'stats', rootId: exprRoot })).rootId).toBe(exprRoot);
+
+    expect((await svc.dispatch({ t: 'closeRoot', rootId: doc.rootId })).closed).toBe(true);
+    // 子根随父根一起丢：不给悬空表达式根继续读已关闭文档的值图
+    expect((await errorOf(svc.dispatch({ t: 'stats', rootId: exprRoot }))).code).toBe('NO_ROOT');
+    expect(
+      (await errorOf(svc.dispatch({ t: 'window', rootId: exprRoot, rowVersion: 1, seq: 1, start: 0, count: 5 }))).code,
+    ).toBe('NO_ROOT');
+  });
+
+  it('closeRoot 释放该根的编辑历史与节点数缓存：旧根 NO_ROOT，新 load 的根 undo → NO_HISTORY', async () => {
+    const svc = new DocService();
+    const loaded = await load(svc, EDIT_DOC_TEXT);
+    await svc.dispatch({ t: 'replaceNode', rootId: loaded.rootId, path: '$.n', docRevision: 1, jsonText: '42' });
+    // 触发节点数缓存（首次 eval 才惰性计算）
+    await svc.dispatch({
+      t: 'eval',
+      rootId: loaded.rootId,
+      seq: 1,
+      text: '$.n',
+      strict: false,
+      budget: 'standard',
+    });
+    expect((await svc.dispatch({ t: 'closeRoot', rootId: loaded.rootId })).closed).toBe(true);
+
+    // 历史随根释放：旧 id 上的 undo 只能 NO_ROOT
+    expect((await errorOf(svc.dispatch({ t: 'undo', rootId: loaded.rootId }))).code).toBe('NO_ROOT');
+
+    const next = await load(svc, EDIT_DOC_TEXT, 2);
+    expect(next.rootId).not.toBe(loaded.rootId);
+    expect((await errorOf(svc.dispatch({ t: 'undo', rootId: next.rootId }))).code).toBe('NO_HISTORY');
+    const reset = await svc.dispatch({ t: 'reset', rootId: next.rootId });
+    expect(reset.history).toEqual({ applied: 0, canUndo: false, canRedo: false });
+  });
+
+  it('多根编辑历史隔离：A 根 replace / undo 不影响 B 根', async () => {
+    const svc = new DocService();
+    const a = await load(svc, EDIT_DOC_TEXT);
+    const b = await load(svc, EDIT_DOC_TEXT, 2);
+
+    await svc.dispatch({ t: 'replaceNode', rootId: a.rootId, path: '$.n', docRevision: 1, jsonText: '42' });
+    expect((await svc.dispatch({ t: 'stats', rootId: a.rootId })).docRevision).toBe(2);
+
+    // B 根没被编辑：版本不动、undo 仍是 NO_HISTORY
+    expect((await svc.dispatch({ t: 'stats', rootId: b.rootId })).docRevision).toBe(1);
+    expect((await errorOf(svc.dispatch({ t: 'undo', rootId: b.rootId }))).code).toBe('NO_HISTORY');
+
+    // A 根自己的历史照常可撤销
+    const undo = await svc.dispatch({ t: 'undo', rootId: a.rootId });
+    expect(undo).toMatchObject({ rootId: a.rootId, docRevision: 3 });
+    expect((await svc.dispatch({ t: 'getNodeJson', rootId: a.rootId, path: '$.n' })).text).toBe('1');
   });
 });

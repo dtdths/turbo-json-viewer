@@ -7,6 +7,7 @@
  * 两者共享本文件的 commandCore() 映射，保证调用面一致。
  */
 import type {
+  CloseRootReply,
   Command,
   CoreEvent,
   CopyReply,
@@ -114,6 +115,12 @@ export interface ExprLocateRequest {
 export interface CoreApi {
   load(req: LoadRequest): Promise<LoadReply>;
   cancelLoad(loadId: number): void;
+  /**
+   * 关闭根（#18 / ADR-0009 §2）：释放该根的行模型索引 / 展开集合 / 值图引用（让 GC 回收）。
+   * 未知根幂等回 `{ closed: false }`（不抛）；关闭后该根上的命令一律 `NO_ROOT`。
+   * 页面只关 doc 根；expression 根由 LRU 收口（关闭 doc 根会连带丢弃它的 expression 子根）。
+   */
+  closeRoot(rootId: RootId): Promise<CloseRootReply>;
 
   window(req: WindowRequest): Promise<RowWindow>;
   toggle(req: ToggleRequest): Promise<EditReply>;
@@ -184,6 +191,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
   return {
     load: (req) => send({ t: 'load', ...req }),
     cancelLoad: (loadId) => fire({ t: 'cancelLoad', loadId }),
+    closeRoot: (rootId) => send({ t: 'closeRoot', rootId }),
     window: (req) => send({ t: 'window', ...req }),
     toggle: (req) => send({ t: 'toggle', ...req }),
     toggleSubtree: (req) => send({ t: 'toggleSubtree', ...req }),
