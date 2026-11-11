@@ -100,14 +100,23 @@ try {
       const out = {};
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      // 单文档下标签条隐藏 → 走可见入口：导入 → 替换层 → 「在新标签中打开」切换
+      // 单文档下标签条隐藏 → 走可见入口：导入 → 替换层 → 「在新标签中打开」切换。
+      // 先打开左面板（搜索），验证模态入口层真的把左面板一起遮住（用户 2026-11-11 反馈的 bug）
+      document.querySelector('[data-panel-btn="search"]').click();
+      await sleep(200);
       document.getElementById('importBtn').click();
-      await sleep(180);
+      await sleep(200);
+      const side = document.getElementById('leftPanel').getBoundingClientRect();
+      const probe = document.elementFromPoint(side.x + 120, side.y + 200);
       out.replaceLayer = {
         open: !document.getElementById('empty').classList.contains('is-hidden'),
         mode: document.getElementById('empty').dataset.mode ?? null,
         warnHidden: document.getElementById('emptyWarn').hidden,
         toggleText: document.getElementById('emptyModeToggle').textContent,
+        layerZ: getComputedStyle(document.getElementById('empty')).zIndex,
+        panelDisplay: getComputedStyle(document.getElementById('leftPanel')).display,
+        // 左面板中心点命中的元素不属于左面板 = 被遮罩盖住（且点不到）
+        panelCovered: !(probe && probe.closest('#leftPanel')),
       };
       document.getElementById('emptyModeToggle').click();
       await sleep(120);
@@ -408,6 +417,66 @@ try {
   );
   await page.screenshot(path.join(SHOTS, 'workspace-light.png'));
 
+  /* ---- phase 8：标签拖拽排序 + 拖放暂存文件后「在新标签中打开」应立即导入 ---- */
+  await runPhase(
+    'drag',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const strip = document.getElementById('tabStrip');
+      const tabEls = () => [...strip.querySelectorAll('.tabstrip__tab')];
+      out.before = h.workspaceState().tabs.map((tab) => ({ id: tab.id, name: tab.name }));
+      out.activeBefore = h.workspaceState().activeId;
+
+      // 拖第 1 个标签到第 2 个之后（合成 HTML5 drag 事件；内部拖拽用 dragId，不依赖文件）
+      const src = tabEls()[0];
+      const dst = tabEls()[1];
+      const dt = new DataTransfer();
+      src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+      const dstRect = dst.getBoundingClientRect();
+      const dropX = dstRect.right - 2;
+      const dropY = dstRect.top + 8;
+      dst.dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt, clientX: dropX, clientY: dropY }));
+      out.indicator = {
+        hidden: document.querySelector('.tabstrip__drop')?.hidden ?? null,
+        index: document.getElementById('tabStripItems')?.dataset.dropIndex ?? null,
+      };
+      dst.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt, clientX: dropX, clientY: dropY }));
+      src.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+      await sleep(300);
+      out.after = h.workspaceState().tabs.map((tab) => ({ id: tab.id, name: tab.name }));
+      out.activeAfter = h.workspaceState().activeId;
+      out.activeLabelAfter = document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null;
+
+      // 拖文件到文档视图 → 弹层暂存；点「在新标签中打开」应立即以新标签导入并展示（不再要求二次确认）
+      const payload = JSON.stringify({ name: 'dropped.json', n: 1 });
+      const file = new File([payload], 'dropped.json', { type: 'application/json' });
+      const dt2 = new DataTransfer();
+      dt2.items.add(file);
+      const treeWrap = document.querySelector('.tree-wrap');
+      const box = treeWrap.getBoundingClientRect();
+      treeWrap.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt2, clientX: box.left + 40, clientY: box.top + 40 }));
+      await sleep(300);
+      out.pendingLayer = {
+        open: !document.getElementById('empty').classList.contains('is-hidden'),
+        mode: document.getElementById('empty').dataset.mode ?? null,
+        pendingVisible: !document.getElementById('emptyPending').hidden,
+        toggleText: document.getElementById('emptyModeToggle').textContent,
+      };
+      document.getElementById('emptyModeToggle').click();
+      await sleep(1200);
+      out.dropped = {
+        size: h.workspaceState().size,
+        layerOpen: !document.getElementById('empty').classList.contains('is-hidden'),
+        activeLabel: document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null,
+        chip: document.getElementById('fileName').textContent,
+        names: h.workspaceState().tabs.map((tab) => tab.name),
+      };
+      return out;
+    })()`,
+  );
+
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
     .filter((entry) => entry.type === 'error')
@@ -453,6 +522,11 @@ const checks = {
     report.replaceLayer?.mode === 'replace' &&
     report.replaceLayer?.warnHidden === false &&
     report.replaceLayer?.toggleText === '在新标签中打开',
+  // 模态入口层必须把左面板一起遮住（z-index 32 > 左面板 31），且左面板确实开着
+  'tab-add:layer-covers-left-panel':
+    report.replaceLayer?.panelDisplay === 'flex' &&
+    report.replaceLayer?.layerZ === '32' &&
+    report.replaceLayer?.panelCovered === true,
   'tab-add:new-tab-layer':
     report.layer?.open === true && report.layer?.mode === 'new-tab' && report.layerWarnHidden === true,
   'tab-add:layer-copy':
@@ -573,6 +647,35 @@ const checks = {
     report.light?.size === 2 &&
     report.light?.hidden === false &&
     report.light?.strip?.heightPx === 32,
+
+  // 标签拖拽排序（#18 修订 2026-11-11）
+  'drag:indicator':
+    report.indicator?.hidden === false && report.indicator?.index === '2',
+  'drag:reorder': (() => {
+    const before = report.before ?? [];
+    if (before.length < 2) return false;
+    // 把第 1 个标签拖到最后 → 期望顺序 = 其余标签依次 + 原第 1 个
+    const expected = [...before.slice(1), before[0]].map((tab) => tab.id);
+    const actual = (report.after ?? []).map((tab) => tab.id);
+    const activeBefore = before.find((tab) => tab.id === report.activeBefore);
+    return (
+      JSON.stringify(actual) === JSON.stringify(expected) &&
+      report.activeAfter === report.activeBefore &&
+      report.activeLabelAfter === activeBefore?.name
+    );
+  })(),
+  // 拖文件到文档视图 → 暂存层 → 点「在新标签中打开」应立即新开标签并展示
+  'drag:pending-layer':
+    report.pendingLayer?.open === true &&
+    report.pendingLayer?.mode === 'replace' &&
+    report.pendingLayer?.pendingVisible === true &&
+    report.pendingLayer?.toggleText === '在新标签中打开',
+  'drag:pending-new-tab-immediate':
+    report.dropped?.layerOpen === false &&
+    report.dropped?.size === (report.before?.length ?? 0) + 1 &&
+    report.dropped?.activeLabel === 'dropped.json' &&
+    report.dropped?.chip === 'dropped.json' &&
+    (report.dropped?.names ?? []).includes('dropped.json'),
 
   'console:no-exception-no-error':
     report.consoleErrors?.length === 0 && report.consoleErrorLogs?.length === 0,

@@ -39,6 +39,8 @@ export interface TabStripOptions {
   onSelect(id: string): void;
   onClose(id: string): void;
   onAdd(): void;
+  /** 拖拽排序（#18 修订 2026-11-11）：把 id 移到最终下标 toIndex；语义由 app/viewmodel 定 */
+  onMove(id: string, toIndex: number): void;
 }
 
 /** `＋` 图标（16 网格；尺寸由 CSS 的 `.iconbtn svg` 决定）。 */
@@ -81,6 +83,10 @@ export class TabStrip {
   /** 最近一次 render 的视图（焦点归还与默认焦点目标用）。 */
   private view: TabStripView | null = null;
   private mounted = false;
+  /** 拖拽中的标签 id（null = 当前不是内部标签拖拽；文件拖放走 window 的落点分流） */
+  private dragId: string | null = null;
+  /** 插入指示线（绝对定位在 host 内，不参与布局） */
+  private dropEl: HTMLDivElement | null = null;
 
   constructor(host: HTMLElement, opts: TabStripOptions) {
     const items = host.querySelector<HTMLElement>('#tabStripItems');
@@ -102,6 +108,18 @@ export class TabStrip {
     // 事件绑定在容器上（render 后不重复绑；标签 ≤8，委托不会有性能问题）
     this.host.addEventListener('click', this.onClick);
     this.host.addEventListener('keydown', this.onKeyDown);
+    // 拖拽排序：委托到 host（render 后不重复绑）；指示线是 host 的绝对定位子元素
+    this.host.addEventListener('dragstart', this.onDragStart);
+    this.host.addEventListener('dragover', this.onDragOver);
+    this.host.addEventListener('dragleave', this.onDragLeave);
+    this.host.addEventListener('drop', this.onDrop);
+    this.host.addEventListener('dragend', this.onDragEnd);
+    const drop = document.createElement('div');
+    drop.className = 'tabstrip__drop';
+    drop.hidden = true;
+    drop.setAttribute('aria-hidden', 'true');
+    this.host.appendChild(drop);
+    this.dropEl = drop;
     this.mounted = true;
   }
 
@@ -130,6 +148,14 @@ export class TabStrip {
     if (!this.mounted) return;
     this.host.removeEventListener('click', this.onClick);
     this.host.removeEventListener('keydown', this.onKeyDown);
+    this.host.removeEventListener('dragstart', this.onDragStart);
+    this.host.removeEventListener('dragover', this.onDragOver);
+    this.host.removeEventListener('dragleave', this.onDragLeave);
+    this.host.removeEventListener('drop', this.onDrop);
+    this.host.removeEventListener('dragend', this.onDragEnd);
+    this.clearDragState();
+    this.dropEl?.remove();
+    this.dropEl = null;
     this.items.replaceChildren();
     this.host.hidden = true;
     this.host.style.height = '';
@@ -146,6 +172,8 @@ export class TabStrip {
     el.dataset.tabId = tab.id;
     el.setAttribute('aria-selected', tab.active ? 'true' : 'false');
     el.tabIndex = isTabStop ? 0 : -1;
+    // 拖拽排序（#18 修订 2026-11-11）：标签本身可拖
+    el.draggable = true;
     // 文件名超长时 CSS ellipsis 省略，悬停 title 看全名
     el.title = tab.name;
 
@@ -162,6 +190,8 @@ export class TabStrip {
     close.dataset.tabClose = tab.id;
     // 不带 ✕ 文案，读屏靠 aria-label；× 图标 visual 隐藏
     close.setAttribute('aria-label', `关闭 ${tab.name}`);
+    // 从关闭按钮上拖不起标签（避免误拖）
+    close.draggable = false;
     close.appendChild(createCloseIcon());
 
     el.append(title, close);
@@ -187,6 +217,93 @@ export class TabStrip {
   private focusTab(id: string | null): void {
     const el = this.findTab(id);
     el?.focus({ preventScroll: true });
+  }
+
+  /* ---------------------------- 拖拽排序 ---------------------------- */
+
+  private readonly onDragStart = (event: DragEvent): void => {
+    const target = event.target;
+    const tabEl = target instanceof Element ? target.closest<HTMLElement>(TAB_SELECTOR) : null;
+    if (!tabEl || !this.items.contains(tabEl)) return;
+    const id = tabEl.dataset.tabId;
+    if (!id) return;
+    this.dragId = id;
+    tabEl.classList.add('is-dragging');
+    // 标准 DnD 需要 setData 才能稳定启动（Chrome 里不带 data 的 dragstart 可能被取消）
+    event.dataTransfer?.setData('text/plain', id);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  };
+
+  private readonly onDragOver = (event: DragEvent): void => {
+    if (this.dragId === null) return;
+    const index = this.dropIndexAt(event.clientX);
+    if (index === null) return;
+    // 只有 preventDefault 才允许 drop
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    this.showDropIndicator(index);
+  };
+
+  private readonly onDragLeave = (event: DragEvent): void => {
+    if (this.dragId === null) return;
+    const related = event.relatedTarget;
+    if (related instanceof Node && this.host.contains(related)) return;
+    this.hideDropIndicator();
+  };
+
+  private readonly onDrop = (event: DragEvent): void => {
+    // 只有内部标签拖拽才处理；文件拖放（无 dragId）继续冒泡给 window 的落点分流
+    if (this.dragId === null) return;
+    const index = this.dropIndexAt(event.clientX);
+    const id = this.dragId;
+    event.preventDefault();
+    this.clearDragState();
+    if (index === null) return;
+    this.opts.onMove(id, index);
+  };
+
+  private readonly onDragEnd = (): void => {
+    this.clearDragState();
+  };
+
+  /** 指针横坐标 → 插入下标（按每个标签中点判定）；不在标签条范围内 → null。 */
+  private dropIndexAt(clientX: number): number | null {
+    const box = this.items.getBoundingClientRect();
+    if (clientX < box.left - 2 || clientX > box.right + 2) return null;
+    const tabs = this.tabEls();
+    for (let i = 0; i < tabs.length; i += 1) {
+      const rect = tabs[i]!.getBoundingClientRect();
+      if (clientX < rect.left + rect.width / 2) return i;
+    }
+    return tabs.length;
+  }
+
+  private showDropIndicator(index: number): void {
+    const drop = this.dropEl;
+    if (!drop) return;
+    const tabs = this.tabEls();
+    const hostRect = this.host.getBoundingClientRect();
+    const last = tabs[tabs.length - 1];
+    const x =
+      index < tabs.length
+        ? tabs[index]!.getBoundingClientRect().left
+        : (last?.getBoundingClientRect().right ?? hostRect.left);
+    drop.style.left = `${Math.round(x - hostRect.left)}px`;
+    drop.hidden = false;
+    this.items.dataset.dropIndex = String(index);
+  }
+
+  private hideDropIndicator(): void {
+    if (this.dropEl) this.dropEl.hidden = true;
+    delete this.items.dataset.dropIndex;
+  }
+
+  private clearDragState(): void {
+    this.dragId = null;
+    this.hideDropIndicator();
+    for (const el of this.host.querySelectorAll<HTMLElement>('.is-dragging')) {
+      el.classList.remove('is-dragging');
+    }
   }
 
   private readonly onClick = (event: MouseEvent): void => {
@@ -223,6 +340,16 @@ export class TabStrip {
     const tabs = this.tabEls();
     const index = tabs.indexOf(tabEl);
     if (index < 0) return;
+
+    // Alt+←/→：把当前标签左/右移一位（拖拽排序的键盘等价入口，a11y）
+    if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      const id = tabEl.dataset.tabId;
+      if (!id) return;
+      event.preventDefault();
+      const target = Math.max(0, Math.min(tabs.length - 1, index + (event.key === 'ArrowRight' ? 1 : -1)));
+      if (target !== index) this.opts.onMove(id, target);
+      return;
+    }
 
     // 键盘关闭：Delete / Backspace 关当前（被聚焦的）标签（关闭按钮不进 Tab 序列）
     if (event.key === 'Delete' || event.key === 'Backspace') {

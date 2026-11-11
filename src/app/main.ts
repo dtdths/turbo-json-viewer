@@ -258,6 +258,10 @@ const tabStrip = new TabStrip(el('tabStrip'), {
     void closeTab(id);
   },
   onAdd: () => openNewTabLayer(),
+  // 拖拽排序（#18 修订 2026-11-11）：顺序是工作区级状态，活动标签不变
+  onMove: (id, toIndex) => {
+    workspace.move(id, toIndex);
+  },
 });
 tabStrip.mount();
 workspace.subscribe((view) => tabStrip.render(view));
@@ -1223,6 +1227,13 @@ function toggleImportLayerMode(): void {
   }
   applyImportLayerMode(next);
   setImportError(null);
+  // 拖放已经暂存了文件时，切到「新标签」= 用户已经选定落点：立即以新标签导入。
+  // 否则用户会遇到「点了在新标签中打开没反应，还要再点一次『替换』」的死循环感（用户反馈 2026-11-11）。
+  const staged = pendingFile;
+  if (next === 'new-tab' && staged) {
+    clearPendingFile();
+    void importFile(staged, 'new-tab');
+  }
 }
 
 /** 取消入口层：丢弃在途导入回包，回到文档视图。 */

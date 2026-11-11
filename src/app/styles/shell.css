@@ -382,6 +382,9 @@ body[data-panel="settings"] .empty__inner {
   inset: var(--toolbar-h) 0 var(--status-h) var(--activity-w);
   background: var(--backdrop);
   backdrop-filter: blur(2px);
+  /* 模态入口层必须盖住左面板：左面板是 z-index:31（初始空态里要能点设置/切模式，bug #2 的修复），
+     这里抬到 32 才能真正遮罩 + 阻断背后的点击；初始空态仍是 30，不受影响 */
+  z-index: 32;
 }
 .empty:is([data-mode="replace"], [data-mode="new-tab"]) .empty__inner {
   position: relative;

@@ -152,6 +152,25 @@ export class WorkspaceState {
   }
 
   /**
+   * 拖拽排序：把标签 `id` 移到 `toIndex`（最终位置，越界夹取到 [0, size-1]）。
+   * 顺序真的变了才通知并返回 true；未知 id / 位置未变 → false 且不通知。
+   * 活动标签不变（移动只改顺序，不切会话）。
+   */
+  move(id: string, toIndex: number): boolean {
+    const from = this.tabs.findIndex((tab) => tab.id === id);
+    if (from < 0) return false;
+    const target = Number.isFinite(toIndex)
+      ? Math.max(0, Math.min(this.tabs.length - 1, Math.floor(toIndex)))
+      : from;
+    if (target === from) return false;
+    const [tab] = this.tabs.splice(from, 1);
+    if (tab === undefined) return false;
+    this.tabs.splice(target, 0, tab);
+    this.emit();
+    return true;
+  }
+
+  /**
    * 用新文档替换该标签的根（替换导入）：保留 id / runtime / 在列表中的位置，更新文档字段，
    * selected 清 null（旧根的节点 path 对新根无意义）。未激活标签上调用不影响 activeId。
    */

@@ -360,6 +360,81 @@ describe('WorkspaceState — remove（关闭标签）', () => {
   });
 });
 
+describe('WorkspaceState — move（拖拽排序，#18 修订 2026-11-11）', () => {
+  /** 建 3 个标签：tab:1 / tab:2 / tab:3，返回 id 速查。 */
+  function threeTabs(): { ws: WorkspaceState; ids: string[]; harness: Harness } {
+    const harness = makeWorkspace();
+    const ws = harness.ws;
+    const ids = ['a.json', 'b.json', 'c.json'].map(
+      (name, index) => ws.add(tabInput({ rootId: `doc:${index + 1}`, name }))?.id ?? '',
+    );
+    return { ws, ids, harness };
+  }
+
+  it('把第一个标签移到最后 → 顺序变化、活动标签不变、id 单调不复用', () => {
+    const { ws, ids } = threeTabs();
+    expect(ws.activeId).toBe('tab:3');
+
+    expect(ws.move(ids[0]!, 2)).toBe(true);
+    expect(ws.ids).toEqual(['tab:2', 'tab:3', 'tab:1']);
+    expect(ws.activeId).toBe('tab:3');
+    expect(ws.view().tabs.map((tab) => tab.name)).toEqual(['b.json', 'c.json', 'a.json']);
+    // 活动标记跟着移动后的位置走
+    expect(ws.view().tabs.map((tab) => tab.active)).toEqual([false, true, false]);
+  });
+
+  it('把最后一个标签移到最前 → 顺序变化，选中/版本字段不丢', () => {
+    const { ws, ids } = threeTabs();
+    ws.update(ids[2]!, { selected: '$.c', rowVersion: 7 });
+
+    expect(ws.move(ids[2]!, 0)).toBe(true);
+    expect(ws.ids).toEqual(['tab:3', 'tab:1', 'tab:2']);
+    expect(ws.get('tab:3')?.selected).toBe('$.c');
+    expect(ws.get('tab:3')?.rowVersion).toBe(7);
+  });
+
+  it('to 越界夹取：负数 → 0；超过 size-1 → size-1', () => {
+    const { ws, ids } = threeTabs();
+    expect(ws.move(ids[2]!, -5)).toBe(true);
+    expect(ws.ids).toEqual(['tab:3', 'tab:1', 'tab:2']);
+
+    expect(ws.move(ids[2]!, 99)).toBe(true);
+    expect(ws.ids).toEqual(['tab:1', 'tab:2', 'tab:3']);
+  });
+
+  it('位置没变 / 未知 id / 非有限值 → false 且不通知', () => {
+    const { ws, ids } = threeTabs();
+    const views: WorkspaceView[] = [];
+    ws.subscribe((view) => views.push(view));
+
+    expect(ws.move(ids[1]!, 1)).toBe(false);
+    expect(ws.move('tab:999', 0)).toBe(false);
+    expect(ws.move(ids[0]!, Number.NaN)).toBe(false);
+    expect(views).toHaveLength(0);
+    expect(ws.ids).toEqual(['tab:1', 'tab:2', 'tab:3']);
+  });
+
+  it('顺序变化才通知，且通知的视图顺序已是新顺序', () => {
+    const { ws, ids } = threeTabs();
+    const views: WorkspaceView[] = [];
+    ws.subscribe((view) => views.push(view));
+
+    expect(ws.move(ids[0]!, 2)).toBe(true);
+    expect(views).toHaveLength(1);
+    expect(views[0]!.tabs.map((tab) => tab.id)).toEqual(['tab:2', 'tab:3', 'tab:1']);
+    expect(views[0]!.activeId).toBe('tab:3');
+  });
+
+  it('只有 1 个标签时移动是 no-op', () => {
+    const harness = makeWorkspace();
+    const tab = harness.ws.add(tabInput());
+    expect(tab).not.toBeNull();
+    expect(harness.ws.move(tab!.id, 0)).toBe(false);
+    expect(harness.ws.move(tab!.id, 5)).toBe(false);
+    expect(harness.ws.size).toBe(1);
+  });
+});
+
 describe('WorkspaceState — update（回包落地同步字段）', () => {
   it('允许的键逐个落地：docRevision / rowVersion / totalRows / meta / name / bytes / selected', () => {
     const { ws } = makeWorkspace();

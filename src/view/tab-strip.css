@@ -12,6 +12,7 @@
 
 .tabstrip {
   flex: 0 0 auto;
+  position: relative; /* 拖拽插入指示线（.tabstrip__drop）的定位基准 */
   display: flex;
   align-items: stretch;
   padding: 0 var(--sp-2) 0 var(--sp-1);
@@ -94,6 +95,23 @@
 }
 .tabstrip__close:hover { background: var(--bg-hover); color: var(--text); }
 .tabstrip__close svg { width: 16px; height: 16px; display: block; }
+
+/* ---------------------------- 拖拽排序（#18 修订 2026-11-11） ---------------------------- */
+
+.tabstrip__tab[draggable="true"] { cursor: grab; }
+.tabstrip__tab.is-dragging { opacity: 0.45; }
+/* 插入指示线：2px 靛蓝竖线，绝对定位不参与布局；hidden 时显式不显示 */
+.tabstrip__drop {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.tabstrip__drop[hidden] { display: none; }
 
 /* ---------------------------- ＋ 新标签 ---------------------------- */
 
