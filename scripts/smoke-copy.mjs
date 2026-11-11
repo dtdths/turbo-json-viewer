@@ -459,6 +459,37 @@ try {
     })()`,
   );
 
+  // ---- phase 7：无损数字（ADR-0020）：BigInt 的树显示 / 复制四格式 ----
+  await runPhase(
+    'lossless',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (typeof h?.loadText !== 'function' || typeof h?.copyResolve !== 'function') return out;
+      // 裸字面量（不是字符串、不是 JSON.stringify 后的 double）
+      await h.loadText('{"big":297532588187238660,"nested":{"uid":1234567890123456789}}', 'lossless.json');
+      await sleep(600);
+      out.state = h.state();
+      const row = document.querySelector('.row[data-path="$.big"]');
+      out.rowText = row ? row.textContent : null;
+      out.rowKind = row ? row.dataset.kind : null;
+      const resolve = async (p, format) => {
+        try {
+          return await h.copyResolve(p, format);
+        } catch (e) {
+          return { error: { code: String(e?.message ?? e) } };
+        }
+      };
+      out.subtreeBig = await resolve('$.big', 'subtree');
+      out.valueBig = await resolve('$.big', 'value');
+      out.rootSubtree = await resolve('$', 'subtree');
+      out.keyBig = await resolve('$.big', 'key');
+      return out;
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'copy-lossless.png'));
+
   // ---- 汇总：page 异常 / console error ----
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
@@ -677,6 +708,21 @@ const checks = {
     bigClickRes?.hidden === true &&
     (/5\s*MB/i.test(bigToast) || /导出/.test(bigToast)) &&
     report.bigToastTone === 'error',
+
+  // ---- 无损数字（ADR-0020）：BigInt 树显示 / 复制都是精确十进制、且不显示成 null ----
+  'lossless:tree-row-exact':
+    report.rowText?.includes('297532588187238660') === true &&
+    !report.rowText?.includes('null') &&
+    report.rowKind === 'number',
+  'lossless:copy-value-exact':
+    report.valueBig?.text === '297532588187238660' && report.valueBig?.format === 'value',
+  'lossless:copy-subtree-exact':
+    report.subtreeBig?.text === '297532588187238660' && report.subtreeBig?.format === 'subtree',
+  'lossless:copy-root-subtree-exact':
+    report.rootSubtree?.text ===
+      '{\n  "big": 297532588187238660,\n  "nested": {\n    "uid": 1234567890123456789\n  }\n}',
+  'lossless:copy-key':
+    report.keyBig?.text === 'big' && report.keyBig?.format === 'key',
 
   'readonly:copy-does-not-bump-versions':
     versionsEqual(report.copiesStart, report.copiesEnd) &&

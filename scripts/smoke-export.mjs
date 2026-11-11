@@ -226,6 +226,23 @@ try {
     })()`,
   );
 
+  // ---- phase 7：无损数字（ADR-0020）：导出文本保留大整数精确十进制（无引号）----
+  await runPhase(
+    'lossless',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      await h.loadText('{"big":297532588187238660,"nested":{"uid":1234567890123456789}}', 'lossless-export.json');
+      await sleep(500);
+      h.exportChoose('clipboard');
+      await sleep(600);
+      out.lossless = { export: h.exportState(), toast: h.toastText() };
+      try { out.lossless.clipboard = await h.clipboardText(); } catch { out.lossless.clipboard = null; }
+      return out;
+    })()`,
+  );
+
   // ---- phase 4.5：设置面板改「导出方式」→ 分体按钮主操作/勾选同步（反向同步）----
   await runPhase(
     'panel-sync',
@@ -286,6 +303,15 @@ const clipboardOk = (state, expected) => state?.clipboard == null || state?.clip
 
 const checks = {
   // 初始形态
+  // ---- 无损数字（ADR-0020）：导出是裸数字字面量（不是字符串、不是 double 圆整值）----
+  'lossless:export-bigint-exact':
+    (report.lossless?.clipboard == null ||
+      (report.lossless.clipboard.includes('"big": 297532588187238660') &&
+        report.lossless.clipboard.includes('"uid": 1234567890123456789') &&
+        !report.lossless.clipboard.includes('"297532588187238660"') &&
+        !report.lossless.clipboard.includes('297532588187238656'))) &&
+    report.lossless?.export?.lastAction?.copied === true,
+
   'boot:split-button':
     report.boot?.export?.mode === 'file' &&
     report.boot?.export?.menuOpen === false &&

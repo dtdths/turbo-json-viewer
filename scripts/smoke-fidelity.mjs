@@ -4,8 +4,9 @@
  *   node build.mjs && node scripts/smoke-fidelity.mjs
  *
  * 测：
- *   1) 精确数量：构造失真 fixture → 条可见、文案「4 处失真（大整数精度 3 处 · 整数键顺序 1 处）」、
- *      高精度小数 / 19 位但可精确表示 / 字符串里的数字 **都不算**。
+ *   1) 精确数量：构造失真 fixture（ADR-0020 口径：整数已无损、不再报 precision；只报上溢/下溢/键序）→
+ *      条可见、文案「5 处失真（数字上溢 2 处 · 数字下溢 2 处 · 整数键顺序 1 处）」；
+ *      大整数 / 1e400 / 高精度小数 / 字符串里的数字 **都不算**。
  *   2) 跳原文：点「查看原文」→ 切原文视图 + flash 行 = rawLocate(hits[0].offset).line + 该行含失真字面量。
  *   3) 无失真文档 → 条不出现、jump 隐藏。
  *   4) 关闭只关条：hidden=true 但报告仍在（status 仍 'found'）。
@@ -23,13 +24,20 @@ import { startStaticServer } from '../prototype/p1/lib/http.mjs';
 const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 await mkdir(SHOTS, { recursive: true });
 
-/** 失真 fixture：pretty 打印，行号固定，便于断言 flash 行。 */
+/**
+ * 失真 fixture：pretty 打印，行号固定，便于断言 flash 行。
+ *
+ * 口径（ADR-0020 §7）：整数由无损 parser 精确表示 → `precision` 退场；
+ * 只报「整数超展开位数上限（1e10001/1e10002 → overflow）」与「小数下溢（1e-400/1e-401 → underflow）」+ 键序。
+ */
 const DIRTY = `{
-  "big": 1234567890123456789,
+  "big": 297532588187238660,
   "exp": 1234567890123456789e0,
   "exact": 1000000000000000000,
-  "over": 1e400,
-  "under": 1e-400,
+  "over1": 1e10001,
+  "under1": 1e-400,
+  "over2": 1e10002,
+  "under2": 1e-401,
   "str": "1234567890123456789",
   "dec": 0.1234567890123456789,
   "dupKeys": {
@@ -48,10 +56,12 @@ const DIRTY = `{
     "c": "d"
   }
 }`;
-/** `big` 字面量所在行（1-based） */
+/** 第一条数字命中（`over1`）所在行（1-based） */
+const FIRST_HIT_LINE = 5;
+/** 大整数所在行：无损数字 + 双向定位锚点用例 */
 const BIG_LINE = 2;
-/** 截断 + 大整数失真：验证与修复条并存 */
-const TRUNCATED_DIRTY = '{"big":1234567890123456789,"s":"cut tex';
+/** 截断 + 失真：验证与修复条并存 */
+const TRUNCATED_DIRTY = '{"big":297532588187238660,"over":1e10001,"s":"cut tex';
 
 const server = await startStaticServer(REPO_ROOT);
 const chrome = await launchChrome({ windowSize: '1440,900' });
@@ -132,15 +142,15 @@ try {
     d.status === 'found' &&
       d.counts?.total === 5 &&
       d.counts?.number === 4 &&
-      d.counts?.precision === 2 &&
-      d.counts?.overflow === 1 &&
-      d.counts?.underflow === 1 &&
-      d.counts?.keyOrder === 1,
+      d.counts?.overflow === 2 &&
+      d.counts?.underflow === 2 &&
+      d.counts?.keyOrder === 1 &&
+      d.counts?.precision === undefined,
     {
       status: d.status,
       counts: d.counts,
-      expect: { total: 5, number: 4, precision: 2, overflow: 1, underflow: 1, keyOrder: 1 },
-      note: 'big+exp=precision / over=overflow / under=underflow；exact、dec、str 内数字、重复整数键 dupKeys 都不报',
+      expect: { total: 5, number: 4, overflow: 2, underflow: 2, keyOrder: 1 },
+      note: 'over1/over2=overflow / under1/under2=underflow；大整数/1e400/dec/str 内数字/重复整数键都不报',
     },
   );
   check(
@@ -148,10 +158,10 @@ try {
     d.barVisible === true &&
       d.jumpVisible === true &&
       String(d.barText || '').includes('5 处失真') &&
-      String(d.barText || '').includes('大整数精度 2 处') &&
-      String(d.barText || '').includes('数字上溢 1 处') &&
-      String(d.barText || '').includes('数字下溢 1 处') &&
-      String(d.barText || '').includes('整数键顺序 1 处'),
+      String(d.barText || '').includes('数字上溢 2 处') &&
+      String(d.barText || '').includes('数字下溢 2 处') &&
+      String(d.barText || '').includes('整数键顺序 1 处') &&
+      !String(d.barText || '').includes('大整数精度'),
     { barVisible: d.barVisible, jumpVisible: d.jumpVisible, barText: d.barText },
   );
   check(
@@ -159,14 +169,14 @@ try {
     Array.isArray(d.hits) &&
       d.hits.length === 5 &&
       d.hits[0]?.kind === 'number' &&
-      d.hits[0]?.reason === 'precision' &&
-      d.hits[1]?.reason === 'precision' &&
+      d.hits[0]?.reason === 'overflow' &&
+      d.hits[1]?.reason === 'underflow' &&
       d.hits[2]?.reason === 'overflow' &&
       d.hits[3]?.reason === 'underflow' &&
       d.hits[4]?.kind === 'key-order' &&
       d.hits.every((h) => typeof h.offset === 'number' && h.snippet.length <= 48) &&
-      d.hits[0].literal === '1234567890123456789' &&
-      d.hits[0].parsed === '1234567890123456768',
+      d.hits[0].literal === '1e10001' &&
+      d.hits[0].parsed === 'Infinity',
     { hits: (d.hits || []).map((h) => ({ kind: h.kind, reason: h.reason, offset: h.offset, literal: h.literal, parsed: h.parsed })) },
   );
 
@@ -196,8 +206,8 @@ try {
     locateLine: phase2.locate?.line,
     hitOffset: phase2.hit?.offset,
   });
-  check('jump:flash-line-is-first-hit-line', flashLine === BIG_LINE, { flashLine, expectLine: BIG_LINE });
-  check('jump:line-contains-literal', flashText.includes('1234567890123456789'), { flashText: String(flashText).slice(0, 80) });
+  check('jump:flash-line-is-first-hit-line', flashLine === FIRST_HIT_LINE, { flashLine, expectLine: FIRST_HIT_LINE });
+  check('jump:line-contains-literal', flashText.includes('1e10001'), { flashText: String(flashText).slice(0, 80) });
   check('jump:bar-kept', phase2.after?.barVisible === true, { barVisible: phase2.after?.barVisible });
 
   // ---- phase 2b：痛点闭环（#30 / ADR-0019）：查看原文 → 原文→树选中 → 树→原文锚点回跳 ----
@@ -296,7 +306,8 @@ try {
       nav.initial?.prevDisabled === false &&
       nav.initial?.nextDisabled === false &&
       /第 1\/5 处/.test(nav.initial?.barText ?? '') &&
-      /→/.test(nav.initial?.barText ?? ''),
+      /→/.test(nav.initial?.barText ?? '') &&
+      /1e10001/.test(nav.initial?.barText ?? ''),
     { navVisible: nav.navVisible, initial: nav.initial },
   );
   check(
@@ -330,8 +341,8 @@ try {
     { sticky: nav.sticky },
   );
   check(
-    'exact:status-explains-precision',
-    /→/.test(phase2?.status ?? '') && (phase2?.status ?? '').includes('1234567890123456768'),
+    'exact:status-explains-overflow',
+    /→/.test(phase2?.status ?? '') && (phase2?.status ?? '').includes('Infinity') && (phase2?.status ?? '').includes('1e10001'),
     { status: phase2?.status },
   );
 

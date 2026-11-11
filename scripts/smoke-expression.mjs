@@ -562,6 +562,70 @@ try {
   const longTasks = phase0.longTasks.concat(phase2.longTasks, []);
   check('longtask:all-below-50ms', longTasks.every((t) => t < 50), { longTasks });
 
+  // ---- phase 11：无损数字（ADR-0020 §6）：BigInt 表达式语义 ----
+  const phase11 = await page.eval(`(async () => {
+    const out = {};
+    const { sleep } = window.__ex;
+    await window.__tjv.loadText('{"id":297532588187238660,"rows":[{"v":1},{"v":2},{"v":3000000000000000000}]}', 'lossless-expr.json');
+    await sleep(400);
+    const rowText = () => document.querySelector('.row[data-path="$"]')?.textContent ?? '';
+    out.read = await window.__tjv.expressionRunText('$.id');
+    await sleep(150);
+    out.readRow = rowText();
+    out.add = await window.__tjv.expressionRunText('$.id + 1n');
+    await sleep(150);
+    out.addRow = rowText();
+    out.cmp = await window.__tjv.expressionRunText('$.id > 100');
+    await sleep(150);
+    out.cmpRow = rowText();
+    // 混算 → 确定错误（不清掉上一个结果）
+    await window.__tjv.expressionRunText('$.id + 1');
+    await sleep(200);
+    out.mixed = {
+      hidden: document.getElementById('exprError').hidden,
+      text: document.getElementById('exprError').textContent,
+    };
+    out.filter = await window.__tjv.expressionRunText('$.rows.filter(x => x.v > 1)');
+    await sleep(150);
+    out.filterRow = rowText();
+    out.str = await window.__tjv.expressionRunText('String($.id)');
+    await sleep(150);
+    out.strRow = rowText();
+    return out;
+  })()`);
+  report.lossless = phase11;
+
+  check(
+    'lossless:read-and-arith',
+    phase11.read?.view?.kind === 'number' &&
+      String(phase11.readRow).includes('297532588187238660') &&
+      phase11.add?.view?.kind === 'number' &&
+      String(phase11.addRow).includes('297532588187238661'),
+    { read: phase11.read?.view?.kind, readRow: phase11.readRow, addRow: phase11.addRow },
+  );
+  check(
+    'lossless:mixed-number-error',
+    phase11.mixed?.hidden === false && String(phase11.mixed?.text).includes('超大整数不能与普通数字混算'),
+    phase11.mixed,
+  );
+  check(
+    'lossless:relational-mixed-allowed',
+    phase11.cmp?.view?.kind === 'boolean' && String(phase11.cmpRow).includes('true'),
+    { kind: phase11.cmp?.view?.kind, row: phase11.cmpRow },
+  );
+  check(
+    'lossless:array-filter',
+    phase11.filter?.view?.count === 2 &&
+      phase11.filter?.view?.kind === 'array' &&
+      String(phase11.filterRow).includes('[…]'),
+    { count: phase11.filter?.view?.count, row: phase11.filterRow },
+  );
+  check(
+    'lossless:string-conversion',
+    phase11.str?.view?.kind === 'string' && String(phase11.strRow).includes('297532588187238660'),
+    { kind: phase11.str?.view?.kind, row: phase11.strRow },
+  );
+
   // ---- 汇总：page 异常 / console error ----
   const exceptions = page.exceptions.slice(errorsBefore);
   const consoleErrors = page.logs

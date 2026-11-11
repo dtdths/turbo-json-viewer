@@ -144,6 +144,27 @@ try {
   Object.assign(report, phase5);
   await page.screenshot(path.join(SHOTS, 'edit-reset.png'));
 
+  // ---- phase 6：无损数字（ADR-0020）：编辑器回填精确大整数 / no-op 不推版本 / 编辑后仍精确 ----
+  const phase6 = await page.eval(`(async () => {
+    const out = {};
+    const { sleep } = window.__smoke;
+    await window.__tjv.loadText('{"big":297532588187238660,"nested":{"uid":1234567890123456789}}', 'lossless-edit.json');
+    await sleep(400);
+    out.losslessLoad = window.__tjv.state();
+    out.losslessOpen = await window.__tjv.editOpen('$.nested');
+    out.losslessText = window.__tjv.editText();
+    // no-op：把回填文本原样 Apply → 不推进版本、不记历史
+    out.losslessNoop = await window.__tjv.editApplyText(out.losslessText);
+    // 改值（仍是超大整数）→ 推进版本；导出仍是精确十进制（Apply 成功后弹层已关，需重新打开）
+    await window.__tjv.editOpen('$.nested');
+    out.losslessApplied = await window.__tjv.editApplyText('{"uid": 1234567890123456788}');
+    out.losslessExport = await window.__tjv.exportDocText();
+    await sleep(150);
+    return out;
+  })()`);
+  Object.assign(report, phase6);
+  await page.screenshot(path.join(SHOTS, 'edit-lossless.png'));
+
   report.longTasks = await page.eval('window.__smoke?.longTasks ?? []');
   report.maxLongTask = report.longTasks.length ? Math.max(...report.longTasks) : 0;
   report.consoleErrors = page.exceptions.slice(errorsBefore);
@@ -203,6 +224,20 @@ const checks = {
     report.exportAfterApply?.name === 'edit-edited.json' &&
     report.exportAfterReset?.name === 'edit.json' &&
     report.exportAfterReset?.text === canon,
+  // ---- 无损数字（ADR-0020）：大整数在编辑弹层是精确十进制（不是字符串、不是圆整值）----
+  'lossless:editor-shows-exact':
+    report.losslessOpen?.open === true &&
+    (report.losslessText ?? '').includes('1234567890123456789') &&
+    !(report.losslessText ?? '').includes('"1234567890123456789"') &&
+    !(report.losslessText ?? '').includes('1234567890123456768'),
+  'lossless:noop-does-not-bump':
+    report.losslessNoop?.docRevision === report.losslessLoad?.docRevision &&
+    report.losslessNoop?.editCount === 0,
+  'lossless:edit-keeps-exact':
+    report.losslessApplied?.docRevision === (report.losslessLoad?.docRevision ?? 0) + 1 &&
+    (report.losslessExport?.text ?? '').includes('"uid": 1234567890123456788') &&
+    !(report.losslessExport?.text ?? '').includes('1234567890123456768'),
+
   'perf:no-long-task-no-console-error': report.maxLongTask < 100 && report.consoleErrors?.length === 0,
 };
 
