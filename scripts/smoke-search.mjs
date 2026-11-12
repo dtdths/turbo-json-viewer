@@ -787,6 +787,26 @@ async function pageTargetsPhase(cfg) {
   out.boolUpper = await search('TRUE');
   // 路径后缀命中（ADR-0023 §2）+ 四档过滤 + 跳转
   out.pathExact = await search('$.data');
+  // 双击路径命中 = 复制（默认 searchCopyFormat='path'；与既有 dblcopy 同法）
+  const firstRow = document.querySelector('.result[data-path]');
+  if (firstRow) {
+    const beforeToast = window.__tjv.toastText();
+    firstRow.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    firstRow.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }));
+    firstRow.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+    for (let i = 0; i < 30; i += 1) {
+      await window.__smoke.settle(20);
+      if (window.__tjv.toastText() !== beforeToast) break;
+    }
+    await window.__smoke.settle(120);
+    let clip = null;
+    try {
+      clip = await window.__tjv.clipboardText();
+    } catch {
+      clip = null;
+    }
+    out.dblCopy = { path: String(firstRow.dataset.path), clip, toast: window.__tjv.toastText() };
+  }
   out.filterPath = await clickFilter('path');
   out.filterKey = await clickFilter('key');
   out.filterAll = await clickFilter('all');
@@ -1027,6 +1047,13 @@ try {
       total: totalOf(t.pathDot),
       emptyVisible: t.pathDot?.dom?.emptyVisible,
     });
+    check(
+      'targets:dblcopy-path-hit',
+      t.dblCopy?.path === '$.data' &&
+        (t.dblCopy?.clip == null || t.dblCopy?.clip === '$.data') &&
+        /已复制：路径/.test(t.dblCopy?.toast || ''),
+      { path: t.dblCopy?.path, clip: t.dblCopy?.clip, toast: t.dblCopy?.toast },
+    );
     check(
       'targets:filter-path',
       t.filterPath?.diag?.size === 1 && t.filterPath?.diag?.filter === 'path' && t.filterPath?.dom?.activeFilter === 'path',

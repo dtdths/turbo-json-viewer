@@ -73,7 +73,7 @@
 ## 验收（2026-11-12 实现实测，#39）
 
 - **单测**：1023 → **1070**（38 文件全绿）。`search.test` 34 → 52（+18：bool/null 值命中 / 路径模式触发 / 后缀例表 / 优先级 / keysOnly / 截断）；`search-parity` 矩阵 52 → 76（+24，独立参考实现 `search-reference.ts` 同步，保持「展平后顺序匹配」的独立结构）；契约 +2（1 条路径查询用例 × InProcess/Worker 双适配器）；`search-state` 48 → 51（+3：path 档计数/过滤/current）；`dev-hook` 计数不变（fake counts 补 path）。
-- **冒烟**：15 套串行全绿。`smoke-search` **101 → 117/117**（新增 `targets` phase：bool/null 命中、路径后缀例表含 `data.` 0 条、四档过滤 + counts、路径命中跳转、0 长任务；setup 断言四档 DOM 契约；数字 phase 的「布尔/null 不可搜」翻转）；`smoke-extension-search` **56 → 63/63**（真实扩展 UI：`$` 根命中、`[0]` 后缀命中、路径档过滤、`true` 值命中）；其余 13 套计数不变。
+- **冒烟**：15 套串行全绿。`smoke-search` **101 → 118/118**（新增 `targets` phase：bool/null 命中、路径后缀例表含 `data.` 0 条、四档过滤 + counts、路径命中跳转、0 长任务；setup 断言四档 DOM 契约；数字 phase 的「布尔/null 不可搜」翻转）；`smoke-extension-search` **56 → 63/63**（真实扩展 UI：`$` 根命中、`[0]` 后缀命中、路径档过滤、`true` 值命中）；其余 13 套计数不变。
 - **体积**：`page.js` 48.9 → **49.0KB gz**（+0.1：四档按钮 + field 文案映射 + counts；预算 50 未动）、`worker.js` **63.5 不变**（+0.0：字段联合是类型、搜索仅多一次分支）、`page.css` 8.2 / 懒加载 145.6 不变。
 - **截图**：`.spike/smoke/search-targets.png`（深）/ `search-targets-light.png`（亮）——四档计数 + 路径命中 `$.data`（field=路径、面包屑高亮）。
 - **文档**：`CONTEXT.md` 搜索条目（布尔/null + 路径后缀）、`direction.md` 搜索面板（四档）、ADR-0014 指针/修订注记、架构 README §11 **6.26** 行 + 体积归因。
