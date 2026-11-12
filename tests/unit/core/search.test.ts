@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CoreError } from '../../../src/protocol/errors';
 import { SEARCH_PATTERN_MAX } from '../../../src/protocol/versions';
 import { regexSafetyError, searchDocument } from '../../../src/core/search';
+import { PATH_DOC } from './search-fixtures';
 
 const DOC = {
   name: 'Alice',
@@ -366,12 +367,6 @@ describe('searchDocument — 布尔/null 值命中（ADR-0023 §1）', () => {
 });
 
 /* ---------------------------------------------------------------- 路径命中（ADR-0023 §2–§3） */
-
-/** 路径例表专用文档：键/值都不含 `.` / `[` / `$`，排除键值命中干扰。 */
-const PATH_DOC = {
-  data: { hotel_list: ['a', 'b', 'c', 'd'], other_list: ['w', 'x', 'y', 'z'] },
-  meta: { data: 1 },
-};
 
 describe('searchDocument — 路径模式触发（ADR-0023 §2）', () => {
   it('查询含 `.` / `[` / `$` 才启用路径命中', () => {

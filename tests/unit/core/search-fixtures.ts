@@ -25,6 +25,12 @@ export const MIXED_DOC: unknown = {
   hotel: 'hotel',
 };
 
+/** 路径例表专用文档（ADR-0023）：键/值都不含 `.` / `[` / `$`，排除键值命中干扰。 */
+export const PATH_DOC: unknown = {
+  data: { hotel_list: ['a', 'b', 'c', 'd'], other_list: ['w', 'x', 'y', 'z'] },
+  meta: { data: 1 },
+};
+
 /** Unicode：中文 / emoji / 大小写折叠边界（İ / ẞ / ß）。 */
 export const UNICODE_DOC: unknown = {
   'İstanbul': 'İstanbul city',

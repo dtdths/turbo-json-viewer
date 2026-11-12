@@ -22,6 +22,7 @@ import {
   FIELD_DOC,
   MIXED_DOC,
   OPTIONS_DOC,
+  PATH_DOC,
   ROOT_ARRAY,
   ROOT_EMPTY_OBJECT,
   ROOT_SCALAR,
@@ -41,12 +42,6 @@ interface ParityCase {
   query: string;
   opts?: ReferenceOpts;
 }
-
-/** 路径后缀对拍 fixture：键/值都不含 `.` / `[` / `$`，排除键值命中干扰。 */
-const PATH_DOC = {
-  data: { hotel_list: ['a', 'b', 'c', 'd'], other_list: ['w', 'x', 'y', 'z'] },
-  meta: { data: 1 },
-};
 
 /** 对拍矩阵：一行 = 一条语义。命名带语义族前缀，失败时 `it` 名 + message 双定位。 */
 const PARITY_CASES: ParityCase[] = [

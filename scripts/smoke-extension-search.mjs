@@ -471,10 +471,6 @@ async function extClearPhase() {
 async function extTargetsPhase() {
   const out = {};
   const smoke = window.__extSmoke;
-  const num = (text) => {
-    const m = /([\d,]+)/.exec(String(text == null ? '' : text));
-    return m ? Number(m[1].replace(/,/g, '')) : null;
-  };
   const input = document.getElementById('searchInput');
   if (!input) return { error: '#searchInput missing' };
   smoke.reset();
