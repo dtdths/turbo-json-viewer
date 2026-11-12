@@ -4,12 +4,13 @@
  *   node build.mjs && node scripts/smoke-settings.mjs
  *
  * 测：
- *   1) 默认值：8 项设置全默认、主题生效、行高 24 / 缩进 16 / 无类型列；
- *   2) 面板：活动栏齿轮 → 左面板切「设置」，标题/aria/8 行顺序/焦点；
+ *   1) 默认值：12 项设置全默认、主题生效、行高 24 / 缩进 16 / 无类型列；
+ *   2) 面板：活动栏齿轮 → 左面板切「设置」，标题/aria/12 行顺序/焦点；
  *   3) 逐项即时生效（真实点击面板控件）：主题、行高（spacer 高度同步）、缩进、类型列、
- *      默认复制格式（行尾浮条复制路径）、复制缩进（子树 JSON 4 空格）、
+ *      默认复制格式（行尾浮条复制路径）、JSON 缩进（子树 JSON 4 空格；ADR-0022）、
+ *      导出转义非 ASCII（勾选项；ADR-0022）、
  *      关闭修复（截断直接 PARSE 且文档不变）、关闭自适应展开（小文档保持折叠）；
- *   4) 持久化：刷新页面后 8 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复；
+ *   4) 持久化：刷新页面后 12 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复；
  *   5) 0 page 异常 / 0 console error。
  * 截图落 .spike/smoke/settings-{panel,applied,reloaded}.png；走 HTTP + `window.__tjv`（localStorage 兜底持久化）。
  */
@@ -30,12 +31,13 @@ const DEFAULT_KEYS = [
   'indent',
   'typeColumn',
   'defaultCopyFormat',
-  'copyIndent',
+  'jsonIndent',
   'searchCopyFormat',
   'exportMode',
   'repairTruncated',
   'adaptiveExpand',
   'advBudget',
+  'escapeUnicode',
 ];
 
 const DEFAULTS = {
@@ -44,12 +46,13 @@ const DEFAULTS = {
   indent: 16,
   typeColumn: false,
   defaultCopyFormat: 'subtree',
-  copyIndent: 2,
+  jsonIndent: 2,
   searchCopyFormat: 'path',
   exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
   advBudget: 'standard',
+  escapeUnicode: false,
 };
 
 const server = await startStaticServer(REPO_ROOT);
@@ -205,12 +208,12 @@ try {
       await sleep(80);
       out.copyPath = { value: h.settingsState().defaultCopyFormat, ...(await rowCopy('$.arr[1].k')) };
 
-      // 默认复制格式 = 子树 JSON + 缩进 4 → 剪贴板应为 4 空格 JSON
+      // JSON 缩进（ADR-0022：由「复制缩进」升级；导出 + 整份复制 + 子树复制共用）
       clickSeg('defaultCopyFormat', 'subtree');
-      clickSeg('copyIndent', '4');
+      clickSeg('jsonIndent', '4');
       await sleep(80);
       const subtree = await rowCopy('$.a');
-      out.copyIndent = { value: h.settingsState().copyIndent, ...subtree };
+      out.jsonIndent = { value: h.settingsState().jsonIndent, ...subtree };
 
       // 搜索结果双击复制格式（第 10 项，ADR-0011 修订）：默认路径 → 切子树 JSON → 切回路径
       out.searchCopyFormat = { initial: h.settingsState().searchCopyFormat };
@@ -240,6 +243,15 @@ try {
       clickSeg('advBudget', 'standard');
       await sleep(80);
       out.advBudget.back = h.settingsState().advBudget;
+
+      // 导出转义非 ASCII（第 12 项，ADR-0022）：默认关 → 勾选开 → 勾选状态/aria 同步
+      out.escapeUnicode = { initial: h.settingsState().escapeUnicode };
+      clickCheck('escapeUnicode');
+      await sleep(80);
+      out.escapeUnicode.afterClick = h.settingsState().escapeUnicode;
+      out.escapeUnicode.checked = document.getElementById('setting-escapeUnicode')?.checked ?? null;
+      out.escapeUnicode.label =
+        document.querySelector('#settingsPanel [data-setting="escapeUnicode"] label')?.textContent ?? '';
 
       // 关闭自动修复 → 截断文本直接报错，且当前文档不变
       clickCheck('repairTruncated');
@@ -380,9 +392,15 @@ const checks = {
     /已复制/.test(report.copyPath?.toast ?? '') &&
     (report.copyPath?.toast ?? '').includes('路径') &&
     (report.copyPath?.clipboard == null || report.copyPath?.clipboard === '$.arr[1].k'),
-  'set:copy-indent-4':
-    report.copyIndent?.value === 4 &&
-    (report.copyIndent?.clipboard == null || report.copyIndent?.clipboard === SUBTREE_A_4),
+  'set:json-indent-4':
+    report.jsonIndent?.value === 4 &&
+    (report.jsonIndent?.clipboard == null || report.jsonIndent?.clipboard === SUBTREE_A_4),
+  // 第 12 项设置（ADR-0022）：导出转义非 ASCII，默认关、勾选即开
+  'set:escape-unicode':
+    report.escapeUnicode?.initial === false &&
+    report.escapeUnicode?.afterClick === true &&
+    report.escapeUnicode?.checked === true &&
+    (report.escapeUnicode?.label ?? '').includes('导出转义非 ASCII'),
   // 第 10 项设置（ADR-0011 修订）：默认路径、可切换到子树 JSON、可切回
   'set:searchCopyFormat':
     report.searchCopyFormat?.initial === 'path' &&
@@ -420,12 +438,13 @@ const checks = {
         indent: 20,
         typeColumn: true,
         defaultCopyFormat: 'subtree',
-        copyIndent: 4,
+        jsonIndent: 4,
         searchCopyFormat: 'path',
         exportMode: 'clipboard',
         repairTruncated: false,
         adaptiveExpand: false,
         advBudget: 'standard',
+        escapeUnicode: true,
       }),
   'persist:theme':
     report.reloaded?.theme === 'light' && report.reloaded?.settings?.theme === 'light',

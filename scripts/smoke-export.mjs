@@ -18,6 +18,8 @@
  *      定位不越出视口且锚在箭头下方、选中项后焦点回箭头（动作完成、按钮恢复可聚焦后）
  *  10) 另存为改名联动（ADR-0021）：桩返回 `报告-2024.json` → 文件 chip 与标签名变 `报告-2024`；
  *      取消另存为 → 不导出、不改名（lastAction/chip 不变）
+ *  11) JSON 格式化配置（#34 / ADR-0022）：默认档 ≡ JSON.stringify(v,null,2)；紧凑档 ≡
+ *      JSON.stringify(v)；转义档非 ASCII → \\uXXXX 且仍是合法 JSON；整份复制与文件导出跟随设置。
  * 截图落 .spike/smoke/export-{menu,toast}.png。
  */
 import path from 'node:path';
@@ -312,6 +314,53 @@ try {
     })()`,
   );
 
+  // ---- phase 7b：JSON 格式化配置（#34 / ADR-0022）：缩进 0/2/4 + 非 ASCII 转义 ----
+  await runPhase(
+    'format-config',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const text = '{"cn":"中文","emoji":"😀","ascii":"a/b","big":297532588187238660,"nested":{"键":[1,"x"]}}';
+      await h.loadText(text, 'format.json');
+      await sleep(450);
+      // 默认档（缩进 2、不转义）：与 JSON.stringify(v, null, 2) 逐字节一致
+      out.formatDefault = { settings: h.settingsState(), exportText: await h.exportDocText() };
+      // 紧凑档（缩进 0）：与 JSON.stringify(v) 逐字节一致
+      h.setSetting('jsonIndent', 0);
+      await sleep(80);
+      out.formatCompact = { settings: h.settingsState(), exportText: await h.exportDocText() };
+      // 4 空格 + 转义非 ASCII：值不变、输出仍是合法 JSON
+      h.setSetting('jsonIndent', 4);
+      h.setSetting('escapeUnicode', true);
+      await sleep(80);
+      out.formatEscape4 = { settings: h.settingsState(), exportText: await h.exportDocText() };
+      // 整份复制跟随设置：转义 + 紧凑
+      h.setSetting('jsonIndent', 0);
+      await sleep(80);
+      h.exportChoose('clipboard');
+      await sleep(600);
+      try {
+        out.formatCopy = { clipboard: await h.clipboardText(), export: h.exportState() };
+      } catch {
+        out.formatCopy = { clipboard: null, export: h.exportState() };
+      }
+      // 文件导出跟随设置：转义 + 紧凑 → 另存为桩写入文本
+      window.__saveCalls.length = 0;
+      window.__saveMode = 'accept';
+      window.__saveCustomName = '';
+      h.exportChoose('file');
+      await sleep(450);
+      out.formatFile = { saveCalls: window.__saveCalls.slice(), export: h.exportState() };
+      // 还原默认（收尾，避免影响后续相位的持久化断言）
+      h.setSetting('jsonIndent', 2);
+      h.setSetting('escapeUnicode', false);
+      await sleep(80);
+      out.formatRestored = h.settingsState();
+      return out;
+    })()`,
+  );
+
   // ---- phase 4.5：设置面板改「导出方式」→ 分体按钮主操作/勾选同步（反向同步）----
   await runPhase(
     'panel-sync',
@@ -369,6 +418,18 @@ console.log(JSON.stringify(report, null, 2));
 
 const item = (state, mode) => (state?.menuItems ?? []).find((entry) => entry.mode === mode);
 const clipboardOk = (state, expected) => state?.clipboard == null || state?.clipboard === expected;
+
+// ---- JSON 格式化配置的期望文本（#34 / ADR-0022；与 phase format-config 的 fixture 同源）----
+const FORMAT_TEXT =
+  '{"cn":"中文","emoji":"😀","ascii":"a/b","big":297532588187238660,"nested":{"键":[1,"x"]}}';
+const FORMAT_VALUE = JSON.parse(FORMAT_TEXT);
+/** 序列化文本里所有非 ASCII 字符 → \uXXXX（代理对各一个转义；与序列化器 escape 档同口径） */
+const escapeNonAscii = (text) =>
+  text.replace(/[\u0080-\uffff]/g, (ch) => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0'));
+const FORMAT_DEFAULT = JSON.stringify(FORMAT_VALUE, null, 2);
+const FORMAT_COMPACT = JSON.stringify(FORMAT_VALUE);
+const FORMAT_ESCAPE_4 = escapeNonAscii(JSON.stringify(FORMAT_VALUE, null, 4));
+const FORMAT_ESCAPE_COMPACT = escapeNonAscii(FORMAT_COMPACT);
 
 const checks = {
   // 初始形态
@@ -490,6 +551,38 @@ const checks = {
     report.reloaded?.mainLabel === '复制 JSON 到剪贴板' &&
     item(report.reloaded, 'clipboard')?.checked === true &&
     report.persistPrepared?.export?.mode === 'clipboard',
+
+  // ---- JSON 格式化配置（#34 / ADR-0022）----
+  'format:default-bytes':
+    report.formatDefault?.settings?.jsonIndent === 2 &&
+    report.formatDefault?.settings?.escapeUnicode === false &&
+    report.formatDefault?.exportText?.text === FORMAT_DEFAULT,
+  'format:compact':
+    report.formatCompact?.settings?.jsonIndent === 0 && report.formatCompact?.exportText?.text === FORMAT_COMPACT,
+  'format:escape-4':
+    report.formatEscape4?.settings?.jsonIndent === 4 &&
+    report.formatEscape4?.settings?.escapeUnicode === true &&
+    report.formatEscape4?.exportText?.text === FORMAT_ESCAPE_4 &&
+    report.formatEscape4?.exportText?.text.includes('\\u4e2d\\u6587') &&
+    report.formatEscape4?.exportText?.text.includes('\\ud83d\\ude00') &&
+    report.formatEscape4?.exportText?.text.includes('\\u952e') &&
+    !report.formatEscape4?.exportText?.text.includes('中'),
+  'format:escape-valid-json': (() => {
+    try {
+      return JSON.stringify(JSON.parse(report.formatEscape4?.exportText?.text ?? '')) === FORMAT_COMPACT;
+    } catch {
+      return false;
+    }
+  })(),
+  'format:copy-follows-settings':
+    report.formatCopy?.export?.lastAction?.mode === 'clipboard' &&
+    (report.formatCopy?.clipboard == null || report.formatCopy?.clipboard === FORMAT_ESCAPE_COMPACT),
+  'format:file-follows-settings':
+    report.formatFile?.export?.lastAction?.mode === 'file' &&
+    report.formatFile?.saveCalls?.length === 1 &&
+    report.formatFile?.saveCalls?.[0]?.text === FORMAT_ESCAPE_COMPACT,
+  'format:settings-restored':
+    report.formatRestored?.jsonIndent === 2 && report.formatRestored?.escapeUnicode === false,
 
   'console:no-exception-no-error':
     report.consoleErrors?.length === 0 && report.consoleErrorLogs?.length === 0,
