@@ -138,7 +138,7 @@ app/main.ts                   唯一装配点：searchOpts → core.search(opts)
 
 **决策**：
 
-1. **值命中范围 = 字符串内容 + 数字的显示文本**：`number` 用 `JSON.stringify`（与树显示一致，如 `1e+21` / `0`），`BigInt` 用十进制串（`297532588187238660`）；`boolean` / `null` 仍不参与值匹配。
+1. **值命中范围 = 字符串内容 + 数字的显示文本**：`number` 用 `JSON.stringify`（与树显示一致，如 `1e+21` / `0`），`BigInt` 用十进制串（`297532588187238660`）；`boolean` / `null` 当时仍不参与值匹配（2026-11-12 #39 / ADR-0023 已改为按显示文本参与）。
 2. **与显示同源**：搜索文本复用 `row-model.scalarPreview`，保证「搜到的 == 看到的」；命中 `field='value'`、`kind='number'`（`JsonKind` 不新增成员，ADR-0020 §4）。
 3. **键名优先不变**；`keysOnly` 仍只搜键名；正则/大小写/上限/截断语义全部不变。
 4. **一致性**：`tests/unit/core/search-reference.ts` 独立参考实现同步该口径（kindOf 认 bigint、值文本同源），parity 矩阵补 7 条数字用例；`smoke-search` 新增 4 条真机检查（大整数 / 普通数字 / 布尔-null 不命中 / 0 长任务）。
