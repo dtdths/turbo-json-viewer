@@ -18,7 +18,7 @@
 import type { Hit } from '../protocol/types';
 import { computeVirtualWindow } from '../shared/window';
 
-export type SearchFilter = 'all' | 'key' | 'value';
+export type SearchFilter = 'all' | 'key' | 'value' | 'path';
 export type SearchPhase = 'idle' | 'searching' | 'ready' | 'stale';
 
 /** 结果行高（px）；虚拟列表 spacer = size × 行高 */
@@ -30,6 +30,8 @@ export interface SearchCounts {
   all: number;
   key: number;
   value: number;
+  /** 路径命中（`field='path'`，ADR-0023）；普通查询恒为 0 */
+  path: number;
 }
 
 /** core.search 回包里与视图相关的最小形状 */
@@ -86,7 +88,7 @@ export interface SearchStateOptions {
 const clamp = (value: number, min: number, max: number): number =>
   value < min ? min : value > max ? max : value;
 
-const EMPTY_COUNTS: SearchCounts = { all: 0, key: 0, value: 0 };
+const EMPTY_COUNTS: SearchCounts = { all: 0, key: 0, value: 0, path: 0 };
 
 /**
  * 结果列表虚拟窗口（纯函数，测试友好）：口径见 `shared/window.computeVirtualWindow`。
@@ -407,17 +409,23 @@ export class SearchState {
     this.indexCache = null;
   }
 
-  /** counts 始终统计未过滤的 allHits（不依赖 key+value=all 的假设）。 */
+  /**
+   * counts 始终统计未过滤的 allHits（不依赖 key+value=all 的假设）。
+   * ADR-0023：path 命中独立计数，四档计数均从同一批 allHits 重算。
+   */
   private recomputeCounts(): void {
     let key = 0;
     let value = 0;
+    let path = 0;
     for (const hit of this.allHitsValue) {
       if (hit.field === 'key') key += 1;
       else if (hit.field === 'value') value += 1;
+      else if (hit.field === 'path') path += 1;
     }
-    this.countsValue = { all: this.allHitsValue.length, key, value };
+    this.countsValue = { all: this.allHitsValue.length, key, value, path };
   }
 
+  /** filter === 'all' 返回未过滤原序；其它档按 `hit.field === filter` 过滤（含 'path'）。 */
   private rebuildFiltered(): void {
     this.hitsValue =
       this.filterValue === 'all'

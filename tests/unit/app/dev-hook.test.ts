@@ -276,7 +276,7 @@ describe('dev hook — API 契约与纯快照组装', () => {
   it('searchPanel()：模块自报的计数/文本/滚动几何 + 别名与当前命中路径', () => {
     const deps = fakeDeps({
       searchState: {
-        view: () => ({ phase: 'ready', total: 3, size: 3, current: 1, counts: { all: 3, key: 2, value: 1 }, filter: 'key', truncated: false, caseSensitive: true, regex: false, patternError: null }),
+        view: () => ({ phase: 'ready', total: 3, size: 3, current: 1, counts: { all: 3, key: 2, value: 1, path: 0 }, filter: 'key', truncated: false, caseSensitive: true, regex: false, patternError: null }),
         query: 'a',
         stale: false,
         currentHit: () => ({ path: '$.a.b' }),
@@ -296,7 +296,7 @@ describe('dev hook — API 契约与纯快照组装', () => {
       total: 3,
       size: 3,
       current: 1,
-      counts: { all: 3, key: 2, value: 1 },
+      counts: { all: 3, key: 2, value: 1, path: 0 },
       filter: 'key',
       caseSensitive: true,
       rendered: 3,

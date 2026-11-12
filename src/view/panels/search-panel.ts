@@ -23,6 +23,7 @@ import {
   computeResultWindow,
 } from '../../viewmodel/search-state';
 import { SEARCH_LIMIT } from '../../protocol/versions';
+import type { Hit } from '../../protocol/types';
 
 export interface SearchPanelOptions {
   rowHeight?: number;
@@ -50,7 +51,7 @@ const SEARCH_LIMIT_LABEL = SEARCH_LIMIT.toLocaleString('en-US');
 const TRUNCATED_COUNT_TEXT = `${SEARCH_LIMIT_LABEL}+`;
 const TRUNCATED_HINT = `已截断（上限 ${SEARCH_LIMIT_LABEL}）`;
 
-const EMPTY_IDLE_TEXT = '输入关键词搜索键名或字符串值';
+const EMPTY_IDLE_TEXT = '输入关键词搜索键名、值或路径';
 const EMPTY_SEARCHING_TEXT = '搜索中…';
 const EMPTY_STALE_TEXT = '文档已修改，请重新搜索';
 
@@ -58,7 +59,16 @@ const FILTER_ITEMS: ReadonlyArray<{ value: SearchFilter; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'key', label: '键名' },
   { value: 'value', label: '值' },
+  // ADR-0023：路径命中档常驻（普通查询下计数为 0，不 disable）
+  { value: 'path', label: '路径' },
 ];
+
+/** 结果行「匹配说明」列的文案：Hit.field → 展示文本（ADR-0023 加 path）。 */
+const FIELD_LABELS: Readonly<Record<Hit['field'], string>> = {
+  key: '键名',
+  value: '值',
+  path: '路径',
+};
 
 // ---------------------------------------------------------------- helpers
 
@@ -214,8 +224,8 @@ export class SearchPanel {
     this.input.type = 'text';
     this.input.spellcheck = false;
     this.input.autocomplete = 'off';
-    this.input.placeholder = '搜索键名或字符串值…';
-    this.input.setAttribute('aria-label', '搜索键名或字符串值');
+    this.input.placeholder = '搜索键名、值或路径…';
+    this.input.setAttribute('aria-label', '搜索键名、值或路径…');
     box.appendChild(this.input);
 
     /* 查询行右侧：Aa（区分大小写）/ .*（正则）——真实按钮，Tab 顺序在查询框之后 */
@@ -280,7 +290,7 @@ export class SearchPanel {
 
     csearch.append(box, this.errorEl, row);
 
-    /* ---- .results__filters：全部 / 键名 / 值 + counts ---- */
+    /* ---- .results__filters：全部 / 键名 / 值 / 路径 + counts ---- */
     this.filtersEl = el('div', 'results__filters');
     this.filtersEl.setAttribute('role', 'group');
     this.filtersEl.setAttribute('aria-label', '结果过滤');
@@ -530,9 +540,7 @@ export class SearchPanel {
       const on = view.filter === filter;
       entry.button.classList.toggle('is-on', on);
       entry.button.setAttribute('aria-pressed', on ? 'true' : 'false');
-      const count =
-        filter === 'all' ? view.counts.all : filter === 'key' ? view.counts.key : view.counts.value;
-      entry.count.textContent = formatCount(count);
+      entry.count.textContent = formatCount(view.counts[filter]);
     }
   }
 
@@ -611,7 +619,7 @@ export class SearchPanel {
 
       writeHighlighted(slot.pathEl, hit.path, term);
       writeHighlighted(slot.valueEl, hit.preview, term);
-      slot.fieldEl.textContent = hit.field === 'key' ? '键名' : '值';
+      slot.fieldEl.textContent = FIELD_LABELS[hit.field];
       slot.kindEl.textContent = hit.kind;
       used++;
     }
@@ -708,7 +716,7 @@ export class SearchPanel {
     const button = target.closest('.filter');
     if (!(button instanceof HTMLButtonElement)) return;
     const value = button.dataset.filter;
-    if (value === 'all' || value === 'key' || value === 'value') {
+    if (value === 'all' || value === 'key' || value === 'value' || value === 'path') {
       this.opts.onFilterChange(value);
     }
   };

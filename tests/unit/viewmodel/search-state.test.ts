@@ -20,7 +20,7 @@ import type { Hit } from '../../../src/protocol/types';
 
 const ROW_H = SEARCH_RESULT_ROW_HEIGHT; // 44
 
-function makeHit(path: string, field: 'key' | 'value' = 'key'): Hit {
+function makeHit(path: string, field: 'key' | 'value' | 'path' = 'key'): Hit {
   return {
     path,
     key: path,
@@ -30,7 +30,7 @@ function makeHit(path: string, field: 'key' | 'value' = 'key'): Hit {
   };
 }
 
-function makeHits(...specs: Array<string | [string, 'key' | 'value']>): Hit[] {
+function makeHits(...specs: Array<string | [string, 'key' | 'value' | 'path']>): Hit[] {
   return specs.map((spec) => (Array.isArray(spec) ? makeHit(spec[0], spec[1]) : makeHit(spec, 'key')));
 }
 
@@ -113,7 +113,7 @@ describe('SearchState — 初始状态 / begin / clear', () => {
     expect(state.filter).toBe('all');
     expect(state.hits).toEqual([]);
     expect(state.allHits).toEqual([]);
-    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
     expect(state.total).toBe(0);
     expect(state.size).toBe(0);
     expect(state.truncated).toBe(false);
@@ -146,7 +146,7 @@ describe('SearchState — 初始状态 / begin / clear', () => {
     expect(state.stale).toBe(false);
     expect(state.size).toBe(0);
     expect(state.allHits).toHaveLength(0);
-    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
     expect(state.total).toBe(0);
     expect(state.current).toBe(-1);
     expect(state.view().phase).toBe('searching');
@@ -191,7 +191,7 @@ describe('SearchState — apply 采纳 / 过期', () => {
     expect(state.view().phase).toBe('ready');
     expect(state.allHits).toHaveLength(2);
     expect(state.hits).toHaveLength(2);
-    expect(state.counts).toEqual({ all: 2, key: 1, value: 1 });
+    expect(state.counts).toEqual({ all: 2, key: 1, value: 1, path: 0 });
     expect(state.total).toBe(2);
     expect(state.size).toBe(2);
     expect(state.current).toBe(0);
@@ -228,7 +228,7 @@ describe('SearchState — apply 采纳 / 过期', () => {
     expect(accepted).toBe(false);
     expect(state.size).toBe(0);
     expect(state.allHits).toHaveLength(0);
-    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
     expect(state.total).toBe(0);
     expect(state.truncated).toBe(false);
     expect(state.current).toBe(-1);
@@ -247,7 +247,7 @@ describe('SearchState — apply 采纳 / 过期', () => {
     expect(state.size).toBe(0);
     expect(state.current).toBe(-1);
     expect(state.currentHit()).toBeNull();
-    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
   });
 
   it('truncated 贯穿：采纳、view、过滤后仍保持；新 begin 清掉', () => {
@@ -274,13 +274,13 @@ describe('SearchState — apply 采纳 / 过期', () => {
 describe('SearchState — 过滤 / 计数 / 夹紧', () => {
   it('setFilter 按 field 过滤；counts 始终统计未过滤的 allHits', () => {
     const { state } = readyState(makeHits('$.a', '$.b', ['$.c', 'value']));
-    expect(state.counts).toEqual({ all: 3, key: 2, value: 1 });
+    expect(state.counts).toEqual({ all: 3, key: 2, value: 1, path: 0 });
 
     state.setFilter('key');
     expect(state.filter).toBe('key');
     expect(state.size).toBe(2);
     expect(state.hits.every((hit) => hit.field === 'key')).toBe(true);
-    expect(state.counts).toEqual({ all: 3, key: 2, value: 1 });
+    expect(state.counts).toEqual({ all: 3, key: 2, value: 1, path: 0 });
     expect(state.total).toBe(3);
 
     state.setFilter('value');
@@ -291,6 +291,58 @@ describe('SearchState — 过滤 / 计数 / 夹紧', () => {
     state.setFilter('all');
     expect(state.size).toBe(3);
     expect(state.view().filter).toBe('all');
+  });
+
+  it('path 档：counts 从 allHits 重算（all = key + value + path），path 命中只被 path/all 档保留', () => {
+    const { state } = readyState(
+      makeHits(
+        ['$.a', 'key'],
+        ['$.b.c', 'value'],
+        ['$.data.hotel_list[3]', 'path'],
+        ['$[0]', 'path'],
+      ),
+    );
+    expect(state.counts).toEqual({ all: 4, key: 1, value: 1, path: 2 });
+    expect(state.counts.all).toBe(
+      state.counts.key + state.counts.value + state.counts.path,
+    ); // 口径：从同一批 allHits 重算
+
+    state.setFilter('path');
+    expect(state.filter).toBe('path');
+    expect(state.view().filter).toBe('path');
+    expect(state.size).toBe(2);
+    expect(state.hits.every((hit) => hit.field === 'path')).toBe(true);
+    expect(state.hits.map((hit) => hit.path)).toEqual(['$.data.hotel_list[3]', '$[0]']);
+    expect(state.counts).toEqual({ all: 4, key: 1, value: 1, path: 2 }); // 过滤不改 counts
+
+    state.setFilter('value');
+    expect(state.size).toBe(1);
+
+    state.setFilter('all'); // all 档包含路径命中
+    expect(state.size).toBe(4);
+    expect(state.hits.some((hit) => hit.field === 'path')).toBe(true);
+  });
+
+  it('path 档无命中：size=0、current=-1；切回 all 恢复', () => {
+    const { state } = readyState(makeHits('$.a', ['$.b', 'value']));
+    expect(state.counts.path).toBe(0);
+
+    state.setFilter('path');
+    expect(state.size).toBe(0);
+    expect(state.current).toBe(-1);
+
+    state.setFilter('all');
+    expect(state.size).toBe(2);
+    expect(state.current).toBe(0);
+  });
+
+  it('path 命中参与 hitPaths；过滤到 path 档后仍保留全部未过滤路径', () => {
+    const { state } = readyState(makeHits('$.a', ['$.data.hotel_list[3]', 'path']));
+    expect(state.hitPaths().has('$.data.hotel_list[3]')).toBe(true);
+
+    state.setFilter('path');
+    expect(state.hits.map((hit) => hit.path)).toEqual(['$.data.hotel_list[3]']);
+    expect(state.hitPaths().has('$.a')).toBe(true); // hitPaths 始终未过滤
   });
 
   it('setFilter 把 current 夹到 [0, size-1]；size=0 → -1；回到非空夹回 0', () => {
@@ -428,7 +480,7 @@ describe('SearchState — view / contentHeight / window', () => {
       query: 'hotel',
       phase: 'ready',
       hits: state.hits,
-      counts: { all: 2, key: 1, value: 1 },
+      counts: { all: 2, key: 1, value: 1, path: 0 },
       total: 2,
       size: 2,
       current: 0,
@@ -492,7 +544,7 @@ describe('SearchState — markStale', () => {
     expect(state.view().phase).toBe('stale');
     expect(state.size).toBe(0);
     expect(state.allHits).toHaveLength(0);
-    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
     expect(state.total).toBe(0);
     expect(state.truncated).toBe(false);
     expect(state.current).toBe(-1);
@@ -581,7 +633,7 @@ describe('SearchState — markPatternError（ADR-0014 §2.3）', () => {
     expect(state.view().phase).toBe('idle');
     expect(state.size).toBe(0);
     expect(state.allHits).toHaveLength(0);
-    expect(state.counts).toEqual({ all: 0, key: 0, value: 0 });
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
     expect(state.total).toBe(0);
     expect(state.truncated).toBe(false);
     expect(state.current).toBe(-1);
