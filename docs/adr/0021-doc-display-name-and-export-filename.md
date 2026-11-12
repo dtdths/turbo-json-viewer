@@ -92,7 +92,7 @@
 - **15 套真机冒烟串行全绿**：`smoke-workspace` **50 → 56/56**（+6：双击出输入框且全选/禁拖拽、Esc 取消、F2 入口、Enter 提交后标签+chip 同步且 title 带原名、空白提交保持原名、双击非活动标签也能进编辑）、`smoke-export` **22 → 27/27**（+5：另存为桩预填 `sample.json`、写入文本逐字等于导出文本、桩返回改名后 chip/标签同步、取消另存为零副作用、策略拦截（`NotAllowedError`）回落普通下载）；`smoke-repair` 14/14 及其余 12 套计数不变。
 - **体积**（minify gz）：`page.js` 47.6 → **48.8KB**（预算 **48 → 50** 经用户 2026-11-12 拍板；+1.2 归因：标签就地改名 DOM/焦点 + 导出系统框/回落 + 清洗反推纯函数 + 原名 title）、`page.css` **8.2**（+0.0：改名输入框样式）、`worker.js` **63.3** 不变、懒加载 chunk 合计 **145.6**（预算 146）不变。
 - 截图：`.spike/smoke/workspace-rename.png`（深色，编辑中）、`workspace-rename-light.png`（亮色，提交后）。
-- **真机系统对话框**：headless 里只能证明 API 在扩展页暴露且可调用（`typeof showSaveFilePicker === 'function'`，调用返回 `AbortError`，无原生对话框）；真实「另存为」框的弹出与写入由用户在真机点一次确认（已知差距，见下）。
+- **真机系统对话框**：headless 里只能证明 API 在扩展页暴露且可调用（`typeof showSaveFilePicker === 'function'`，调用返回 `AbortError`，无原生对话框）；**2026-11-12 用户在真机扩展实测导出：系统「另存为」框正常弹出、写入成功、导出正常**（本 ADR 唯一需人工确认的项已闭环）。
 
 ## 已知差距 / 本轮不做
 
