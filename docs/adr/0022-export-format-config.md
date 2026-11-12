@@ -1,6 +1,6 @@
 # ADR-0022：导出/复制的 JSON 格式化配置（JSON 缩进 + 非 ASCII 转义；不做尾随逗号）
 
-- 状态：**Accepted（设计定稿 2026-11-12；实现待 #38）**
+- 状态：**Accepted（设计定稿 2026-11-12；实现完成 2026-11-12，见 #38 验收）**
 - 日期：2026-11-12
 - 依据：`#34`（#11 收口残余项：导出/查看的格式化配置）；2026-11-12 grill 拍板（Q1–Q9，全部按推荐）
 - 相关：#34（设计票）、#38（实现票，待开）、ADR-0011（设置与持久化）、ADR-0012 §2（复制与导出同一份文本）、ADR-0020（无损序列化）、ADR-0003（原文视图三模式 / 保真口径）、ADR-0021（导出文件名）
@@ -85,15 +85,13 @@
 | 格式选项不持久化（每次默认） | 用户偏好稳定，频繁重选成本高；与设置体系一致更好 |
 | 只作用于导出、不影响整份复制 | 违反 ADR-0012 §2「复制与导出逐字同一份文本」的承诺 |
 
-## 验收（待 #38 实现后补实测）
+## 验收（2026-11-12 实现实测，#38）
 
-计划（实现票 #38 的验收标准）：
-
-- 单测：序列化器三档缩进（紧凑/2/4）与 `JSON.stringify` 逐字节对拍（含 BigInt、代理对、控制字符）；转义档输出合法 JSON 且 `parseLossless` 读回深相等；设置字段默认/校验/旧键 `copyIndent` 迁移回落；导出/复制命令参数契约（InProcess vs Worker 适配器）。
-- 冒烟：`smoke-settings` 新增第 12 行（JSON 缩进三档 + 转义开关 + 重启恢复；`DEFAULT_KEYS` / `DEFAULTS` 列表同步）；`smoke-export` 增加紧凑档导出文本、转义档导出文本、整份复制跟随设置的断言；`smoke-edit` 回填仍为 pretty(2)（不受设置影响）；`smoke-copy` 默认档期望不变（默认 jsonIndent = 2）；其余套件计数不变。
-- 体积：`node build.mjs --analyze` 记账（超预算先问）。
-- 截图：设置面板深/亮各一张（12 行）。
-- 文档：`CONTEXT.md` 设置项 11 → 12、ADR-0011 指针、ADR-0012 §2 指针、ADR-0020 序列化选项指针、架构 README §11 新增行与体积归因。
+- **单测**：1003 → **1023**（38 文件全绿）。`lossless-json` 17 → 23（escape 档精确文本 / 代理对 / 控制字符短转义 / 合法 JSON + `parseLossless` 往返 / BigInt 不受影响 / 默认档仍逐字节等价）；`doc-service` 111 → 113（escape 透传 + compact/pretty 组合）；契约 +1（`exportDoc(rootId, indent, escapeUnicode)` 在 InProcess 与 Worker 双适配器透传）；`settings-state` 15 → 23（默认 / 三档白名单 / 旧键 `copyIndent` 迁移（新键优先）/ 写盘只含新键 / `escapeUnicode` 回落 / set 持久化）；`dev-hook` 13 → 15（`exportDocText` / `copyResolve` 读设置）。
+- **冒烟**：15 套串行全绿（`smoke-search` / `smoke-extension-search` 首跑各有 1–2 条 50ms 长任务 / 耗时阈值抖动，重跑 101/101、56/56 全绿——与改动无关的既有性能阈值抖动）。`smoke-settings` **25 → 26/26**（第 12 行顺序 + `set:escape-unicode`（默认关 → 勾选开、label/checked 同步）+ 重启恢复 12 项）；`smoke-export` **27 → 34/34**（默认档 ≡ `JSON.stringify(v,null,2)` / 紧凑档 ≡ `JSON.stringify(v)` / 转义 4 空格精确文本 + 全 ASCII / 转义输出仍是合法 JSON 且值不变 / 整份复制跟随设置 / 文件导出跟随设置 / 收尾还原默认）；其余 13 套计数不变（`smoke-edit` 回填仍 pretty(2)、`smoke-copy` 默认档期望不变）。
+- **体积**：`page.js` **48.8 → 48.9KB gz**（+0.1：设置面板一行 + 三处接线；预算 50 未动）、`worker.js` **63.3 → 63.5KB gz**（+0.2：序列化器 escape 选项与 `quoteString`；无硬预算，ADR-0020 §9 口径）、`page.css` **8.2 不变**、懒加载 **145.6（146）不变**。
+- **截图**：`.spike/smoke/settings-panel.png`（深）/ `settings-applied.png`（亮），面板 12 行。
+- **文档**：`CONTEXT.md` 设置 12 项 + 复制/导出语义、`docs/design/direction.md` 组件表、ADR-0011 / ADR-0012 §2 / ADR-0020 §11 指针改「已实现」、架构 README §11 新增 6.25 行与产物体积归因。
 
 ## 已知差距 / 本轮不做
 

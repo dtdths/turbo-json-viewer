@@ -129,6 +129,11 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 - **验收**：单测 834 → **840**（其中 `settings-state` +1 项 advBudget 默认/合法/非法回落；表达式引擎/补全/locate 共 +114）；冒烟 `smoke-settings` 24 → 26（第 11 行顺序 + `set:advBudget` 三态 + 重启恢复同步 11 项）。
 - **体积**：`page.js` / `worker.js` / `page.css` 增量已计入 ADR-0018 的整体体积记录（设置面板一行 ≈ 0）。
 
-## 指针（2026-11-12，#34 / ADR-0022）
+## 修订（2026-11-12，已实现）：第 12 项设置「JSON 缩进 / 导出转义非 ASCII」（#34 / ADR-0022）
 
-设置将扩到 **12 项**（待实现，见 ADR-0022）：现有 `copyIndent`（0/2/4）升级为 **`jsonIndent`**（紧凑 0 / 2 / 4），并同时作用于**文件导出 + 整份复制 + 子树复制**；新增 **`escapeUnicode`** 勾选项（导出转义非 ASCII，默认关）。兼容做法：读 `jsonIndent ?? copyIndent`（旧值沿用）、只写新键、缺键回落默认；存储键仍 `tjv.settings.v1`，不新增权限。设置面板 11 → 12 行（`view/panels/settings-panel.ts` 里过时的「10 行/10 项」注释一并同步）。
+- **schema**：`copyIndent`（0/2/4）升级为 **`jsonIndent`**（紧凑 0 / 2 / 4，默认 2），同一值作用于**文件导出 + 整份复制 + 子树复制**；新增 **`escapeUnicode: boolean`**（默认 `false`，导出/整份复制把非 ASCII 转义为 `\uXXXX`，输出仍是合法 JSON、BigInt 仍裸十进制）。存储键仍 `tjv.settings.v1`，不新增权限；兼容读 `jsonIndent ?? copyIndent`（新键优先、旧键也走白名单校验），只写新键、缺键回落默认。
+- **面板**：11 → **12 行**（第 6 行「复制缩进」改「JSON 缩进」，末尾新增「导出转义非 ASCII」勾选行）；`view/panels/settings-panel.ts` 里过时的「10 行/10 项」注释同步为 12。
+- **接线**：`main.ts` 文件导出（FSA 主路径 / 无 FSA 回落）与整份复制传 `settings.get('jsonIndent')` + `settings.get('escapeUnicode')`；子树复制 `copyNode.indent` 改读 `jsonIndent`；编辑回填 `getNodeJson` 仍固定 pretty(2)（不跟随设置，ADR-0022 §1）。
+- **验收**：单测 1003 → **1023**（`lossless-json` +6 / `doc-service` +2 / 契约 +1（双适配器各跑一次）/ `settings-state` +8 / `dev-hook` +2）；冒烟 `smoke-settings` 25 → **26/26**（第 12 行顺序 + `set:escape-unicode` + 重启恢复同步 12 项）、`smoke-export` 27 → **34/34**（默认档逐字节 / 紧凑 / 转义 4 空格 / 转义仍合法 JSON / 整份复制跟随 / 文件导出跟随 / 设置还原）。
+- **体积**：`page.js` 48.8 → **48.9KB gz**（+0.1，预算 50 未动）、`worker.js` 63.3 → **63.5**（+0.2）、`page.css` 8.2 不变、懒加载 145.6 不变。
+- **截图**：`.spike/smoke/settings-panel.png`（深）/ `settings-applied.png`（亮），面板 12 行。

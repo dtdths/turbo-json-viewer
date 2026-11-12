@@ -240,6 +240,6 @@ export function deepEqualJson(a: unknown, b: unknown): boolean;
 - #32（设计票）：grill 13 条拍板评论 + 关闭（completed）。
 - #33（实现票）：本 ADR 的 §4–§10 即其验收依据；实现结果见 §11。
 
-## 指针（2026-11-12，#34 / ADR-0022）
+## 指针（2026-11-12，#34 / ADR-0022；已实现 #38）
 
-`serializeLossless` 将增加**可选** `{ escapeUnicode?: boolean }`（默认 `false`，保持与 `JSON.stringify` 逐字节等价；开启时字符串/键的非 ASCII → `\uXXXX`，BigInt 仍裸十进制）。只有文件导出（及整份复制）透传该开关；子树复制 / 编辑回填 / 表达式内 `JSON.stringify()` 不传。见 ADR-0022。
+`serializeLossless` 增加**可选** `{ escapeUnicode?: boolean }`（默认 `false`，保持与 `JSON.stringify` 逐字节等价；开启时字符串/键的非 ASCII 按 UTF-16 code unit → 小写 `\uXXXX`、代理对各一个转义，BigInt 仍裸十进制）。**2026-11-12 已实现（#38）**：只有文件导出（及整份复制）经 `DocService.exportDoc` 透传该开关；子树复制 / 编辑回填 / 表达式内 `JSON.stringify()` 不传。见 ADR-0022。
