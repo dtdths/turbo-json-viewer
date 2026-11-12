@@ -21,6 +21,7 @@
     "smoke:raw": "node scripts/smoke-raw.mjs",
     "smoke:fidelity": "node scripts/smoke-fidelity.mjs",
     "smoke:outline": "node scripts/smoke-outline.mjs",
+    "smoke:order": "node scripts/smoke-order.mjs",
     "smoke:expression": "node scripts/smoke-expression.mjs",
     "smoke:workspace": "node scripts/smoke-workspace.mjs"
   },

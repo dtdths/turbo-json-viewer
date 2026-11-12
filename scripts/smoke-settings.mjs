@@ -4,15 +4,16 @@
  *   node build.mjs && node scripts/smoke-settings.mjs
  *
  * 测：
- *   1) 默认值：12 项设置全默认、主题生效、行高 24 / 缩进 16 / 无类型列；
- *   2) 面板：活动栏齿轮 → 左面板切「设置」，标题/aria/12 行顺序/焦点；
+ *   1) 默认值：13 项设置全默认、主题生效、行高 24 / 缩进 16 / 无类型列 / 子键排序原始；
+ *   2) 面板：活动栏齿轮 → 左面板切「设置」，标题/aria/13 行顺序/焦点；
  *   3) 逐项即时生效（真实点击面板控件）：主题、行高（spacer 高度同步）、缩进、类型列、
  *      默认复制格式（行尾浮条复制路径）、JSON 缩进（子树 JSON 4 空格；ADR-0022）、
  *      导出转义非 ASCII（勾选项；ADR-0022）、
  *      关闭修复（截断直接 PARSE 且文档不变）、关闭自适应展开（小文档保持折叠）；
- *   4) 持久化：刷新页面后 12 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复；
+ *   4) 持久化：刷新页面后 13 项设置 + 主题 + 行高/缩进 CSS + 左面板模式全部恢复；
  *   5) 0 page 异常 / 0 console error。
  * 截图落 .spike/smoke/settings-{panel,applied,reloaded}.png；走 HTTP + `window.__tjv`（localStorage 兜底持久化）。
+ * 子键排序的显示效果由 `scripts/smoke-order.mjs` 覆盖（本套只断言默认值 / 行契约 / 持久化键）。
  */
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -29,6 +30,7 @@ const DEFAULT_KEYS = [
   'theme',
   'rowHeight',
   'indent',
+  'sortOrder',
   'typeColumn',
   'defaultCopyFormat',
   'jsonIndent',
@@ -44,6 +46,7 @@ const DEFAULTS = {
   theme: 'dark',
   rowHeight: 24,
   indent: 16,
+  sortOrder: 'raw',
   typeColumn: false,
   defaultCopyFormat: 'subtree',
   jsonIndent: 2,
@@ -436,6 +439,7 @@ const checks = {
         theme: 'light',
         rowHeight: 22,
         indent: 20,
+        sortOrder: 'raw',
         typeColumn: true,
         defaultCopyFormat: 'subtree',
         jsonIndent: 4,
