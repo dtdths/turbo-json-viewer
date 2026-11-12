@@ -11,6 +11,7 @@
  *   4. 点活动栏打开搜索面板；搜索输入框内粘贴不触发全局导入；
  *   5. 真实 input `hotel` → 等 `#searchCount`（capped 50,000+）→ 校验结果列表/字段/highlight；
  *   6. Enter 跳转 → 树 `.row.is-current`；清空输入 → 空态；截图；0 console 错误。
+ *   7. 搜索目标扩展（ADR-0023 / #39）：路径后缀 `$` / `[0]` 命中、布尔 `true` 值命中、过滤四档。
  *
  * 导入层交互回归（grill-with-docs 收口：Q8=A′ / Q9=A / Q10=A / Q11=B / Q12=A / Q13=A）：
  *   - 文档已打开 + 层关闭：body/树粘贴合法 JSON **不导入**（defaultPrevented=false、文档不变）；
@@ -136,6 +137,7 @@ async function extSetup() {
       const next = document.getElementById('searchNext');
       const filters = [...document.querySelectorAll('.filter')].map((b) => ({
         filter: b.dataset.filter || null,
+        label: (b.childNodes[0] && b.childNodes[0].textContent ? b.childNodes[0].textContent.trim() : ''),
         on: b.classList.contains('is-on'),
         pressed: b.getAttribute('aria-pressed'),
         count: (b.querySelector('.filter__count') || {}).textContent || '',
@@ -465,6 +467,54 @@ async function extClearPhase() {
   return out;
 }
 
+/** 搜索目标扩展（ADR-0023 / #39）：路径后缀命中 + 布尔值命中 + 四档过滤（真实 UI，无 dev hook）。 */
+async function extTargetsPhase() {
+  const out = {};
+  const smoke = window.__extSmoke;
+  const num = (text) => {
+    const m = /([\d,]+)/.exec(String(text == null ? '' : text));
+    return m ? Number(m[1].replace(/,/g, '')) : null;
+  };
+  const input = document.getElementById('searchInput');
+  if (!input) return { error: '#searchInput missing' };
+  smoke.reset();
+  const type = async (q) => {
+    input.focus();
+    input.value = q;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await smoke.settle(500); // debounce 250 + worker 往返
+    return { query: q, dom: smoke.dom(), inputInvalid: input.getAttribute('aria-invalid') };
+  };
+  out.filters = smoke.dom().filters;
+  // 1) 路径模式：`$` 只命中根（样本包 0 个含 $ 的键/值 → 精确 1 条 field=路径）
+  out.root = await type('$');
+  // 2) 路径后缀：`[0]` 命中所有数组第 1 个元素（样本键/值不含 [ → 全部 field=路径）
+  out.index = await type('[0]');
+  // 3) 路径档过滤 + 跳转
+  const pathBtn = document.querySelector('.filter[data-filter="path"]');
+  if (pathBtn) {
+    smoke.reset();
+    pathBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await smoke.settle(150);
+    out.pathFilter = smoke.dom();
+    const allBtn = document.querySelector('.filter[data-filter="all"]');
+    if (allBtn) {
+      allBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await smoke.settle(150);
+    }
+    const first = document.querySelector('.result[data-path]');
+    if (first) {
+      first.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await smoke.settle(300);
+      out.jump = { dom: smoke.dom() };
+    }
+  }
+  // 4) 布尔值命中：样本 12,397 个 true（路径档 0、键名档 0）
+  out.bool = await type('true');
+  out.longTasks = smoke.take();
+  return out;
+}
+
 /* ================================================================= */
 /* 导入层交互回归（grill-with-docs 收口：Q8=A′ / Q9=A / Q10=A / Q11=B / Q12=A / Q13=A） */
 /* ================================================================= */
@@ -783,10 +833,19 @@ try {
       layer: setup.layer,
       note: '初始空态：导入层可见且 data-mode="initial"',
     });
-    check('ext:dom-contract', Boolean(setup.dom) && setup.dom.countText !== null && setup.dom.filters.length === 3, {
-      countText: setup.dom && setup.dom.countText,
-      filters: setup.dom && setup.dom.filters.map((f) => f.filter),
-    });
+    check(
+      'ext:dom-contract',
+      Boolean(setup.dom) &&
+        setup.dom.countText !== null &&
+        setup.dom.filters.length === 4 &&
+        JSON.stringify(setup.dom.filters.map((f) => f.filter)) === JSON.stringify(['all', 'key', 'value', 'path']) &&
+        JSON.stringify(setup.dom.filters.map((f) => f.label)) === JSON.stringify(['全部', '键名', '值', '路径']),
+      {
+        countText: setup.dom && setup.dom.countText,
+        filters: setup.dom && setup.dom.filters.map((f) => f.filter),
+        labels: setup.dom && setup.dom.filters.map((f) => f.label),
+      },
+    );
   }
 
   /* ---- 1) 粘贴 10MB + 打开搜索面板 ---- */
@@ -993,7 +1052,7 @@ try {
       visibleRows: d.visibleRows,
       clearMs: clearPhase.clearMs,
     });
-    check('ext:clear-empty-state', d.emptyVisible === true && d.emptyText === '输入关键词搜索键名或字符串值', {
+    check('ext:clear-empty-state', d.emptyVisible === true && d.emptyText === '输入关键词搜索键名、值或路径', {
       emptyVisible: d.emptyVisible,
       emptyText: d.emptyText,
     });
@@ -1026,6 +1085,59 @@ try {
     a.visibleRows === b.visibleRows;
 
   // 4a) 文档已打开 + 层关闭：body/树粘贴合法 JSON 不导入
+  /* ---- 搜索目标扩展（ADR-0023 / #39）---- */
+  const targetsPhase = clearPhase ? await runPhase('targets', extTargetsPhase) : null;
+  if (targetsPhase) {
+    report.targets = targetsPhase;
+    const t = targetsPhase;
+    const num = (text) => {
+      const m = /([\d,]+)/.exec(String(text == null ? '' : text));
+      return m ? Number(m[1].replace(/,/g, '')) : null;
+    };
+    const filterCount = (dom, filter) => {
+      const entry = (dom?.filters || []).find((f) => f.filter === filter);
+      return entry ? num(entry.count) : null;
+    };
+    const visiblePaths = (step) => step?.dom?.resultPaths || [];
+    check(
+      'ext:targets-filters-four',
+      JSON.stringify((t.filters || []).map((f) => f.filter)) === JSON.stringify(['all', 'key', 'value', 'path']) &&
+        JSON.stringify((t.filters || []).map((f) => f.label)) === JSON.stringify(['全部', '键名', '值', '路径']),
+      { filters: t.filters },
+    );
+    check(
+      'ext:path-root',
+      num(t.root?.dom?.countText) === 1 &&
+        t.root?.dom?.visibleRows === 1 &&
+        t.root?.dom?.firstFieldText === '路径' &&
+        (t.root?.dom?.pathMarks || 0) >= 1,
+      { count: t.root?.dom?.countText, rows: t.root?.dom?.visibleRows, field: t.root?.dom?.firstFieldText, marks: t.root?.dom?.pathMarks },
+    );
+    check(
+      'ext:path-index-suffix',
+      num(t.index?.dom?.countText) > 0 &&
+        filterCount(t.index?.dom, 'path') === num(t.index?.dom?.countText) &&
+        visiblePaths(t.index).length > 0 &&
+        visiblePaths(t.index).every((p) => String(p).endsWith('[0]')) &&
+        (t.index?.dom?.fieldTexts || []).every((x) => x === '路径'),
+      { count: t.index?.dom?.countText, paths: visiblePaths(t.index).slice(0, 3), fields: t.index?.dom?.fieldTexts },
+    );
+    check('ext:filter-path', t.pathFilter?.activeFilter === 'path' && t.pathFilter?.visibleRows > 0, {
+      active: t.pathFilter?.activeFilter,
+      rows: t.pathFilter?.visibleRows,
+    });
+    check('ext:jump-path-hit', t.jump?.dom?.treeCurrent === true, { treeCurrent: t.jump?.dom?.treeCurrent });
+    check(
+      'ext:bool-value-hit',
+      num(t.bool?.dom?.countText) > 0 &&
+        filterCount(t.bool?.dom, 'path') === 0 &&
+        filterCount(t.bool?.dom, 'key') === 0 &&
+        filterCount(t.bool?.dom, 'value') === num(t.bool?.dom?.countText),
+      { count: t.bool?.dom?.countText, filters: t.bool?.dom?.filters },
+    );
+    check('ext:targets-maxLongTask<=50', maxLongTask(t.longTasks || []) <= 50, { longTasks: t.longTasks });
+  }
+
   const layerGuardPhase = clearPhase ? await runPhase('import-layer-guard', extImportLayerGuardPhase) : null;
   if (layerGuardPhase) {
     report.importLayerGuard = layerGuardPhase;

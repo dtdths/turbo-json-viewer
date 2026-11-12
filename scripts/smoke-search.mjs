@@ -18,6 +18,9 @@
  *   - stale（dev hook `searchMarkStale()`）：phase='stale'、清空结果/树高亮/树 mark、
  *     文案「文档已修改，请重新搜索」，再搜索恢复 ready；
  *   - 空查询 / 无命中态文案；
+ *   - 搜索目标扩展（ADR-0023 / #39）：布尔/null 值命中；路径后缀命中（`$.data` /
+ *     `hotel_list[1]` / `[1]` / `$` 命中；`data.` / `.` 不命中子树）；过滤四档
+ *     （全部/键名/值/路径）+ 路径命中跳转；截图 `.spike/smoke/search-targets.png`。
  *   - 树 `<mark>` 只出现在 `.row.is-hit` 行（review 修复项）；
  *   - 截图落 `.spike/smoke/search-mock.png`、`.spike/smoke/search-10mb.png`。
  *
@@ -54,6 +57,12 @@ const MOCK_TERM = 'hotel';
 const BIG_TERM = 'hotel';
 const NO_HIT_TERM = 'zz-no-such-term-9x';
 const TRUNC_TERM = 'e'; // 10MB 上远超 50k 命中 → truncated
+
+/** 搜索目标扩展（ADR-0023 / #39）fixture：布尔/null 值 + 路径后缀命中。 */
+const TARGETS_DOC = {
+  data: { items: [{ name: 'a', ok: true }, { name: 'b', ok: false }], nothing: null, flag: true },
+  hotel_list: [{ id: 1 }, { id: 2 }],
+};
 const ROW_HEIGHT = 44;
 /** 历史基准（旧口径）：docs/design/qa-editing-and-search.md §2.3 已注记；契约 §6 已更新为 186 / raw 74,378。 */
 const LEGACY_BASELINE_HITS = { mockHotel: 58, bigHotel: 37_189 };
@@ -210,6 +219,7 @@ async function pageSetup() {
       const next = document.getElementById('searchNext');
       const filters = [...document.querySelectorAll('.filter')].map((b) => ({
         filter: b.dataset.filter || null,
+        label: (b.childNodes[0] && b.childNodes[0].textContent ? b.childNodes[0].textContent.trim() : ''),
         on: b.classList.contains('is-on'),
         pressed: b.getAttribute('aria-pressed'),
         count: (b.querySelector('.filter__count') || {}).textContent || '',
@@ -746,6 +756,52 @@ async function pageNumberSearchPhase() {
   return out;
 }
 
+/** 搜索目标扩展（ADR-0023 / #39）：布尔/null 值命中 + 路径后缀命中 + 四档过滤。 */
+async function pageTargetsPhase(cfg) {
+  const out = {};
+  window.__smoke.reset();
+  await window.__tjv.loadText(JSON.stringify(cfg.doc), 'targets.json');
+  await window.__smoke.settle(250);
+  if (document.body.dataset.panel !== 'search') {
+    document.querySelector('[data-panel-btn="search"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await window.__smoke.settle(200);
+  }
+  out.panelOpen = document.body.dataset.panel === 'search';
+  out.filters = window.__smoke.dom().filters;
+  const search = async (q) => {
+    const res = await window.__tjv.search(q);
+    await window.__smoke.settle(150);
+    return { res, diag: window.__tjv.searchPanel(), dom: window.__smoke.dom() };
+  };
+  const clickFilter = async (filter) => {
+    const btn = document.querySelector(`.filter[data-filter="${filter}"]`);
+    if (!btn) return { missing: true };
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await window.__smoke.settle(150);
+    return { diag: window.__tjv.searchPanel(), dom: window.__smoke.dom() };
+  };
+  // 布尔 / null 值命中（ADR-0023 §1）
+  out.boolTrue = await search('true');
+  out.boolFalse = await search('false');
+  out.nil = await search('null');
+  out.boolUpper = await search('TRUE');
+  // 路径后缀命中（ADR-0023 §2）+ 四档过滤 + 跳转
+  out.pathExact = await search('$.data');
+  out.filterPath = await clickFilter('path');
+  out.filterKey = await clickFilter('key');
+  out.filterAll = await clickFilter('all');
+  out.jump = await window.__tjv.searchJump(0);
+  await window.__smoke.settle(250);
+  out.jumpDom = window.__smoke.dom();
+  out.pathTail = await search('hotel_list[1]');
+  out.pathIndex = await search('[1]');
+  out.pathRoot = await search('$');
+  out.pathPrefix = await search('data.');
+  out.pathDot = await search('.');
+  out.longTasks = window.__smoke.take();
+  return out;
+}
+
 /* ------------------------------------------------------------- main script */
 
 const report = {
@@ -871,10 +927,13 @@ try {
       'setup:dom-contract',
       Boolean(setup.dom) &&
         domContract.countText !== null &&
-        domContract.filters.length === 3 &&
+        domContract.filters.length === 4 &&
+        JSON.stringify(domContract.filters.map((f) => f.filter)) === JSON.stringify(['all', 'key', 'value', 'path']) &&
+        JSON.stringify(domContract.filters.map((f) => f.label)) === JSON.stringify(['全部', '键名', '值', '路径']) &&
         domContract.listboxRole === 'listbox',
       {
         filters: domContract.filters.map((f) => f.filter),
+        labels: domContract.filters.map((f) => f.label),
         listboxRole: domContract.listboxRole,
         countText: domContract.countText,
       },
@@ -905,13 +964,104 @@ try {
       { total: numberPhase.num?.total, counts: numberPhase.numDiag?.counts },
     );
     check(
-      'number:bool-null-not-searched',
-      numberPhase.bool?.total === 0 && numberPhase.nil?.total === 0,
-      { bool: numberPhase.bool?.total, nil: numberPhase.nil?.total },
+      'number:bool-null-searchable',
+      numberPhase.bool?.total === 1 && numberPhase.nil?.total === 1,
+      { bool: numberPhase.bool?.total, nil: numberPhase.nil?.total, note: 'ADR-0023：布尔/null 按显示文本参与值命中' },
     );
     check('number:no-long-task', (numberPhase.longTasks || []).every((t) => t < 50), {
       longTasks: numberPhase.longTasks,
     });
+  }
+
+  /* ---- 0.5) 搜索目标扩展（ADR-0023 / #39）---- */
+  const targetsPhase = ready ? await runPhase('targets', pageTargetsPhase, { doc: TARGETS_DOC }) : null;
+  if (targetsPhase) {
+    report.targets = targetsPhase;
+    const t = targetsPhase;
+    const totalOf = (step) => step?.res?.total;
+    const countsOf = (step) => step?.diag?.counts || {};
+    const pathsOf = (step) => step?.dom?.resultPaths || [];
+    check(
+      'targets:filters-four',
+      JSON.stringify((t.filters || []).map((f) => f.filter)) === JSON.stringify(['all', 'key', 'value', 'path']) &&
+        JSON.stringify((t.filters || []).map((f) => f.label)) === JSON.stringify(['全部', '键名', '值', '路径']),
+      { filters: t.filters },
+    );
+    check(
+      'targets:bool-true-value-hit',
+      totalOf(t.boolTrue) === 2 && countsOf(t.boolTrue).value === 2 && (t.boolTrue?.dom?.fieldTexts || []).every((x) => x === '值'),
+      { total: totalOf(t.boolTrue), counts: countsOf(t.boolTrue), fields: t.boolTrue?.dom?.fieldTexts },
+    );
+    check('targets:bool-false-value-hit', totalOf(t.boolFalse) === 1 && countsOf(t.boolFalse).value === 1, {
+      total: totalOf(t.boolFalse),
+      counts: countsOf(t.boolFalse),
+    });
+    check('targets:null-value-hit', totalOf(t.nil) === 1 && countsOf(t.nil).value === 1, {
+      total: totalOf(t.nil),
+      counts: countsOf(t.nil),
+    });
+    check('targets:bool-case-insensitive', totalOf(t.boolUpper) === 2, { total: totalOf(t.boolUpper) });
+    check(
+      'targets:path-exact-suffix',
+      totalOf(t.pathExact) === 1 &&
+        countsOf(t.pathExact).path === 1 &&
+        pathsOf(t.pathExact)[0] === '$.data' &&
+        t.pathExact?.dom?.firstFieldText === '路径' &&
+        (t.pathExact?.dom?.pathMarks || 0) >= 1,
+      { total: totalOf(t.pathExact), counts: countsOf(t.pathExact), paths: pathsOf(t.pathExact), field: t.pathExact?.dom?.firstFieldText },
+    );
+    check('targets:path-tail', totalOf(t.pathTail) === 1 && pathsOf(t.pathTail)[0] === '$.hotel_list[1]', {
+      total: totalOf(t.pathTail),
+      paths: pathsOf(t.pathTail),
+    });
+    check('targets:path-index-suffix', totalOf(t.pathIndex) === 2 && countsOf(t.pathIndex).path === 2, {
+      total: totalOf(t.pathIndex),
+      paths: pathsOf(t.pathIndex),
+    });
+    check('targets:path-root', totalOf(t.pathRoot) === 1 && pathsOf(t.pathRoot)[0] === '$', {
+      total: totalOf(t.pathRoot),
+      paths: pathsOf(t.pathRoot),
+    });
+    check('targets:path-prefix-no-flood', totalOf(t.pathPrefix) === 0, { total: totalOf(t.pathPrefix) });
+    check('targets:path-dot-no-hit', totalOf(t.pathDot) === 0 && t.pathDot?.dom?.emptyVisible === true, {
+      total: totalOf(t.pathDot),
+      emptyVisible: t.pathDot?.dom?.emptyVisible,
+    });
+    check(
+      'targets:filter-path',
+      t.filterPath?.diag?.size === 1 && t.filterPath?.diag?.filter === 'path' && t.filterPath?.dom?.activeFilter === 'path',
+      { size: t.filterPath?.diag?.size, filter: t.filterPath?.diag?.filter, active: t.filterPath?.dom?.activeFilter },
+    );
+    check('targets:filter-key-empty', t.filterKey?.diag?.size === 0 && t.filterKey?.dom?.activeFilter === 'key', {
+      size: t.filterKey?.diag?.size,
+      active: t.filterKey?.dom?.activeFilter,
+    });
+    check('targets:filter-all', t.filterAll?.diag?.size === 1 && t.filterAll?.dom?.activeFilter === 'all', {
+      size: t.filterAll?.diag?.size,
+      active: t.filterAll?.dom?.activeFilter,
+    });
+    check('targets:jump-path-hit', t.jump?.index === 0 && t.jump?.treeCurrentVisible === true && t.jumpDom?.treeCurrent === true, {
+      index: t.jump?.index,
+      hookTreeCurrent: t.jump?.treeCurrentVisible,
+      domTreeCurrent: t.jumpDom?.treeCurrent,
+    });
+    check('targets:no-long-task', (t.longTasks || []).every((task) => task < 50), { longTasks: t.longTasks });
+    // 截图（acceptance：深/亮各一张四档 + 路径命中）：先重跑路径查询再拍
+    await page.eval(`(async () => {
+      window.__tjv.setSetting('theme', 'light');
+      await window.__tjv.search('$.data');
+      await new Promise((r) => setTimeout(r, 300));
+    })()`);
+    await page.screenshot(path.join(SHOTS, 'search-targets-light.png'));
+    await page.eval(`(async () => {
+      window.__tjv.setSetting('theme', 'dark');
+      await window.__tjv.search('$.data');
+      await new Promise((r) => setTimeout(r, 300));
+    })()`);
+    await page.screenshot(path.join(SHOTS, 'search-targets.png'));
+    report.screenshots = (report.screenshots || [])
+      .concat(path.join(SHOTS, 'search-targets-light.png'))
+      .concat(path.join(SHOTS, 'search-targets.png'));
   }
 
   /* ---- 1) .mock/1.json 搜索 ---- */
@@ -1572,7 +1722,7 @@ try {
       idle: { phase: idle.diag && idle.diag.phase, size: idle.diag && idle.diag.size, emptyText: idleDom.emptyText },
       nohit: { phase: nohit.diag && nohit.diag.phase, size: nohit.diag && nohit.diag.size, emptyText: nohitDom.emptyText },
     });
-    check('idle:query', idle.search && idle.search.phase === 'idle' && idleDom.emptyVisible === true && idleDom.emptyText === '输入关键词搜索键名或字符串值' && idleDom.visibleRows === 0, {
+    check('idle:query', idle.search && idle.search.phase === 'idle' && idleDom.emptyVisible === true && idleDom.emptyText === '输入关键词搜索键名、值或路径' && idleDom.visibleRows === 0, {
       phase: idle.search && idle.search.phase,
       emptyText: idleDom.emptyText,
       emptyVisible: idleDom.emptyVisible,
