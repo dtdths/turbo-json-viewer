@@ -12,8 +12,8 @@
  */
 import {
   EXPR_BUDGET_OPTIONS,
-  JSON_INDENT_OPTIONS,
   INDENT_OPTIONS,
+  JSON_INDENT_OPTIONS,
   ROW_HEIGHT_OPTIONS,
   type Settings,
   type SettingsKey,
