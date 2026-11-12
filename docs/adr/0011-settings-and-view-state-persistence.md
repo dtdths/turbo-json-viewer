@@ -128,3 +128,7 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 - **接线**：`main.ts` 求值时读 `settings.get('advBudget')` 传 `budget`；改档位只影响下一次执行。
 - **验收**：单测 834 → **840**（其中 `settings-state` +1 项 advBudget 默认/合法/非法回落；表达式引擎/补全/locate 共 +114）；冒烟 `smoke-settings` 24 → 26（第 11 行顺序 + `set:advBudget` 三态 + 重启恢复同步 11 项）。
 - **体积**：`page.js` / `worker.js` / `page.css` 增量已计入 ADR-0018 的整体体积记录（设置面板一行 ≈ 0）。
+
+## 指针（2026-11-12，#34 / ADR-0022）
+
+设置将扩到 **12 项**（待实现，见 ADR-0022）：现有 `copyIndent`（0/2/4）升级为 **`jsonIndent`**（紧凑 0 / 2 / 4），并同时作用于**文件导出 + 整份复制 + 子树复制**；新增 **`escapeUnicode`** 勾选项（导出转义非 ASCII，默认关）。兼容做法：读 `jsonIndent ?? copyIndent`（旧值沿用）、只写新键、缺键回落默认；存储键仍 `tjv.settings.v1`，不新增权限。设置面板 11 → 12 行（`view/panels/settings-panel.ts` 里过时的「10 行/10 项」注释一并同步）。
