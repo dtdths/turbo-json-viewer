@@ -162,7 +162,7 @@ slice 3 骨架在每行末尾渲染了 ⧉/✎ 两个 `<span class="row__action"
 ## 修订（2026-11-10）：复制入口新增「搜索结果双击」（#26）
 
 - **入口**：搜索结果行**双击** = 复制该命中节点（`hit.path`）。单击仍是跳转，语义不变。
-- **格式来源**：新增设置项 `searchCopyFormat`（ADR-0011 修订），与行尾浮条的 `defaultCopyFormat` **相互独立**，默认 **`path`**。四格式与 §1 一致（子树 JSON / 路径 / 原始值 / 键名）；`subtree` 的缩进仍读 `copyIndent`。
+- **格式来源**：新增设置项 `searchCopyFormat`（ADR-0011 修订），与行尾浮条的 `defaultCopyFormat` **相互独立**，默认 **`path`**。四格式与 §1 一致（子树 JSON / 路径 / 原始值 / 键名）；`subtree` 的缩进读「JSON 缩进」设置（2026-11-12 起键名 `jsonIndent`，旧 `copyIndent` 读取迁移；见 ADR-0022）。
 - **命中字段不区分**：`field=key` 与 `field=value` 统一按 `hit.path` 复制「该节点」，不做「键名→复键名」的智能推断（`path` 的语义是节点，不是命中的那几个字）。
 - **单击守卫**：`click` 处理里 `if (event.detail > 1) return`——双击的第二击不再重复跳转。依据：真实 CDP 鼠标实测（`clickCount 1→2`，两击 60ms），双击 = 幂等连跳（末帧像素差 0.03%、0 长任务），但会多一次 `expandTo` + 一次 `window` 请求并把「已渲染」行池从 61 缩到 50。吞掉第二击后一次双击 = 一次跳转 + 一次复制；**不用时间窗去重**（人双击 150–300ms 会漏，且误伤快速点不同行）。
 - **失败路径**：`BAD_COMMAND`（容器无「原始值」、根无「键名」）→ 不复制 + error toast「该节点不支持当前复制格式；可在设置里更换」；`TOO_LARGE` 沿用既有「引导用导出」文案。

@@ -145,7 +145,10 @@ export interface CoreApi {
   undo(rootId: RootId): Promise<EditReply>;
   redo(rootId: RootId): Promise<EditReply>;
   reset(rootId: RootId): Promise<EditReply>;
-  /** 导出当前值图 JSON（Worker stringify，-edited 下载；不受编辑器 5MB 限制） */
+  /**
+   * 导出当前值图 JSON（Worker stringify，-edited 下载；不受编辑器 5MB 限制）。
+   * `indent` 0 = 紧凑；`escapeUnicode` = 非 ASCII → `\uXXXX`（默认关，ADR-0022）。
+   */
   exportDoc(rootId: RootId, indent?: number, escapeUnicode?: boolean): Promise<ExportReply>;
 
   /* -------------------- 原始文本视图（ADR-0003 修订） -------------------- */

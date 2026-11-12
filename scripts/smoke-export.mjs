@@ -34,6 +34,10 @@ const FIXTURE = { a: { 'b.c': 'x' }, arr: [10, { k: null }] };
 const EXPECTED_TEXT = JSON.stringify(FIXTURE, null, 2);
 const CLIPBOARD_MAX_BYTES = 20 * 1024 * 1024;
 
+/** format-config phase 的 fixture：非 ASCII 值/键 + 非 BMP emoji + 无损大整数；页面内导入与 node 侧期望共用同一份文本。 */
+const FORMAT_TEXT =
+  '{"cn":"中文","emoji":"😀","ascii":"a/b","big":297532588187238660,"nested":{"键":[1,"x"]}}';
+
 const server = await startStaticServer(REPO_ROOT);
 const chrome = await launchChrome({ windowSize: '1440,900' });
 const report = {};
@@ -321,7 +325,7 @@ try {
       const out = {};
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const text = '{"cn":"中文","emoji":"😀","ascii":"a/b","big":297532588187238660,"nested":{"键":[1,"x"]}}';
+      const text = ${JSON.stringify(FORMAT_TEXT)};
       await h.loadText(text, 'format.json');
       await sleep(450);
       // 默认档（缩进 2、不转义）：与 JSON.stringify(v, null, 2) 逐字节一致
@@ -419,9 +423,7 @@ console.log(JSON.stringify(report, null, 2));
 const item = (state, mode) => (state?.menuItems ?? []).find((entry) => entry.mode === mode);
 const clipboardOk = (state, expected) => state?.clipboard == null || state?.clipboard === expected;
 
-// ---- JSON 格式化配置的期望文本（#34 / ADR-0022；与 phase format-config 的 fixture 同源）----
-const FORMAT_TEXT =
-  '{"cn":"中文","emoji":"😀","ascii":"a/b","big":297532588187238660,"nested":{"键":[1,"x"]}}';
+// ---- JSON 格式化配置的期望文本（#34 / ADR-0022；fixture 文本与 phase format-config 共用上面的常量）----
 const FORMAT_VALUE = JSON.parse(FORMAT_TEXT);
 /** 序列化文本里所有非 ASCII 字符 → \uXXXX（代理对各一个转义；与序列化器 escape 档同口径） */
 const escapeNonAscii = (text) =>
