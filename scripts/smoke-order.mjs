@@ -5,7 +5,7 @@
  *
  * 测（显示顺序是 view-only：值图 / 路径 / 复制 / 导出 / 编辑 / 搜索不受影响）：
  *   1) 默认「原始顺序」= 与今天一致（插入序）；
- *   2) 真实点设置面板第 13 行「子键排序」→ 升序 / 降序：根成员与嵌套对象成员按自然序
+ *   2) 真实点设置面板第 13 行「子键排序」→ 升序 / 降序（切档后选中按路径保留）：根成员与嵌套对象成员按自然序
  *      （`item2 < item10`、大小写忽略、中文按码元序），数组保持索引序；
  *   3) 大文档切档：按**路径**保持视口锚点（scrollTop 落到该节点新行号）；
  *   4) 大纲面板跟随显示序；搜索结果高亮按 path 跟随、不重跑；
@@ -186,6 +186,12 @@ try {
       const out = {};
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      // 选中一个节点：切档后选中必须按**路径**保留（ADR-0024 §5）
+      const betaRow = document.querySelector('.row[data-path="$.beta"]');
+      if (!betaRow) throw new Error('missing row $.beta');
+      betaRow.click();
+      await sleep(150);
+      const selectedBefore = h.state().selected;
       document.querySelector('#settingsPanel [data-setting="sortOrder"] [data-value="key-desc"]').click();
       await sleep(450);
       out.desc = {
@@ -193,6 +199,9 @@ try {
         top: window.__orderTopLevel(),
         betaChildren: window.__orderPaths().filter((p) => p.startsWith('$.beta.')),
         totalRows: h.state().totalRows,
+        selectedBefore,
+        selectedAfter: document.querySelector('.row.is-selected[data-path]')?.dataset.path ?? null,
+        stateSelectedAfter: h.state().selected,
       };
       return out;
     })()`,
@@ -366,6 +375,11 @@ const checks = {
     eq(report.desc?.top, ROOT_DESC) &&
     eq(report.desc?.betaChildren, ['$.beta.c', '$.beta.b', '$.beta.a']) &&
     report.desc?.totalRows === SMALL_ROWS,
+  // 切档后选中按路径保留（ADR-0024 §5）
+  'desc:selection-kept-by-path':
+    report.desc?.selectedBefore === '$.beta' &&
+    report.desc?.selectedAfter === '$.beta' &&
+    report.desc?.stateSelectedAfter === '$.beta',
 
   // 4) 大文档切档按路径保持锚点：$.k120 在升序是 row 120，降序后是 row 181
   'anchor:keeps-path': report.anchorBefore?.topPath === '$.k120' && report.anchorAfter?.topPath === '$.k120',
