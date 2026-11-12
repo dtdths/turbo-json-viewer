@@ -31,7 +31,8 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 | `indent` | `12` \| `16` \| `20` | `16` | CSS `--row-indent`（树缩进引导线/内边距） |
 | `typeColumn` | boolean | `false` | `TreeView.setTypeColumn` |
 | `defaultCopyFormat` | `subtree` \| `path` \| `value` \| `key` | `subtree` | 行尾浮条「复制」按此格式（右键菜单仍是 4 项显式） |
-| `copyIndent` | `2` \| `4` \| `0`（0=紧凑） | `2` | `copyNode` 的 `indent` 参数（子树 JSON 文本） |
+| `jsonIndent` | `0` \| `2` \| `4`（0=紧凑） | `2` | `copyNode.indent` 参数 + 文件导出 + 整份复制共用（ADR-0022 修订：原 `copyIndent`，读旧键迁移、只写新键） |
+| `escapeUnicode` | boolean | `false` | 导出/整份复制把非 ASCII 转义为 `\uXXXX`（ADR-0022） |
 | `repairTruncated` | boolean | `true` | `load` 的 `opts.repair`（关闭后截断文档直接 `PARSE`） |
 | `adaptiveExpand` | boolean | `true` | `load` 的 `opts.adaptiveExpand`（关闭后小文档也走默认折叠） |
 | `exportMode` | `file` \| `clipboard` | `file` | 分体按钮主操作 + 设置面板「导出方式」（ADR-0012 修订：原在 `UiState`，已迁入 `Settings`） |
@@ -134,6 +135,6 @@ v1 有 6 笔欠账写成同一条理由「待设置面板 / `ViewStateStore` 未
 - **schema**：`copyIndent`（0/2/4）升级为 **`jsonIndent`**（紧凑 0 / 2 / 4，默认 2），同一值作用于**文件导出 + 整份复制 + 子树复制**；新增 **`escapeUnicode: boolean`**（默认 `false`，导出/整份复制把非 ASCII 转义为 `\uXXXX`，输出仍是合法 JSON、BigInt 仍裸十进制）。存储键仍 `tjv.settings.v1`，不新增权限；兼容读 `jsonIndent ?? copyIndent`（新键优先、旧键也走白名单校验），只写新键、缺键回落默认。
 - **面板**：11 → **12 行**（第 6 行「复制缩进」改「JSON 缩进」，末尾新增「导出转义非 ASCII」勾选行）；`view/panels/settings-panel.ts` 里过时的「10 行/10 项」注释同步为 12。
 - **接线**：`main.ts` 文件导出（FSA 主路径 / 无 FSA 回落）与整份复制传 `settings.get('jsonIndent')` + `settings.get('escapeUnicode')`；子树复制 `copyNode.indent` 改读 `jsonIndent`；编辑回填 `getNodeJson` 仍固定 pretty(2)（不跟随设置，ADR-0022 §1）。
-- **验收**：单测 1003 → **1023**（`lossless-json` +6 / `doc-service` +2 / 契约 +1（双适配器各跑一次）/ `settings-state` +8 / `dev-hook` +2）；冒烟 `smoke-settings` 25 → **26/26**（第 12 行顺序 + `set:escape-unicode` + 重启恢复同步 12 项）、`smoke-export` 27 → **34/34**（默认档逐字节 / 紧凑 / 转义 4 空格 / 转义仍合法 JSON / 整份复制跟随 / 文件导出跟随 / 设置还原）。
+- **验收**：单测 1003 → **1023**（`lossless-json` +6 / `doc-service` +2 / 契约 +2（1 用例 × 双适配器）/ `settings-state` +8 / `dev-hook` +2）；冒烟 `smoke-settings` 25 → **26/26**（第 12 行顺序 + `set:escape-unicode` + 重启恢复同步 12 项）、`smoke-export` 27 → **34/34**（默认档逐字节 / 紧凑 / 转义 4 空格 / 转义仍合法 JSON / 整份复制跟随 / 文件导出跟随 / 设置还原）。
 - **体积**：`page.js` 48.8 → **48.9KB gz**（+0.1，预算 50 未动）、`worker.js` 63.3 → **63.5**（+0.2）、`page.css` 8.2 不变、懒加载 145.6 不变。
 - **截图**：`.spike/smoke/settings-panel.png`（深）/ `settings-applied.png`（亮），面板 12 行。

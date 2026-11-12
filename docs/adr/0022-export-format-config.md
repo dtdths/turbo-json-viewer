@@ -87,7 +87,7 @@
 
 ## 验收（2026-11-12 实现实测，#38）
 
-- **单测**：1003 → **1023**（38 文件全绿）。`lossless-json` 17 → 23（escape 档精确文本 / 代理对 / 控制字符短转义 / 合法 JSON + `parseLossless` 往返 / BigInt 不受影响 / 默认档仍逐字节等价）；`doc-service` 111 → 113（escape 透传 + compact/pretty 组合）；契约 +1（`exportDoc(rootId, indent, escapeUnicode)` 在 InProcess 与 Worker 双适配器透传）；`settings-state` 15 → 23（默认 / 三档白名单 / 旧键 `copyIndent` 迁移（新键优先）/ 写盘只含新键 / `escapeUnicode` 回落 / set 持久化）；`dev-hook` 13 → 15（`exportDocText` / `copyResolve` 读设置）。
+- **单测**：1003 → **1023**（38 文件全绿）。`lossless-json` 17 → 23（escape 档精确文本 / 代理对 / 控制字符短转义 / 合法 JSON + `parseLossless` 往返 / BigInt 不受影响 / 默认档仍逐字节等价）；`doc-service` 111 → 113（escape 透传 + compact/pretty 组合）；契约 **+2**（1 条用例在 InProcess / Worker 两个适配器各跑一次：`exportDoc(rootId, indent, escapeUnicode)` 透传）；`settings-state` 15 → 23（默认 / 三档白名单 / 旧键 `copyIndent` 迁移（新键优先）/ 写盘只含新键 / `escapeUnicode` 回落 / set 持久化）；`dev-hook` 13 → 15（`exportDocText` / `copyResolve` 读设置）。
 - **冒烟**：15 套串行全绿（`smoke-search` / `smoke-extension-search` 首跑各有 1–2 条 50ms 长任务 / 耗时阈值抖动，重跑 101/101、56/56 全绿——与改动无关的既有性能阈值抖动）。`smoke-settings` **25 → 26/26**（第 12 行顺序 + `set:escape-unicode`（默认关 → 勾选开、label/checked 同步）+ 重启恢复 12 项）；`smoke-export` **27 → 34/34**（默认档 ≡ `JSON.stringify(v,null,2)` / 紧凑档 ≡ `JSON.stringify(v)` / 转义 4 空格精确文本 + 全 ASCII / 转义输出仍是合法 JSON 且值不变 / 整份复制跟随设置 / 文件导出跟随设置 / 收尾还原默认）；其余 13 套计数不变（`smoke-edit` 回填仍 pretty(2)、`smoke-copy` 默认档期望不变）。
 - **体积**：`page.js` **48.8 → 48.9KB gz**（+0.1：设置面板一行 + 三处接线；预算 50 未动）、`worker.js` **63.3 → 63.5KB gz**（+0.2：序列化器 escape 选项与 `quoteString`；无硬预算，ADR-0020 §9 口径）、`page.css` **8.2 不变**、懒加载 **145.6（146）不变**。
 - **截图**：`.spike/smoke/settings-panel.png`（深）/ `settings-applied.png`（亮），面板 12 行。
