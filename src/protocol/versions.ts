@@ -1,7 +1,7 @@
 /**
  * protocol/versions — 版本号语义与协议常量。
  */
-import type { ExprBudgetLevel } from './types';
+import type { ExprBudgetLevel, SortOrder } from './types';
 
 /** 固定行高（px）；唯一允许进入逻辑层的视觉参数之一 */
 export const ROW_HEIGHT = 24;
@@ -9,6 +9,14 @@ export const ROW_HEIGHT = 24;
 export const OVERSCAN = 8;
 /** 浏览器单容器 scrollHeight 上限 */
 export const MAX_SCROLL_PX = 33_554_428;
+
+/* --------------------- 子键显示顺序（#40 / ADR-0024） --------------------- */
+
+/**
+ * 子键显示排序三档（顺序 = 设置面板展示顺序；`raw` 为默认）。
+ * **单一来源**：core 的白名单校验与 viewmodel 的设置项都从这里取，面板只补文案。
+ */
+export const SORT_ORDER_OPTIONS: readonly SortOrder[] = ['raw', 'key-asc', 'key-desc'];
 
 /* --------------------- 多文档标签（#18 / ADR-0009） --------------------- */
 

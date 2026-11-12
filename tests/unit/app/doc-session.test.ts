@@ -290,6 +290,17 @@ describe('DocSession — 回包落地（版本状态 + 意图动作矩阵）', (
     expect(plan.scroll).toEqual({ kind: 'keep' });
   });
 
+  it('syncRootVersion：只更新当前会话根，其它根的版本快照不碰（#40 / ADR-0024）', () => {
+    const session = opened();
+    expect(session.syncRootVersion('doc:other', 9, 99)).toBe(false);
+    expect(session.rowVersion).toBe(session.snapshot.rowVersion);
+    expect(session.syncRootVersion(ROOT, 7, 42)).toBe(true);
+    expect(session.snapshot).toMatchObject({ rootId: ROOT, rowVersion: 7, totalRows: 42 });
+    // docRevision / rootId 不动（显示排序不是值图变化）
+    expect(session.docRevision).toBe(session.snapshot.docRevision);
+    expect(session.rootId).toBe(ROOT);
+  });
+
   it('连续落地：第二次 land 相对上一次的状态算 delta 与 changed', () => {
     const session = opened();
     session.land({ rootId: ROOT, docRevision: 1, rowVersion: 2, totalRows: 5 }, { kind: 'toggle' });

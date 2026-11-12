@@ -19,6 +19,7 @@ import {
   type Settings,
   type SettingsKey,
 } from '../../viewmodel/settings-state';
+import type { SortOrder } from '../../protocol/types';
 import { EXPORT_MODE_LABELS } from '../../viewmodel/export-state';
 
 export interface SettingsPanelOptions {
@@ -75,13 +76,17 @@ const INDENT_ITEMS: readonly SegItem[] = INDENT_OPTIONS.map((value) => ({
   ariaLabel: `${value}px`,
 }));
 
-/** 子键显示排序（#40 / ADR-0024 §3）：原始顺序为默认；取值集合与 `SORT_ORDER_OPTIONS` 同源
- *  （normalizeSettings 会校验非法值回落默认）。数组恒索引序，排序只影响对象成员。 */
-const SORT_ORDER_ITEMS: readonly SegItem[] = [
-  { value: SORT_ORDER_OPTIONS[0], label: '原始' },
-  { value: SORT_ORDER_OPTIONS[1], label: '升序' },
-  { value: SORT_ORDER_OPTIONS[2], label: '降序' },
-];
+/** 子键显示排序（#40 / ADR-0024 §3）：原始顺序为默认；取值集合 = `SORT_ORDER_OPTIONS`
+ *  （单一来源在 protocol/versions），文案按值显式映射、不依赖数组下标。 */
+const SORT_ORDER_LABELS: Record<SortOrder, string> = {
+  raw: '原始',
+  'key-asc': '升序',
+  'key-desc': '降序',
+};
+const SORT_ORDER_ITEMS: readonly SegItem[] = SORT_ORDER_OPTIONS.map((value) => ({
+  value,
+  label: SORT_ORDER_LABELS[value],
+}));
 
 const COPY_FORMAT_ITEMS: readonly SegItem[] = [
   { value: 'subtree', label: '子树 JSON' },
@@ -112,6 +117,15 @@ const EXPR_BUDGET_ITEMS: readonly SegItem[] = [
 ];
 
 /* ---------------- helpers ---------------- */
+
+/** 行下说明（`.settings-panel__hint`）：seg / check 共用；id 规则 = `setting-<key>-hint`。 */
+function appendRowHint(row: HTMLElement, key: SettingsKey, text: string, id = `setting-${key}-hint`): void {
+  const hint = document.createElement('p');
+  hint.className = 'settings-panel__hint';
+  hint.id = id;
+  hint.textContent = text;
+  row.appendChild(hint);
+}
 
 function rowEl(key: SettingsKey): HTMLDivElement {
   const row = document.createElement('div');
@@ -261,13 +275,7 @@ export class SettingsPanel {
       unit.setAttribute('aria-hidden', 'true');
       row.appendChild(unit);
     }
-    if (spec.hint) {
-      const hint = document.createElement('p');
-      hint.className = 'settings-panel__hint';
-      hint.id = `setting-${spec.key}-hint`;
-      hint.textContent = spec.hint;
-      row.appendChild(hint);
-    }
+    if (spec.hint) appendRowHint(row, spec.key, spec.hint);
 
     this.segs.set(spec.key, buttons);
     return row;
@@ -291,12 +299,8 @@ export class SettingsPanel {
     checkbox.setAttribute('aria-describedby', hintId);
     checkbox.addEventListener('change', () => this.handleCheckChange(spec.key, checkbox));
 
-    const hint = document.createElement('p');
-    hint.className = 'settings-panel__hint';
-    hint.id = hintId;
-    hint.textContent = spec.hint;
-
-    row.append(label, checkbox, hint);
+    row.append(label, checkbox);
+    appendRowHint(row, spec.key, spec.hint, hintId);
     this.checks.set(spec.key, checkbox);
     return row;
   }

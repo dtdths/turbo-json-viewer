@@ -16,16 +16,14 @@
  * 平局兜底保证不同键永不为 0 ⇒ 严格全序（传递、反对称），排序结果与平台/调用顺序无关。
  * 中文 / 非 ASCII 键按码元序（不做拼音、不做 locale 排序，ADR-0024「已知差距」）。
  */
+import { SORT_ORDER_OPTIONS } from '../protocol/versions';
 import type { SortOrder } from '../protocol/types';
 
 export type { SortOrder };
 
-/** 三档规则（协议值）。 */
-const ORDERS: readonly SortOrder[] = ['raw', 'key-asc', 'key-desc'];
-
 /** 把任意输入归一化为合法档位：只接受三档协议值，其余一律回落 `'raw'`（白名单）。 */
 export function normalizeSortOrder(order: unknown): SortOrder {
-  return ORDERS.includes(order as SortOrder) ? (order as SortOrder) : 'raw';
+  return SORT_ORDER_OPTIONS.includes(order as SortOrder) ? (order as SortOrder) : 'raw';
 }
 
 interface KeySegment {

@@ -131,6 +131,17 @@ export class DocSession {
   }
 
   /**
+   * 同步一个根的版本字段（#40 / ADR-0024 §6）：`setOrder` 的**多根快照**回包不适合逐根走 `land()`
+   * （后者会换根、给滚动计划、清选中）。只在该根恰是当前会话根时更新 `rowVersion`/`totalRows`，
+   * 返回是否更新；其余持有者（标签 / 表达式视图）由 app 装配层回填。
+   */
+  syncRootVersion(rootId: string, rowVersion: number, totalRows: number): boolean {
+    if (this.state.rootId !== rootId) return false;
+    this.state = { ...this.state, rowVersion, totalRows };
+    return true;
+  }
+
+  /**
    * 还原一份会话快照（表达式视图返回文档树用，ADR-0018 §1）：
    * 表达式结果根是**视图层临时切换**，文档根的 rootId/docRevision/rowVersion/totalRows 原样恢复，
    * 不重新走 `land()`（避免把 expr 根的 rowVersion 写进文档会话）。

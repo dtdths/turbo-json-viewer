@@ -13,7 +13,7 @@
 
 | # | seam | interface | v1 adapter | 测试 adapter | 接口背后藏什么（depth） |
 |---|---|---|---|---|---|
-| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 26 条命令、4 类根、两套版本号、取消/超时/load 生命周期 |
+| S1 | 主线程 ↔ Worker | `CoreApi` + `CoreTransport` | `WorkerTransport`（MessageChannel） | `InProcessTransport`、`FakeTransport` | 34 条命令（清单以 `src/protocol/messages.ts` 为单一真相）、4 类根、两套版本号、取消/超时/load 生命周期 |
 | S2 | viewmodel → view | `RowWindowSource.snapshot()` / `RawWindowSource.snapshot()` | `TransportRowSource` + `RawWindowSource` | `ScriptedRowSource` | 单飞、合并、seq 丢弃、版本校验、overscan、预取、锚点换算 |
 | S3 | TreeView → 单行 / RawView → 单行 | `RowRenderer` | `DomRowPool` + `RawView` 行池 | `RecordingRowRenderer` | 行池复用、textContent、选中/命中态、固定行高纪律 |
 | S4 | 全局 → 样式 | `ThemeController` + `RowMetrics` | `tokens.css`（`data-theme`） | `FixedThemeController` | token 名与语义、双主题、Canvas palette 读取 |
@@ -60,6 +60,8 @@ export type Command =
   | { t:'rawLocate'; rootId:RootId; offset:number } | { t:'rawSource'; rootId:RootId; maxBytes?:number }
   | { t:'outline'; rootId:RootId; path:Path; start:number; count:number }
   | { t:'fidelity'; rootId:RootId }
+  | { t:'setOrder'; order:SortOrder }                                 // #40 / ADR-0024：全局显示顺序，对全部活根重排
+  | { t:'rowOfPath'; rootId:RootId; path:Path }                       // #40 / ADR-0024：路径→可见行号（只读）
   | { t:'stats'; rootId:RootId };
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];
 // src/app/transport/worker-transport.ts —— 3 个方法；替换传输不改调用方
@@ -81,6 +83,8 @@ export interface CoreTransport {
 | `search` | `SearchReply(seq, docRevision, hits, total, truncated)` | 不建 root、可取消；`total` = 回包命中数（截断时即 `SEARCH_LIMIT`，raw 需放开上限统计） |
 | `fidelity` | `FidelityReply(rootId, docRevision, report)` | **只读**、不推版本；扫描 worker 内保留的源文本（单趟线性、每 256K 字符让出（宏任务）、可取消）；报告按根对象身份缓存（编辑不重扫）；文档替换 → `CANCELLED`；报告只留 ≤100 条片段（ADR-0003 修订 2026-11-09 / #23） |
 | `stats` | `StatsReply(rootId, docRevision, rowVersion, totalRows)` | 只读版本/行数快照，不推进任何版本 |
+| `setOrder` | `SetOrderReply(order, changed, roots[{rootId,rowVersion,totalRows}])` | **全局**显示顺序（#40 / ADR-0024）：对全部活根重排并各自 `rowVersion++`（`docRevision` 不动）；同挡 `changed=false` 版本不动但仍回全量 roots 快照 |
+| `rowOfPath` | `RowOfPathReply(rootId, row, totalRows)` | 只读、不推版本；祖先折叠 → `row=-1`、路径不存在 → `BAD_COMMAND`（与 `valueAt` 同口径） |
 | `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | `RawMeta(mode,totalLines,chars,maxLineLength,buildMs?,damaged?)` / `RawWindow(seq,start,lines,totalLines,mode,truncated?)` / `RawLocateReply(line,totalLines)` / `RawSourceReply(text,bytes)` | 只读、不推版本；首调惰性建索引；行文本 ≤4096 字符；`rawSource` 超 `maxBytes` 抛 `TOO_LARGE`（ADR-0003 修订） |
 | `outline` | `OutlineReply(rootId, path, kind, total, start, children[OutlineChild])` | 只读、不推版本；按容器**按需分页**（`OUTLINE_PAGE=200` / 上限 500），不建树、不缓存、不依赖树展开态；scalar 路径回 `total:0`（ADR-0013） |
 | `eval` | `EvalReply(rootId, docRevision, totalRows, ms)` | 最多保留 3 个结果根 |

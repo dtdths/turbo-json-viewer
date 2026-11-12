@@ -179,6 +179,13 @@ export interface TrailReply {
   trail: MapTrail;
 }
 
+/** 一个活根的版本快照（#40 / ADR-0024 §6）：多根回包与页面回填的最小字段簇。 */
+export interface RootVersion {
+  rootId: RootId;
+  rowVersion: Rev;
+  totalRows: number;
+}
+
 /**
  * 切档回包（#40 / ADR-0024 §6）：`changed` = 与服务级当前档位相比是否真的换了挡。
  * `roots` 是**全部活根**的版本快照（顺序无关）：页面按 rootId 回填标签会话 / 表达式视图坐标。
@@ -186,7 +193,7 @@ export interface TrailReply {
 export interface SetOrderReply {
   order: SortOrder;
   changed: boolean;
-  roots: Array<{ rootId: RootId; rowVersion: Rev; totalRows: number }>;
+  roots: RootVersion[];
 }
 
 /** 路径 → 可见行号（只读；祖先折叠 → -1，路径不存在 → BAD_COMMAND）。 */

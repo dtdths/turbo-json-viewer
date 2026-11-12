@@ -13,7 +13,7 @@
  *   6) 复制（子树 JSON）与导出文本仍是**值图键序**（不受显示排序影响）；
  *   7) 刷新后设置持久化；刷新后新 load 的文档直接按规则排序（服务级 order）；
  *   8) 0 长任务 / 0 page 异常 / 0 console error。
- * 截图落 `.spike/smoke/order-{settings,asc,desc,anchor,outline,light}.png`。
+ * 截图落 `.spike/smoke/order-{settings,anchor,outline,light}.png`。
  */
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
