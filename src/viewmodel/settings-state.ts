@@ -6,13 +6,14 @@
  *
  * 红线：只存本地（chrome.storage.local / localStorage 兜底），永不存文档内容。
  */
-import type { CopyFormat, ExprBudgetLevel } from '../protocol/types';
+import type { CopyFormat, ExprBudgetLevel, SortOrder } from '../protocol/types';
 import { normalizeExportMode, type ExportMode } from './export-state';
 
 export type SettingsKey =
   | 'theme'
   | 'rowHeight'
   | 'indent'
+  | 'sortOrder'
   | 'typeColumn'
   | 'defaultCopyFormat'
   | 'jsonIndent'
@@ -29,6 +30,8 @@ export interface Settings {
   rowHeight: number;
   /** 树缩进（px）：12 / 16 / 20 */
   indent: number;
+  /** 子键显示排序（第 13 项；ADR-0024 §3）：原始顺序 / 键名升序 / 键名降序 */
+  sortOrder: SortOrder;
   /** 键右侧显示类型列 */
   typeColumn: boolean;
   /** 行尾浮条「复制」使用的格式（右键菜单仍是 4 项显式） */
@@ -64,6 +67,8 @@ export const UI_STORAGE_KEY = 'tjv.ui.v1';
 
 export const ROW_HEIGHT_OPTIONS = [20, 22, 24, 26] as const;
 export const INDENT_OPTIONS = [12, 16, 20] as const;
+/** 子键显示排序三档（顺序 = 面板展示顺序；原始顺序为默认；ADR-0024 §3） */
+export const SORT_ORDER_OPTIONS = ['raw', 'key-asc', 'key-desc'] as const;
 export const JSON_INDENT_OPTIONS = [0, 2, 4] as const;
 /** 表达式预算档位（顺序 = 面板展示顺序；标准为默认） */
 export const EXPR_BUDGET_OPTIONS = ['loose', 'standard', 'strict'] as const;
@@ -72,6 +77,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
   rowHeight: 24,
   indent: 16,
+  sortOrder: 'raw',
   typeColumn: false,
   defaultCopyFormat: 'subtree',
   jsonIndent: 2,
@@ -113,6 +119,9 @@ export function normalizeSettings(raw: unknown): Settings {
     theme: THEMES.has(bag.theme as string) ? (bag.theme as Settings['theme']) : DEFAULT_SETTINGS.theme,
     rowHeight: pickNumber(bag.rowHeight, ROW_HEIGHT_OPTIONS, DEFAULT_SETTINGS.rowHeight),
     indent: pickNumber(bag.indent, INDENT_OPTIONS, DEFAULT_SETTINGS.indent),
+    sortOrder: (SORT_ORDER_OPTIONS as readonly string[]).includes(bag.sortOrder as string)
+      ? (bag.sortOrder as SortOrder)
+      : DEFAULT_SETTINGS.sortOrder,
     typeColumn: pickBoolean(bag.typeColumn, DEFAULT_SETTINGS.typeColumn),
     defaultCopyFormat: COPY_FORMATS.has(bag.defaultCopyFormat as string)
       ? (bag.defaultCopyFormat as CopyFormat)

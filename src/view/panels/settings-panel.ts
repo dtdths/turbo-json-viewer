@@ -2,7 +2,7 @@
  * view/panels/settings-panel — 设置面板的 DOM 层（ADR-0011 §1 / §4）。
  *
  * 边界：
- *   - 自建 12 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
+ *   - 自建 13 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
  *   - 控件状态只从 `Settings` 快照同步；用户改动经 `opts.onChange` 上抛，由 app 调
  *     `SettingsState.set()`，再经订阅回到 `render()`。本模块不读写存储、不碰主题/CSS 变量。
  *
@@ -15,6 +15,7 @@ import {
   INDENT_OPTIONS,
   JSON_INDENT_OPTIONS,
   ROW_HEIGHT_OPTIONS,
+  SORT_ORDER_OPTIONS,
   type Settings,
   type SettingsKey,
 } from '../../viewmodel/settings-state';
@@ -25,7 +26,7 @@ export interface SettingsPanelOptions {
   onChange(key: SettingsKey, value: Settings[SettingsKey]): void;
 }
 
-/** 12 项设置的任一值（= 各字段类型的联合） */
+/** 13 项设置的任一值（= 各字段类型的联合） */
 type SettingValue = Settings[SettingsKey];
 interface SegItem {
   value: SettingValue;
@@ -45,6 +46,8 @@ interface SegRowSpec {
   items: readonly SegItem[];
   /** 行尾小字单位（如 `px`），不占按钮文案 */
   unit?: string;
+  /** 行下说明（可选；仅新的排序行使用，提示作用范围） */
+  hint?: string;
 }
 
 interface CheckRowSpec {
@@ -53,7 +56,7 @@ interface CheckRowSpec {
   hint: string;
 }
 
-/* ---------------- 12 行的固定顺序与文案（ADR-0011 §1 及其 2026-11-03 / 2026-11-10 修订 + ADR-0012 修订 + ADR-0022） ---------------- */
+/* ---------------- 13 行的固定顺序与文案（ADR-0011 §1 及其 2026-11-03 / 2026-11-10 修订 + ADR-0012 修订 + ADR-0022 + ADR-0024 §3） ---------------- */
 
 const THEME_ITEMS: readonly SegItem[] = [
   { value: 'dark', label: '深色' },
@@ -71,6 +74,14 @@ const INDENT_ITEMS: readonly SegItem[] = INDENT_OPTIONS.map((value) => ({
   label: String(value),
   ariaLabel: `${value}px`,
 }));
+
+/** 子键显示排序（#40 / ADR-0024 §3）：原始顺序为默认；取值集合与 `SORT_ORDER_OPTIONS` 同源
+ *  （normalizeSettings 会校验非法值回落默认）。数组恒索引序，排序只影响对象成员。 */
+const SORT_ORDER_ITEMS: readonly SegItem[] = [
+  { value: SORT_ORDER_OPTIONS[0], label: '原始' },
+  { value: SORT_ORDER_OPTIONS[1], label: '升序' },
+  { value: SORT_ORDER_OPTIONS[2], label: '降序' },
+];
 
 const COPY_FORMAT_ITEMS: readonly SegItem[] = [
   { value: 'subtree', label: '子树 JSON' },
@@ -144,6 +155,13 @@ export class SettingsPanel {
       this.buildSegRow({ key: 'theme', label: '主题', items: THEME_ITEMS }),
       this.buildSegRow({ key: 'rowHeight', label: '行高', items: ROW_HEIGHT_ITEMS, unit: 'px' }),
       this.buildSegRow({ key: 'indent', label: '缩进', items: INDENT_ITEMS, unit: 'px' }),
+      // 第 13 行（#40 / ADR-0024 §3）：子键显示排序；只影响树/大纲/表达式结果树的显示顺序
+      this.buildSegRow({
+        key: 'sortOrder',
+        label: '子键排序',
+        items: SORT_ORDER_ITEMS,
+        hint: '仅影响树与大纲的显示顺序；复制、导出与路径不变',
+      }),
       this.buildCheckRow({ key: 'typeColumn', label: '显示类型列', hint: '键右侧显示 JSON 类型' }),
       this.buildSegRow({
         key: 'defaultCopyFormat',
@@ -219,6 +237,7 @@ export class SettingsPanel {
     seg.className = 'settings-panel__seg';
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-labelledby', label.id);
+    if (spec.hint) seg.setAttribute('aria-describedby', `setting-${spec.key}-hint`);
 
     const buttons: SegButton[] = [];
     for (const item of spec.items) {
@@ -241,6 +260,13 @@ export class SettingsPanel {
       unit.textContent = spec.unit;
       unit.setAttribute('aria-hidden', 'true');
       row.appendChild(unit);
+    }
+    if (spec.hint) {
+      const hint = document.createElement('p');
+      hint.className = 'settings-panel__hint';
+      hint.id = `setting-${spec.key}-hint`;
+      hint.textContent = spec.hint;
+      row.appendChild(hint);
     }
 
     this.segs.set(spec.key, buttons);

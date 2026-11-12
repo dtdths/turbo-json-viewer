@@ -378,7 +378,7 @@ describe('dev hook — API 契约与纯快照组装', () => {
   it('settingsState()：设置快照 + ui 状态 + 持久化标记', () => {
     const deps = fakeDeps({
       settings: {
-        snapshot: () => ({ theme: 'light' }),
+        snapshot: () => ({ theme: 'light', sortOrder: 'raw' }),
         uiState: () => ({ panel: 'search', railCollapsed: true, viewMode: 'raw' }),
         loadedFromStore: true,
         get: () => 0,
@@ -386,6 +386,7 @@ describe('dev hook — API 契约与纯快照组装', () => {
     });
     expect(createDevHook(deps).settingsState()).toEqual({
       theme: 'light',
+      sortOrder: 'raw',
       ui: { panel: 'search', railCollapsed: true, viewMode: 'raw' },
       loadedFromStore: true,
     });

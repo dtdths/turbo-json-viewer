@@ -52,6 +52,7 @@ import type {
   JsonKind,
   RawMeta,
   Row,
+  SortOrder,
 } from '../protocol/types';
 import type { EditReply, LoadReply } from '../protocol/messages';
 import { DocSession, type LandingPlan, type SessionState } from './doc-session';
@@ -416,6 +417,17 @@ let editingPath: string | null = null;
 let editingRootId: string | null = null;
 let ctxPath: string | null = null;
 
+/* ---------------- 表达式结果视图态（#12 / #27 / ADR-0018） ----------------
+ * 提前声明：`applySettings()` 在模块初始化期首跑会经 `syncSortOrder` 读取活动根
+ * （#40 / ADR-0024），不能等到表达式小节才初始化（`let` 的 TDZ）。
+ * `exprView` = 最近一次成功结果的元信息（会话内保留，换文档即清）；`exprViewActive` =
+ * 树区当前是否显示该结果根（「切文档树模式即回」后仍保留，重进表达式模式可恢复）。
+ * 结果根本体在 worker 的 RootStore 里（LRU 3），页面只持坐标。 */
+let exprView: ExprViewState | null = null;
+let exprViewActive = false;
+/** 进入表达式视图前的文档会话（返回文档树时原样 restore；表达式视图不改文档根版本） */
+let docSessionBeforeExpr: SessionState | null = null;
+
 /* ---------------- 工作区接线（#18 / ADR-0009）：活动标签 ↔ 模块级视图态 ---------------- */
 
 let unbindRowSource: (() => void) | null = null;
@@ -772,6 +784,106 @@ const settingsPanel = new SettingsPanel(settingsHost, {
 });
 settingsPanel.mount();
 
+/**
+ * 子键显示排序（#40 / ADR-0024 §5/§6）：切换设置 → `core.setOrder` → 全根版本回填 →
+ * 活动根窗口重取 → 按路径还原视口锚点 → 大纲刷新。
+ *
+ * - `appliedOrder` 相同即 no-op：其它设置变化（行高 / 主题…）不得重复发重排请求；
+ * - `sortSyncSeq` 让连续切档只落地最后一次回包（迟到的旧档回包丢弃）；
+ * - 启动时 `appliedOrder = null`：即使还没有文档也发一次 `setOrder` 同步服务级规则，
+ *   保证之后 load 的文档用对顺序；无活动根时跳过窗口 / 锚点动作。
+ */
+let appliedOrder: SortOrder | null = null;
+let sortSyncSeq = 0;
+
+/** 切换前抓树视口锚点：顶端可见行的规范路径 + 行内像素偏移（原文视图不参与）。 */
+function captureOrderAnchor(activeRoot: string | null): { path: string; offsetPx: number } | null {
+  if (!activeRoot || isRawView()) return null;
+  const snapshot = rowSource.snapshot();
+  if (snapshot.rootId !== activeRoot || snapshot.rows.length === 0) return null;
+  const rowHeight = tree.rowHeightPx();
+  const scrollTopPx = tree.scrollTopPx();
+  const topRow = Math.floor(scrollTopPx / rowHeight);
+  const row = snapshot.rows[topRow - snapshot.start];
+  if (!row) return null;
+  return { path: row.path, offsetPx: scrollTopPx - topRow * rowHeight };
+}
+
+async function syncSortOrder(next: SortOrder): Promise<void> {
+  if (next === appliedOrder) return;
+  const seq = ++sortSyncSeq;
+  appliedOrder = next;
+  const activeRoot = exprViewActive && exprView ? exprView.rootId : session.rootId;
+  const anchor = captureOrderAnchor(activeRoot);
+  try {
+    const reply = await core.setOrder(next);
+    if (seq !== sortSyncSeq) return; // 更晚的切档已接管：旧回包丢弃
+    // 全根版本回填（docRevision 不变；rowVersion 是行映射的唯一失效令牌）
+    for (const entry of reply.roots) {
+      if (session.rootId === entry.rootId) {
+        session.restore({
+          ...session.snapshot,
+          rowVersion: entry.rowVersion,
+          totalRows: entry.totalRows,
+        });
+      }
+      if (docSessionBeforeExpr && docSessionBeforeExpr.rootId === entry.rootId) {
+        docSessionBeforeExpr = {
+          ...docSessionBeforeExpr,
+          rowVersion: entry.rowVersion,
+          totalRows: entry.totalRows,
+        };
+      }
+      if (exprView && exprView.rootId === entry.rootId) {
+        exprView.rowVersion = entry.rowVersion;
+        exprView.totalRows = entry.totalRows;
+      }
+      // 非活动标签存档的表达式结果（TabExtras 持引用；重进表达式面板会按它恢复版本）
+      for (const extras of tabExtras.values()) {
+        const view = extras.exprView;
+        if (view && view.rootId === entry.rootId) {
+          view.rowVersion = entry.rowVersion;
+          view.totalRows = entry.totalRows;
+        }
+      }
+      for (const id of workspace.ids) {
+        const tab = workspace.get(id);
+        if (tab && tab.rootId === entry.rootId) {
+          workspace.update(id, { rowVersion: entry.rowVersion, totalRows: entry.totalRows });
+        }
+      }
+    }
+    // 大纲跟随显示序（未打开 / 已关闭时 refresh 自身 no-op）
+    void outlineState.refresh();
+    // 等待期间切了标签 / 进了表达式视图 → 显示根已变：只做版本回填，不碰当前窗口与视口
+    if (!activeRoot || !isActiveDocRoot(activeRoot)) return;
+    const version = reply.roots.find((entry) => entry.rootId === activeRoot);
+    if (!version) return;
+    // 先按新版本重取窗口（上一帧保留，防闪）；锚点行号换算后再把视口滚回原节点
+    rowSource.setRoot(
+      { rootId: activeRoot, rowVersion: version.rowVersion, totalRows: version.totalRows },
+      {},
+    );
+    rowSource.requestWindow();
+    if (!anchor) return;
+    try {
+      const { row } = await core.rowOfPath({ rootId: activeRoot, path: anchor.path });
+      if (seq !== sortSyncSeq || !isActiveDocRoot(activeRoot)) return;
+      // 不可见（祖先折叠 / 总行数变化）→ 回顶部；否则按新行号 + 行内像素偏移还原视口
+      const targetPx = row >= 0 ? row * tree.rowHeightPx() + anchor.offsetPx : 0;
+      tree.scrollToPx(targetPx);
+      rowSource.scrollTo(tree.scrollTopPx());
+      rowSource.requestWindow();
+    } catch {
+      /* 锚点换算失败不阻断切档：保留上一帧，用户可继续滚动 */
+    }
+  } catch (error) {
+    if (seq !== sortSyncSeq) return;
+    appliedOrder = null; // 失败不记挡：下一次设置变化会重试
+    if (session.rootId) showStatusHint(`子键排序切换失败：${formatCoreError(error)}`);
+  }
+}
+
 /** 把当前设置落到 DOM/视图几何上（幂等；订阅变化后重放）。 */
 function applySettings(): void {
   const current = settings.snapshot();
@@ -790,6 +902,8 @@ function applySettings(): void {
   settingsPanel.render(current);
   // 导出方式的唯一真相源是 Settings（ADR-0012 修订）：任一侧改动都经订阅回到这里
   syncExportUi();
+  // 子键显示排序（#40 / ADR-0024）：内部按 appliedOrder 去重，非排序设置变化不会发重排请求
+  void syncSortOrder(current.sortOrder);
 }
 
 settings.subscribe(() => applySettings());
@@ -798,9 +912,8 @@ applySettings();
 /* ---------------- 表达式视图（#12 / #27 / ADR-0018） ---------------- */
 
 /**
- * 表达式结果视图态。`exprView` = **最近一次成功结果**的元信息（会话内保留，换文档即清）；
- * `exprViewActive` = 树区当前是否显示该结果根（「切文档树模式即回」后仍保留，重进表达式模式可恢复）。
- * 结果根本体在 worker 的 RootStore 里（LRU 3），页面只持坐标，不持文档。
+ * 表达式结果视图态（变量本身在「session state」小节提前声明，见上）。
+ * 结果根本体在 worker 的 RootStore 里（LRU 3），页面只持坐标。
  */
 interface ExprViewState {
   rootId: string;
@@ -819,10 +932,6 @@ interface ExprViewState {
   seq: number;
 }
 
-let exprView: ExprViewState | null = null;
-let exprViewActive = false;
-/** 进入表达式视图前的文档会话（返回文档树时原样 restore；表达式视图不改文档根版本） */
-let docSessionBeforeExpr: SessionState | null = null;
 /** 求值序号：迟到回包丢弃（与 search 同口径） */
 let exprSeq = 0;
 let exprRunning = false;

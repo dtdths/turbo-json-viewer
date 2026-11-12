@@ -8,6 +8,7 @@ import {
   ROW_HEIGHT_OPTIONS,
   SETTINGS_STORAGE_KEY,
   SettingsState,
+  SORT_ORDER_OPTIONS,
   UI_STORAGE_KEY,
   type SettingsStore,
 } from '../../../src/viewmodel/settings-state';
@@ -46,7 +47,24 @@ describe('settings-state — 默认值与校验', () => {
       adaptiveExpand: true,
       advBudget: 'standard',
       escapeUnicode: false,
+      sortOrder: 'raw',
     });
+  });
+
+  it('sortOrder：默认原始顺序 / 三档合法保留 / 非法回落（#40 / ADR-0024 §3）', () => {
+    expect(DEFAULT_SETTINGS.sortOrder).toBe('raw');
+    expect(normalizeSettings({}).sortOrder).toBe('raw');
+    expect(normalizeSettings({ sortOrder: 'raw' }).sortOrder).toBe('raw');
+    expect(normalizeSettings({ sortOrder: 'key-asc' }).sortOrder).toBe('key-asc');
+    expect(normalizeSettings({ sortOrder: 'key-desc' }).sortOrder).toBe('key-desc');
+    expect(normalizeSettings({ sortOrder: 'bogus' }).sortOrder).toBe('raw');
+    expect(normalizeSettings({ sortOrder: 'key_desc' }).sortOrder).toBe('raw');
+    expect(normalizeSettings({ sortOrder: 1 }).sortOrder).toBe('raw');
+    expect(normalizeSettings({ sortOrder: null }).sortOrder).toBe('raw');
+  });
+
+  it('sortOrder 选项集合固定：原始 / 升序 / 降序（ADR-0024 §3）', () => {
+    expect([...SORT_ORDER_OPTIONS]).toEqual(['raw', 'key-asc', 'key-desc']);
   });
 
   it('advBudget：默认标准 / 合法保留 / 非法回落（#27 / ADR-0018 §7）', () => {
@@ -129,6 +147,7 @@ describe('settings-state — 默认值与校验', () => {
         repairTruncated: 1,
         adaptiveExpand: 'true',
         escapeUnicode: 'yes',
+        sortOrder: 'bogus',
       }),
     ).toEqual(DEFAULT_SETTINGS);
   });
@@ -273,6 +292,45 @@ describe('settings-state — load / set / 持久化', () => {
     expect(state.set('rowHeight', 999)).toBe(true);
     expect(state.get('rowHeight')).toBe(24);
     expect(store.writes.at(-1)?.value).toMatchObject({ rowHeight: 24 });
+  });
+
+  it('load：旧存储缺 sortOrder 键 → 回落 raw（ADR-0024 §3）', async () => {
+    const store = fakeStore({ [SETTINGS_STORAGE_KEY]: { theme: 'light', rowHeight: 22 } });
+    const state = new SettingsState();
+    await state.load(store);
+    expect(state.get('sortOrder')).toBe('raw');
+    expect(state.get('theme')).toBe('light'); // 其余字段照常读回
+    expect(state.snapshot().sortOrder).toBe('raw'); // 快照含新键（写盘只写新键）
+  });
+
+  it('sortOrder：写穿持久化 + 通知 + 重载读回 + 同值 no-op（ADR-0024 §3）', async () => {
+    const store = fakeStore();
+    const state = new SettingsState();
+    await state.load(store);
+    const listener = vi.fn();
+    state.subscribe(listener);
+
+    expect(state.get('sortOrder')).toBe('raw');
+    expect(state.set('sortOrder', 'key-desc')).toBe(true);
+    expect(state.get('sortOrder')).toBe('key-desc');
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.writes.at(-1)).toEqual({
+      key: SETTINGS_STORAGE_KEY,
+      value: expect.objectContaining({ sortOrder: 'key-desc' }),
+    });
+
+    expect(state.set('sortOrder', 'key-desc')).toBe(false); // 同值 no-op
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    // 非法值回落默认 raw（与其它字段同一纪律），而不是写进脏数据
+    expect(state.set('sortOrder', 'bogus')).toBe(true);
+    expect(state.get('sortOrder')).toBe('raw');
+
+    // 重载：读回持久化的合法档位
+    expect(state.set('sortOrder', 'key-asc')).toBe(true);
+    const reloaded = new SettingsState();
+    await reloaded.load(store);
+    expect(reloaded.get('sortOrder')).toBe('key-asc');
   });
 
   it('setUi：写穿 UI 键；内存态即时更新', async () => {
