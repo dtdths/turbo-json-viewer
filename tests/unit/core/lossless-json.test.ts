@@ -275,6 +275,78 @@ describe('lossless-json — serializeLossless（ADR-0020 §4.4）', () => {
   });
 });
 
+describe('lossless-json — serializeLossless 非 ASCII 转义档（ADR-0022 §2）', () => {
+  it('默认档（opts 省略 / {} / escapeUnicode:false）仍与 JSON.stringify 逐字节一致', () => {
+    const values: unknown[] = [
+      'a"b\\c\n\t/😀',
+      '中é\u007f',
+      { '中': '文', '😀': ['é', '\u0001'] },
+      '\uD800', // 孤立代理项：沿用 JSON.stringify 口径
+    ];
+    for (const value of values) {
+      for (const indent of [undefined, 0, 2, 4] as const) {
+        const expected = JSON.stringify(value, null, indent);
+        expect(serializeLossless(value, indent)).toBe(expected);
+        expect(serializeLossless(value, indent, {})).toBe(expected);
+        expect(serializeLossless(value, indent, { escapeUnicode: false })).toBe(expected);
+      }
+    }
+  });
+
+  it('字符串值与对象键的非 ASCII → 小写 4 位 \\uXXXX；ASCII（含 0x7F）原样', () => {
+    expect(serializeLossless({ '中': '文', ascii: 'Abc~! ' }, undefined, { escapeUnicode: true })).toBe(
+      '{"\\u4e2d":"\\u6587","ascii":"Abc~! "}',
+    );
+    expect(serializeLossless({ a: '中', b: [1, '文'] }, 0, { escapeUnicode: true })).toBe(
+      '{"a":"\\u4e2d","b":[1,"\\u6587"]}',
+    );
+    expect(serializeLossless('\u007f', undefined, { escapeUnicode: true })).toBe(JSON.stringify('\u007f'));
+    expect(serializeLossless('\u0080', undefined, { escapeUnicode: true })).toBe('"\\u0080"');
+    expect(serializeLossless({ '中': '文' }, 2, { escapeUnicode: true })).toBe(
+      '{\n  "\\u4e2d": "\\u6587"\n}',
+    );
+  });
+
+  it('非 BMP 按 UTF-16 代理对逐 code unit 转义（😀 U+1F600 → \\ud83d\\ude00）', () => {
+    expect(serializeLossless('😀', undefined, { escapeUnicode: true })).toBe('"\\ud83d\\ude00"');
+    expect(serializeLossless({ '😀': '𝄞' }, 0, { escapeUnicode: true })).toBe(
+      '{"\\ud83d\\ude00":"\\ud834\\udd1e"}',
+    );
+    // 孤立代理项：在转义档里同样按单个 code unit 转义，且与 JSON.stringify 的输出一致
+    expect(serializeLossless('\uD800', undefined, { escapeUnicode: true })).toBe(JSON.stringify('\uD800'));
+  });
+
+  it('控制字符 / 引号 / 反斜杠沿用 JSON.stringify 规则（短转义不变成 \\u00XX）', () => {
+    const s = 'a"b\\c\n\t\r\b\f\u0001\u001f/';
+    expect(serializeLossless(s, undefined, { escapeUnicode: true })).toBe(JSON.stringify(s));
+    expect(serializeLossless({ 'k\n': s }, 2, { escapeUnicode: true })).toBe(
+      JSON.stringify({ 'k\n': s }, null, 2),
+    );
+  });
+
+  it('转义档输出仍是合法 JSON、全 ASCII，parseLossless 读回值不变（含 BigInt）', () => {
+    const value = {
+      '中': '文',
+      emoji: '😀',
+      ctl: 'a\tb\u0001',
+      big: 297532588187238660n,
+      arr: ['é', { '键': '值' }],
+    };
+    for (const indent of [undefined, 0, 2, 4] as const) {
+      const text = serializeLossless(value, indent, { escapeUnicode: true }) as string;
+      expect(text).toMatch(/^[\x00-\x7F]*$/); // 全 ASCII：非 ASCII 全部成了 \uXXXX
+      expect(() => JSON.parse(text)).not.toThrow();
+      expect(parseLossless(text)).toEqual(value);
+    }
+  });
+
+  it('转义只影响文本表示：number / BigInt 不受影响（BigInt 仍裸十进制）', () => {
+    expect(serializeLossless({ big: 297532588187238660n, n: 1.5, neg: -2n }, 0, { escapeUnicode: true })).toBe(
+      '{"big":297532588187238660,"n":1.5,"neg":-2}',
+    );
+  });
+});
+
 describe('lossless-json — deepEqualJson（编辑 no-op）', () => {
   it('类型严格：number 5 ≠ bigint 5n；键序敏感', () => {
     expect(deepEqualJson(5, 5)).toBe(true);

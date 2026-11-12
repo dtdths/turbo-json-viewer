@@ -853,6 +853,42 @@ describe('DocService — exportDoc', () => {
     expect(compact.text).toBe(JSON.stringify(EDIT_DOC));
   });
 
+  it('escapeUnicode 透传：非 ASCII 值与键转义为 \\uXXXX（与 indent 组合）', async () => {
+    const svc = new DocService();
+    const doc = { '中': '文', e: '😀', n: 1 };
+    await load(svc, JSON.stringify(doc));
+
+    const compactEscaped = await svc.dispatch({
+      t: 'exportDoc',
+      rootId: DOC_ROOT,
+      indent: 0,
+      escapeUnicode: true,
+    });
+    expect(compactEscaped.text).toBe('{"\\u4e2d":"\\u6587","e":"\\ud83d\\ude00","n":1}');
+    expect(compactEscaped.bytes).toBe(new TextEncoder().encode(compactEscaped.text).byteLength);
+
+    const prettyEscaped = await svc.dispatch({
+      t: 'exportDoc',
+      rootId: DOC_ROOT,
+      indent: 2,
+      escapeUnicode: true,
+    });
+    expect(prettyEscaped.text).toBe('{\n  "\\u4e2d": "\\u6587",\n  "e": "\\ud83d\\ude00",\n  "n": 1\n}');
+    expect(JSON.parse(prettyEscaped.text)).toEqual(doc);
+  });
+
+  it('escapeUnicode 缺省 / false：不转义（默认档逐字节等价 JSON.stringify）', async () => {
+    const svc = new DocService();
+    const doc = { '中': '文' };
+    await load(svc, JSON.stringify(doc));
+    expect((await svc.dispatch({ t: 'exportDoc', rootId: DOC_ROOT })).text).toBe(
+      JSON.stringify(doc, null, 2),
+    );
+    expect(
+      (await svc.dispatch({ t: 'exportDoc', rootId: DOC_ROOT, indent: 0, escapeUnicode: false })).text,
+    ).toBe(JSON.stringify(doc));
+  });
+
   it('不受编辑器 5MB 限制：6MB 文档可导出', async () => {
     const svc = new DocService();
     const big = { big: 'x'.repeat(6 * 1024 * 1024) };

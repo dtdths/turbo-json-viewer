@@ -699,7 +699,10 @@ export class DocService {
    */
   private exportDoc(cmd: Cmd<'exportDoc'>): ExportReply {
     const root = this.roots.require(cmd.rootId);
-    const text = serializeLossless(root.rowModel.value, cmd.indent ?? 2) ?? 'null';
+    const text =
+      serializeLossless(root.rowModel.value, cmd.indent ?? 2, {
+        escapeUnicode: cmd.escapeUnicode === true,
+      }) ?? 'null';
     return { text, bytes: byteLengthOf(text) };
   }
 

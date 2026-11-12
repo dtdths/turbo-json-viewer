@@ -146,7 +146,7 @@ export interface CoreApi {
   redo(rootId: RootId): Promise<EditReply>;
   reset(rootId: RootId): Promise<EditReply>;
   /** 导出当前值图 JSON（Worker stringify，-edited 下载；不受编辑器 5MB 限制） */
-  exportDoc(rootId: RootId, indent?: number): Promise<ExportReply>;
+  exportDoc(rootId: RootId, indent?: number, escapeUnicode?: boolean): Promise<ExportReply>;
 
   /* -------------------- 原始文本视图（ADR-0003 修订） -------------------- */
   /** 原文行索引元信息；首调惰性构建索引（幂等），只读、不推版本。 */
@@ -219,7 +219,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     undo: (rootId) => send({ t: 'undo', rootId }),
     redo: (rootId) => send({ t: 'redo', rootId }),
     reset: (rootId) => send({ t: 'reset', rootId }),
-    exportDoc: (rootId, indent) => send({ t: 'exportDoc', rootId, indent }),
+    exportDoc: (rootId, indent, escapeUnicode) => send({ t: 'exportDoc', rootId, indent, escapeUnicode }),
     rawOpen: (req) => send({ t: 'rawOpen', ...req }),
     rawWindow: (req) => send({ t: 'rawWindow', ...req }),
     rawLocate: (req) => send({ t: 'rawLocate', ...req }),

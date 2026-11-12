@@ -392,11 +392,65 @@ function gapOf(indent: number | undefined): string {
   return ' '.repeat(Math.min(10, Math.floor(indent)));
 }
 
-function serializeValue(value: unknown, gap: string, depth: number): string | undefined {
+/** 序列化选项（ADR-0022 §2）：只影响字符串/对象键的**文本表示**，不改变值图。 */
+export interface SerializeLosslessOptions {
+  /**
+   * `true` = 字符串与对象键里每个非 ASCII **UTF-16 code unit** 输出小写 `\uXXXX`
+   * （非 BMP 按代理对两个转义）；`false`/缺省 = 与 `JSON.stringify` 逐字节一致。
+   */
+  escapeUnicode?: boolean;
+}
+
+/**
+ * 引号化单个字符串：控制字符/引号/反斜杠沿用 `JSON.stringify` 的短转义规则；
+ * `escapeUnicode=true` 时额外把 `charCode >= 0x80` 的每个 code unit 转成 `\uXXXX`（小写 4 位）。
+ */
+function quoteString(text: string, escapeUnicode: boolean): string {
+  if (!escapeUnicode) return JSON.stringify(text);
+  let out = '"';
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    switch (code) {
+      case 0x08: // \b
+        out += '\\b';
+        break;
+      case 0x09: // \t
+        out += '\\t';
+        break;
+      case 0x0a: // \n
+        out += '\\n';
+        break;
+      case 0x0c: // \f
+        out += '\\f';
+        break;
+      case 0x0d: // \r
+        out += '\\r';
+        break;
+      case 0x22: // "
+        out += '\\"';
+        break;
+      case 0x5c: // backslash
+        out += '\\\\';
+        break;
+      default:
+        // 其余控制字符与所有非 ASCII → 小写 \uXXXX；ASCII 可见字符原样
+        if (code < 0x20 || code >= 0x80) out += `\\u${code.toString(16).padStart(4, '0')}`;
+        else out += text[i];
+    }
+  }
+  return `${out}"`;
+}
+
+function serializeValue(
+  value: unknown,
+  gap: string,
+  depth: number,
+  escapeUnicode: boolean,
+): string | undefined {
   if (value === null) return 'null';
   switch (typeof value) {
     case 'string':
-      return JSON.stringify(value);
+      return quoteString(value, escapeUnicode);
     case 'number':
       // 与 JSON.stringify 一致：非有限 → null，-0 → "0"
       return JSON.stringify(value);
@@ -418,7 +472,7 @@ function serializeValue(value: unknown, gap: string, depth: number): string | un
   if (isArray) {
     const arr = value as unknown[];
     for (let k = 0; k < arr.length; k += 1) {
-      const item = serializeValue(arr[k], gap, nextDepth);
+      const item = serializeValue(arr[k], gap, nextDepth, escapeUnicode);
       entries.push(item === undefined ? 'null' : item);
     }
     if (entries.length === 0) return '[]';
@@ -427,9 +481,9 @@ function serializeValue(value: unknown, gap: string, depth: number): string | un
     const keys = Object.keys(obj);
     for (let k = 0; k < keys.length; k += 1) {
       const key = keys[k] as string;
-      const item = serializeValue(obj[key], gap, nextDepth);
+      const item = serializeValue(obj[key], gap, nextDepth, escapeUnicode);
       if (item === undefined) continue;
-      entries.push(`${JSON.stringify(key)}:${gap === '' ? '' : ' '}${item}`);
+      entries.push(`${quoteString(key, escapeUnicode)}:${gap === '' ? '' : ' '}${item}`);
     }
     if (entries.length === 0) return '{}';
   }
@@ -443,13 +497,19 @@ function serializeValue(value: unknown, gap: string, depth: number): string | un
 
 /**
  * 无损序列化：
- *   - 无 BigInt 的普通 JSON 值与 `JSON.stringify(value, null, indent)` **逐字节一致**；
+ *   - 无 BigInt 的普通 JSON 值与 `JSON.stringify(value, null, indent)` **逐字节一致**（默认档）；
  *   - BigInt → 裸十进制数字；
- *   - 顶层 undefined/function/symbol → `undefined`（与 JSON.stringify 一致）。
+ *   - 顶层 undefined/function/symbol → `undefined`（与 JSON.stringify 一致）；
+ *   - `opts.escapeUnicode=true`（ADR-0022 §2）：字符串/键的非 ASCII → 小写 `\uXXXX`，
+ *     输出仍是合法 JSON、`parseLossless` 读回值不变；BigInt/number 不受影响。
  */
-export function serializeLossless(value: unknown, indent?: number): string | undefined {
+export function serializeLossless(
+  value: unknown,
+  indent?: number,
+  opts?: SerializeLosslessOptions,
+): string | undefined {
   const gap = gapOf(indent);
-  return serializeValue(value, gap, 0);
+  return serializeValue(value, gap, 0, opts?.escapeUnicode === true);
 }
 
 /**

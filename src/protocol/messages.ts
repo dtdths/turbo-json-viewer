@@ -69,7 +69,8 @@ export type Command =
   | { t: 'undo'; rootId: RootId }
   | { t: 'redo'; rootId: RootId }
   | { t: 'reset'; rootId: RootId }
-  | { t: 'exportDoc'; rootId: RootId; indent?: number }
+  /* 导出（ADR-0022 §2）：indent 0 = 紧凑；escapeUnicode = 非 ASCII → \uXXXX（默认关） */
+  | { t: 'exportDoc'; rootId: RootId; indent?: number; escapeUnicode?: boolean }
   | { t: 'getTrail'; rootId: RootId; path: Path | null }
   | { t: 'profile'; rootId: RootId }
   | { t: 'stats'; rootId: RootId }

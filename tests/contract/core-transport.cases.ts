@@ -48,6 +48,10 @@ const COPY_DOC = {
 };
 const COPY_TEXT = JSON.stringify(COPY_DOC);
 
+/** 非 ASCII 转义 fixture（#38 / ADR-0022）：中文键值 + emoji（代理对）+ ASCII。 */
+const UNI_DOC = { '中': '文', e: '😀', ascii: 'x' };
+const UNI_TEXT = JSON.stringify(UNI_DOC);
+
 /** 原文视图 fixture：pretty 文本 → source 模式的逐行索引。 */
 const RAW_DOC = { a: 1, b: [true, null], c: { d: 'x' } };
 const RAW_TEXT = JSON.stringify(RAW_DOC, null, 2);
@@ -380,6 +384,24 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
 
       const compact = await h.api.exportDoc(loaded.rootId, 0);
       expect(compact.text).toBe(JSON.stringify({ ...EDIT_DOC, n: 42 }));
+    });
+
+    it('exportDoc：escapeUnicode 参数在双适配器路径透传（#38 / ADR-0022）', async () => {
+      const loaded = await load(UNI_TEXT);
+
+      const escapedCompact = await h.api.exportDoc(loaded.rootId, 0, true);
+      expect(escapedCompact.text).toBe('{"\\u4e2d":"\\u6587","e":"\\ud83d\\ude00","ascii":"x"}');
+      expect(escapedCompact.bytes).toBe(new TextEncoder().encode(escapedCompact.text).byteLength);
+
+      const escapedPretty = await h.api.exportDoc(loaded.rootId, 2, true);
+      expect(escapedPretty.text).toBe(
+        '{\n  "\\u4e2d": "\\u6587",\n  "e": "\\ud83d\\ude00",\n  "ascii": "x"\n}',
+      );
+      expect(JSON.parse(escapedPretty.text)).toEqual(UNI_DOC);
+
+      // 缺省 / false 仍走默认档（不转义）
+      expect((await h.api.exportDoc(loaded.rootId, 0)).text).toBe(JSON.stringify(UNI_DOC));
+      expect((await h.api.exportDoc(loaded.rootId, 0, false)).text).toBe(JSON.stringify(UNI_DOC));
     });
 
     /* ----------------------------- 原始文本 ----------------------------- */
