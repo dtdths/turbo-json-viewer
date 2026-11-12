@@ -11,10 +11,11 @@
  * 只读：不改值图、不推 docRevision / rowVersion；纯函数，`DocService.outline` 只做
  * 「取根 → valueAt → 调这里 → 补 rootId」。
  */
-import type { OutlineChild, OutlineReply, Path } from '../protocol/types';
+import type { OutlineChild, OutlineReply, Path, SortOrder } from '../protocol/types';
 import { OUTLINE_PAGE_MAX } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { appendIndex, appendKey } from '../shared/path';
+import { orderedKeys } from './order';
 import { childCountOf, isContainer, jsonKind } from './row-model';
 
 /** 回包去掉 `rootId`（由 DocService 补）：纯函数不认识文档根。 */
@@ -28,8 +29,16 @@ export type OutlinePage = Omit<OutlineReply, 'rootId'>;
  *   回包 `start` 是实际起点，`children.length` 可少于 `count`（末页）。
  * - 标量节点是合法输入：`{ kind, total: 0, start: 0, children: [] }`（语义明确、便于测试）。
  * - 子项 `path` 与 `shared/path` 同源（`appendKey` / `appendIndex`），可直接回填 UI 跳转。
+ * - `order`（#40 / ADR-0024 §4）：对象子项按**显示序**枚举并**按显示序切页**；`total` 不变、
+ *   数组恒索引序。只改枚举顺序，不改值图 / 路径（路径按键拼接，与 slot 无关）。
  */
-export function outlinePage(node: unknown, path: Path, start: number, count: number): OutlinePage {
+export function outlinePage(
+  node: unknown,
+  path: Path,
+  start: number,
+  count: number,
+  order: SortOrder = 'raw',
+): OutlinePage {
   const kind = jsonKind(node);
   if (!isContainer(node)) return { path, kind, total: 0, start: 0, children: [] };
 
@@ -52,8 +61,8 @@ export function outlinePage(node: unknown, path: Path, start: number, count: num
       });
     }
   } else {
-    // 键序 = 值图顺序（Object.keys 真相），不做显示排序（ADR-0013 §2；#19/#23 另议）
-    const keys = Object.keys(node);
+    // 键序跟随显示顺序（#40 / ADR-0024 修订 ADR-0013 §2）；不加缓存，每页重新枚举
+    const keys = orderedKeys(node, order);
     for (let i = from; i < end; i++) {
       const key = keys[i] as string;
       const child = node[key];

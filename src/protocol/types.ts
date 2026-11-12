@@ -12,6 +12,15 @@ export type Path = string;
 export type JsonKind = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
 
 /**
+ * 子键显示顺序（#40 / ADR-0024 §3）：全局设置，只改对象成员的**显示** slot 序。
+ *   - `raw`：值图键序（默认，行为与此前一致）
+ *   - `key-asc`：键名自然序升序（数字段按数值、非数字段忽略大小写、平局码元序）
+ *   - `key-desc`：键名自然序降序
+ * 数组恒索引序；值图 / 路径 / 复制 / 导出 / 编辑 / 搜索全部不变。
+ */
+export type SortOrder = 'raw' | 'key-asc' | 'key-desc';
+
+/**
  * 复制格式（ADR-0010 §2–§5）：子树 JSON / 规范路径 / 标量原始值 / 键名。
  * 四值即协议值，UI 菜单项 `data-act` 与 dev hook 也用它。
  */

@@ -42,7 +42,9 @@ import type {
   LoadReply,
   NodeJsonReply,
   ReplyOf,
+  RowOfPathReply,
   SearchReply,
+  SetOrderReply,
   StatsReply,
 } from '../protocol/messages';
 import { ROOT_PATH } from '../shared/path';
@@ -63,6 +65,7 @@ import type {
   RawWindow,
   RootId,
   RowWindow,
+  SortOrder,
 } from '../protocol/types';
 import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget, RAW_PATH_CACHE_SIZE } from '../protocol/versions';
 import { clampInt } from '../shared/num';
@@ -77,6 +80,7 @@ import { EditHistory } from './edit-history';
 import { byteLengthOf, loadDocument, parseErrorPosition } from './import';
 import { scanFidelity } from './fidelity';
 import { jsonSizeLowerBoundChars } from './measure';
+import { normalizeSortOrder } from './order';
 import { childCountOf, isContainer, jsonKind, RowModel, type ReplaceResult } from './row-model';
 import { outlinePage } from './outline';
 import { RootStore, type ExprRootMeta, type Root, type RootSource } from './root-store';
@@ -154,6 +158,11 @@ export class DocService {
    * `cancelSearch(seq)` 的全局 Set 保留原语义（app 不调用它）。
    */
   private readonly latestSearchSeq = new Map<RootId, number>();
+  /**
+   * 服务级显示顺序（#40 / ADR-0024 §6）：根创建时套用到 RowModel（doc 根与 expr 根都套）。
+   * `setOrder` 是唯一写入口；默认 `'raw'` = 行为与此前逐行一致。
+   */
+  private order: SortOrder = 'raw';
   private closed = false;
 
   dispatch<C extends Command>(cmd: C): Promise<ReplyOf<C>> {
@@ -213,6 +222,10 @@ export class DocService {
         return this.stats(cmd);
       case 'outline':
         return this.outline(cmd);
+      case 'setOrder':
+        return this.setOrder(cmd);
+      case 'rowOfPath':
+        return this.rowOfPath(cmd);
       case 'getNodeJson':
         return this.getNodeJson(cmd);
       case 'copyNode':
@@ -288,7 +301,7 @@ export class DocService {
       }
 
       this.emit({ t: 'load-progress', loadId, phase: 'model' });
-      const rowModel = new RowModel(value);
+      const rowModel = new RowModel(value, { order: this.order });
       // 自适应展开（ADR-0002 修订 / #9）：小文档加载即全展开；超阈值保持默认折叠。
       // 设置可关（ADR-0011 §1 adaptiveExpand）；关闭时一律默认折叠。不抛错——自适应失败不能拖垮 load。
       if (cmd.opts?.adaptiveExpand !== false) rowModel.expandIfAtMost(ADAPTIVE_EXPAND_ROWS);
@@ -921,7 +934,7 @@ export class DocService {
     if (!outcome.ok) return { ok: false, error: outcome.error };
 
     const rootId: RootId = `expr:${++this.nextExprId}`;
-    const rowModel = new RowModel(outcome.value);
+    const rowModel = new RowModel(outcome.value, { order: this.order });
     const now = Date.now();
     const expr: ExprRootMeta = {
       text: cmd.text,
@@ -1048,7 +1061,55 @@ export class DocService {
   private outline(cmd: Cmd<'outline'>): OutlineReply {
     const root = this.roots.require(cmd.rootId);
     const value = root.rowModel.valueAt(cmd.path);
-    return { rootId: root.rootId, ...outlinePage(value, cmd.path, cmd.start, cmd.count) };
+    return {
+      rootId: root.rootId,
+      ...outlinePage(value, cmd.path, cmd.start, cmd.count, this.order),
+    };
+  }
+
+  /* ------------------------- 显示排序（#40 / ADR-0024） ------------------------- */
+
+  /**
+   * 切换子键显示顺序（#40 / ADR-0024 §6）：**全局**设置，对全部活根重排并各自 `rowVersion++`。
+   *
+   * - `changed` = 与服务级当前档位相比是否真的换了挡；非法值先经白名单归一化为 `'raw'`。
+   * - 同挡是 no-op：版本一个都不动，但 `roots` 仍回**全量**快照（页面按快照刷新坐标即可）。
+   * - 版本只推行映射（rowVersion），不动内容版本（docRevision）——排序不是值图变化。
+   * - 页面侧据 `roots` 回填全部标签会话 / 表达式视图，并重取活动根窗口。
+   */
+  private setOrder(cmd: Cmd<'setOrder'>): SetOrderReply {
+    const order = normalizeSortOrder(cmd.order);
+    const changed = order !== this.order;
+    if (changed) {
+      this.order = order;
+      for (const root of this.roots.values()) {
+        // 每个活根独立重建（子树行数与顺序无关）；真的换挡才推该根的 rowVersion
+        if (root.rowModel.setOrder(order)) root.rowVersion += 1;
+      }
+    }
+    return { order, changed, roots: this.rootSnapshots() };
+  }
+
+  /** 全部活根的版本快照（切档回包用；顺序 = 根表插入序，页面按 rootId 匹配）。 */
+  private rootSnapshots(): SetOrderReply['roots'] {
+    const roots: SetOrderReply['roots'] = [];
+    for (const root of this.roots.values()) {
+      roots.push({ rootId: root.rootId, rowVersion: root.rowVersion, totalRows: root.rowModel.totalRows });
+    }
+    return roots;
+  }
+
+  /**
+   * 路径 → 可见行号（#40 / ADR-0024 §6）：只读、不推任何版本，供切档后的视口锚点换算。
+   * 祖先折叠 → -1（行模型口径）；路径不存在 → BAD_COMMAND（与 `valueAt` 同口径）。
+   */
+  private rowOfPath(cmd: Cmd<'rowOfPath'>): RowOfPathReply {
+    const root = this.roots.require(cmd.rootId);
+    return {
+      rootId: root.rootId,
+      row: root.rowModel.rowOfPath(cmd.path),
+      totalRows: root.rowModel.totalRows,
+    };
   }
 
   /* ------------------------------- events ------------------------------- */

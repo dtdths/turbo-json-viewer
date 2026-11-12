@@ -301,6 +301,67 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       expect(await h.api.stats(loaded.rootId)).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 2 });
     });
 
+    /* --------------------- 显示排序（#40 / ADR-0024） --------------------- */
+
+    it('setOrder / rowOfPath：全局重排 + 版本推进 + 只读行号查询（双适配器契约）', async () => {
+      const loaded = await load(BASIC_TEXT); // { a: 1, b: { c: 2 } } → load 即自适应全展开
+      const initial = await h.api.window({
+        rootId: loaded.rootId,
+        rowVersion: loaded.rowVersion,
+        seq: 1,
+        start: 0,
+        count: 10,
+      });
+      expect(windowPaths(initial)).toEqual(['$', '$.a', '$.b', '$.b.c']);
+
+      // 降序：根部 b > a；b 展开的子项 c 跟随
+      const sorted = await h.api.setOrder('key-desc');
+      expect(sorted).toEqual({
+        order: 'key-desc',
+        changed: true,
+        roots: [{ rootId: loaded.rootId, rowVersion: loaded.rowVersion + 1, totalRows: 4 }],
+      });
+      const win = await h.api.window({
+        rootId: loaded.rootId,
+        rowVersion: sorted.roots[0]?.rowVersion as number,
+        seq: 2,
+        start: 0,
+        count: 10,
+      });
+      expect(windowPaths(win)).toEqual(['$', '$.b', '$.b.c', '$.a']);
+
+      // rowOfPath：只读（不推版本），可见行号按显示序；祖先折叠 → -1 由行模型口径保证
+      const before = await h.api.stats(loaded.rootId);
+      expect(await h.api.rowOfPath({ rootId: loaded.rootId, path: '$.a' })).toEqual({
+        rootId: loaded.rootId,
+        row: 3,
+        totalRows: 4,
+      });
+      expect(await h.api.rowOfPath({ rootId: loaded.rootId, path: '$.b.c' })).toMatchObject({ row: 2 });
+      expect(await h.api.stats(loaded.rootId)).toEqual(before);
+      expect((await errorOf(h.api.rowOfPath({ rootId: loaded.rootId, path: '$.nope' }))).code).toBe('BAD_COMMAND');
+      expect((await errorOf(h.api.rowOfPath({ rootId: 'no-such-root', path: '$' }))).code).toBe('NO_ROOT');
+
+      // 幂等：同档 changed=false、版本不动，但仍回全量 roots 快照
+      expect(await h.api.setOrder('key-desc')).toEqual({
+        order: 'key-desc',
+        changed: false,
+        roots: [{ rootId: loaded.rootId, rowVersion: before.rowVersion, totalRows: 4 }],
+      });
+
+      // 回 raw：行序/版本回到与初始一致
+      const raw = await h.api.setOrder('raw');
+      expect(raw).toMatchObject({ order: 'raw', changed: true });
+      const back = await h.api.window({
+        rootId: loaded.rootId,
+        rowVersion: raw.roots[0]?.rowVersion as number,
+        seq: 3,
+        start: 0,
+        count: 10,
+      });
+      expect(windowPaths(back)).toEqual(['$', '$.a', '$.b', '$.b.c']);
+    });
+
     /* --------------------------- 子树编辑 / 版本 --------------------------- */
 
     it('getNodeJson / replaceNode / undo / redo / reset：版本与 editCount 逐级正确', async () => {

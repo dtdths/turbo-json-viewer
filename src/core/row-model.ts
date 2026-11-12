@@ -13,8 +13,9 @@
  */
 import { CoreError } from '../protocol/errors';
 import { ROW_BUDGET } from '../protocol/versions';
-import type { JsonKind, Path, Row } from '../protocol/types';
+import type { JsonKind, Path, Row, SortOrder } from '../protocol/types';
 import { appendIndex, appendKey, parsePath, ROOT_PATH } from '../shared/path';
+import { normalizeSortOrder, orderedKeys } from './order';
 
 /** JSON 容器（对象或数组）。标量（含 null）不是容器。 */
 export type Container = Record<string, unknown> | unknown[];
@@ -209,10 +210,6 @@ function childAtSlot(frame: WalkFrame): unknown {
     : (frame.container as unknown[])[frame.slot];
 }
 
-function buildFrameOf(container: Container): BuildFrame {
-  return { ...frameOf(container), sizes: [], sum: 0 };
-}
-
 /**
  * 「全展开后的可见行数」= 值图节点数（全展开时每个节点恰好一行）。
  * 超过 limit 立即返回 limit + 1：早停保证大文档（50MB / 2.96M 节点）也只走 ≤ limit+1 个节点。
@@ -244,6 +241,11 @@ export function countAllExpandedRows(value: unknown, limit: number): number {
 export interface RowModelOptions {
   /** 可见行预算（默认 ROW_BUDGET = 1,000,000）；测试可注入小值 */
   rowBudget?: number;
+  /**
+   * 子键显示顺序（#40 / ADR-0024）；缺省 `'raw'` = 与引入该选项前**逐行一致**。
+   * 只改对象成员的显示 slot 序，值图 / 路径 / 复制 / 导出 / 编辑 / 搜索全部不变。
+   */
+  order?: SortOrder;
 }
 
 export interface ToggleResult {
@@ -282,16 +284,44 @@ export class RowModel {
   private readonly indexes = new Map<Container, Fenwick>();
   private keysCache = new WeakMap<Container, string[]>();
   private readonly rowBudget: number;
+  /** 对象成员的显示顺序（#40 / ADR-0024）：`keysOf` 是它唯一的出口。 */
+  private order: SortOrder;
   private rootValue: unknown;
 
   constructor(rootValue: unknown, options: RowModelOptions = {}) {
     this.rootValue = rootValue;
     this.rowBudget = options.rowBudget ?? ROW_BUDGET;
+    this.order = normalizeSortOrder(options.order);
     if (isContainer(rootValue)) this.mountRoot(rootValue);
   }
 
   get value(): unknown {
     return this.rootValue;
+  }
+
+  /** 当前显示顺序（缺省 `'raw'`）。 */
+  get sortOrder(): SortOrder {
+    return this.order;
+  }
+
+  /**
+   * 切换子键显示顺序（#40 / ADR-0024 §6）：返回是否真的换了挡（同挡 → false，不动任何缓存/索引）。
+   *
+   * 实现要点：**子树可见行数（Fenwick 总和）与顺序无关**，所以只需重置键缓存，
+   * 再对 `expanded` 集合里每个对象容器独立 `measureChildren` 重建 Fenwick——不需要自底向上遍历值图。
+   * 数组恒索引序，其 Fenwick 不受影响。
+   */
+  setOrder(order: SortOrder): boolean {
+    const next = normalizeSortOrder(order);
+    if (next === this.order) return false;
+    this.order = next;
+    this.keysCache = new WeakMap();
+    for (const container of this.expanded) {
+      if (Array.isArray(container)) continue;
+      const { sizes } = this.measureChildren(container);
+      this.indexes.set(container, new Fenwick(sizes));
+    }
+    return true;
   }
 
   /** 根可见行 + 根下所有可见子树行。 */
@@ -625,7 +655,9 @@ export class RowModel {
   /* ------------------------------ internals ------------------------------ */
 
   private mountRoot(root: Container): void {
-    const count = this.childCount(root);
+    // 计数与显示顺序无关：这里只数 Object.keys，**不在导入首帧为排序付成本**（ADR-0024 §7）；
+    // 键序缓存留给首次真正需要 slot 序的窗口 / 展开（懒排序）。
+    const count = childCountOf(root);
     if (1 + count > this.rowBudget) throw this.tooManyRows(1 + count);
     const sizes = new Array<number>(count).fill(1);
     this.expanded.add(root);
@@ -647,7 +679,7 @@ export class RowModel {
       this.indexes.set(root, new Fenwick([]));
       return;
     }
-    const stack: BuildFrame[] = [buildFrameOf(root)];
+    const stack: BuildFrame[] = [this.buildFrameOf(root)];
     while (stack.length > 0) {
       const frame = stack[stack.length - 1] as BuildFrame;
       if (frame.slot < frame.count) {
@@ -657,7 +689,7 @@ export class RowModel {
           const childCount = Array.isArray(child) ? child.length : Object.keys(child).length;
           if (childCount > 0) {
             this.expanded.add(child);
-            stack.push(buildFrameOf(child));
+            stack.push(this.buildFrameOf(child));
             continue; // 父容器的该槽位在子帧结束时回填
           }
           // 空容器：1 行，且不进 expanded（没有可展开的内容，open=false 才符合语义）
@@ -686,7 +718,7 @@ export class RowModel {
    */
   private rebuildSubtreeOpen(subtree: Container): boolean {
     let emptyReset = false;
-    const stack: BuildFrame[] = [buildFrameOf(subtree)];
+    const stack: BuildFrame[] = [this.buildFrameOf(subtree)];
     while (stack.length > 0) {
       const frame = stack[stack.length - 1] as BuildFrame;
       if (frame.slot < frame.count) {
@@ -696,7 +728,7 @@ export class RowModel {
           const childCount = Array.isArray(child) ? child.length : Object.keys(child).length;
           if (childCount > 0) {
             this.expanded.add(child);
-            stack.push(buildFrameOf(child));
+            stack.push(this.buildFrameOf(child));
             continue; // 父容器的该槽位在子帧结束时回填
           }
           // 空容器：1 行，且不进 expanded（没有可展开的内容，open=false 才符合语义）
@@ -727,18 +759,33 @@ export class RowModel {
     });
   }
 
+  /**
+   * 对象容器的**显示键序**（slot 序的唯一来源，ADR-0024 §1）：首次需要时才排序并缓存（懒排序）。
+   * 数组没有键序概念，返回空数组（调用方用下标）。
+   */
   private keysOf(container: Container): string[] {
     if (Array.isArray(container)) return [];
     let keys = this.keysCache.get(container);
     if (!keys) {
-      keys = Object.keys(container);
+      keys = orderedKeys(container, this.order);
       this.keysCache.set(container, keys);
     }
     return keys;
   }
 
   private childCount(container: Container): number {
+    // 计数与顺序无关，但复用键序缓存：raw 档这里就是 Object.keys（零排序成本），
+    // 非 raw 档容器首次被需要时排一次并缓存（懒排序），此后所有窗口/展开共用。
     return Array.isArray(container) ? container.length : this.keysOf(container).length;
+  }
+
+  /** 迭代后序重建用的帧：对象容器的 `keys` 必须是**显示序**（Fenwick 的 slot 与 descend 同源）。 */
+  private buildFrameOf(container: Container): BuildFrame {
+    if (Array.isArray(container)) {
+      return { container, keys: null, slot: 0, count: container.length, sizes: [], sum: 0 };
+    }
+    const keys = this.keysOf(container);
+    return { container, keys, slot: 0, count: keys.length, sizes: [], sum: 0 };
   }
 
   private childAt(container: Container, slot: number): unknown {

@@ -19,7 +19,9 @@ import type {
   LoadReply,
   NodeJsonReply,
   ReplyOf,
+  RowOfPathReply,
   SearchReply,
+  SetOrderReply,
   StatsReply,
   TrailReply,
 } from './messages';
@@ -42,6 +44,7 @@ import type {
   RootId,
   RowWindow,
   SearchOpts,
+  SortOrder,
 } from './types';
 
 export interface LoadRequest {
@@ -138,6 +141,17 @@ export interface CoreApi {
   /** 大纲页（ADR-0013）：按容器分页取子项；只读、不推版本，不依赖树展开态。 */
   outline(req: OutlineRequest): Promise<OutlineReply>;
 
+  /**
+   * 切换子键显示顺序（#40 / ADR-0024）：全局设置，对**全部活根**重排并各自 `rowVersion++`。
+   * 同挡 → `changed=false`（版本不动）但仍回全量 `roots` 快照。
+   */
+  setOrder(order: SortOrder): Promise<SetOrderReply>;
+  /**
+   * 路径 → 可见行号（切档后的视口锚点换算）：只读，不推任何版本。
+   * 祖先折叠 → `row=-1`；路径不存在 → `BAD_COMMAND`。
+   */
+  rowOfPath(req: { rootId: RootId; path: Path }): Promise<RowOfPathReply>;
+
   getNodeJson(req: { rootId: RootId; path: Path }): Promise<NodeJsonReply>;
   /** 复制四格式（ADR-0010）：文本在 core 侧生成；只读，不推进版本。 */
   copyNode(req: { rootId: RootId; path: Path; format: CopyFormat; indent?: number }): Promise<CopyReply>;
@@ -216,6 +230,8 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     search: (req) => send({ t: 'search', ...req }),
     cancelSearch: (seq) => fire({ t: 'cancelSearch', seq }),
     outline: (req) => send({ t: 'outline', ...req }),
+    setOrder: (order) => send({ t: 'setOrder', order }),
+    rowOfPath: (req) => send({ t: 'rowOfPath', ...req }),
     getNodeJson: (req) => send({ t: 'getNodeJson', ...req }),
     copyNode: (req) => send({ t: 'copyNode', ...req }),
     replaceNode: (req) => send({ t: 'replaceNode', ...req }),

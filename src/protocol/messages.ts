@@ -28,6 +28,7 @@ import type {
   RowWindow,
   SearchOpts,
   SearchResult,
+  SortOrder,
 } from './types';
 import type { CoreErrorShape } from './errors';
 
@@ -98,7 +99,13 @@ export type Command =
       budget: ExprBudgetLevel;
     }
   | { t: 'complete'; rootId: RootId; text: string; pos: number }
-  | { t: 'exprLocate'; rootId: RootId; path: Path };
+  | { t: 'exprLocate'; rootId: RootId; path: Path }
+  /* 显示排序（#40 / ADR-0024）：全局唯一档位，对**全部活根**生效并各自 rowVersion++。
+   * 无变化时 changed=false，但 roots 仍回全量快照（页面照样刷新标签会话）。 */
+  | { t: 'setOrder'; order: SortOrder }
+  /* 路径 → 可见行号（切档后的视口锚点换算）：只读，不推任何版本；
+   * 祖先折叠 → row=-1；路径不存在 → BAD_COMMAND（与 valueAt 同口径）。 */
+  | { t: 'rowOfPath'; rootId: RootId; path: Path };
 
 export interface LoadReply {
   rootId: RootId;
@@ -172,6 +179,23 @@ export interface TrailReply {
   trail: MapTrail;
 }
 
+/**
+ * 切档回包（#40 / ADR-0024 §6）：`changed` = 与服务级当前档位相比是否真的换了挡。
+ * `roots` 是**全部活根**的版本快照（顺序无关）：页面按 rootId 回填标签会话 / 表达式视图坐标。
+ */
+export interface SetOrderReply {
+  order: SortOrder;
+  changed: boolean;
+  roots: Array<{ rootId: RootId; rowVersion: Rev; totalRows: number }>;
+}
+
+/** 路径 → 可见行号（只读；祖先折叠 → -1，路径不存在 → BAD_COMMAND）。 */
+export interface RowOfPathReply {
+  rootId: RootId;
+  row: number;
+  totalRows: number;
+}
+
 export interface StatsReply {
   rootId: RootId;
   docRevision: Rev;
@@ -228,6 +252,8 @@ export interface ReplyByKind {
   eval: EvalReply;
   complete: CompleteReply;
   exprLocate: ExprLocateReply;
+  setOrder: SetOrderReply;
+  rowOfPath: RowOfPathReply;
 }
 
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];
