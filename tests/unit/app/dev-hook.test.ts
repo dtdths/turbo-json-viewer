@@ -105,7 +105,7 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
     editState: { count: 0, canUndo: false, canRedo: false },
     subtreeEditor: { isOpen: () => false, getValue: () => '', setValue: () => {}, close: () => {} },
     settings: {
-      snapshot: () => ({ theme: 'dark', rowHeight: 24, indent: 8, copyIndent: 2 }),
+      snapshot: () => ({ theme: 'dark', rowHeight: 24, indent: 8, jsonIndent: 2, escapeUnicode: false }),
       uiState: () => ({ panel: 'doc', railCollapsed: false, viewMode: 'tree' }),
       loadedFromStore: false,
       get: () => 0,
@@ -417,6 +417,45 @@ describe('dev hook — API 契约与纯快照组装', () => {
       text: '{"a":1}',
       name: 'a-edited.json',
     });
+  });
+
+  it('exportDocText：按当前 jsonIndent / escapeUnicode 调 core.exportDoc（#38 / ADR-0022 §7）', async () => {
+    const calls: Array<{ rootId: string; indent?: number; escapeUnicode?: boolean }> = [];
+    const deps = fakeDeps({
+      core: {
+        exportDoc: async (rootId: string, indent?: number, escapeUnicode?: boolean) => {
+          calls.push({ rootId, indent, escapeUnicode });
+          return { text: '{}', bytes: 2 };
+        },
+      } as never,
+      settings: {
+        ...fakeDeps().settings,
+        get: (key: string) => (key === 'jsonIndent' ? 0 : key === 'escapeUnicode' ? true : 0),
+      } as never,
+    });
+    deps.session.land({ rootId: 'doc', docRevision: 1, rowVersion: 1, totalRows: 2 }, { kind: 'document' });
+    await createDevHook(deps).exportDocText();
+    expect(calls).toEqual([{ rootId: 'doc', indent: 0, escapeUnicode: true }]);
+  });
+
+  it('copyResolve：子树复制 indent 跟随 jsonIndent 设置（#38 / ADR-0022 §3）', async () => {
+    const indents: unknown[] = [];
+    const deps = fakeDeps({
+      core: {
+        copyNode: async (cmd: { indent?: number }) => {
+          indents.push(cmd.indent);
+          return { text: 'json', bytes: 4, format: 'subtree' as const };
+        },
+      } as never,
+      settings: { ...fakeDeps().settings, get: () => 4 } as never,
+    });
+    deps.session.land({ rootId: 'doc', docRevision: 1, rowVersion: 1, totalRows: 2 }, { kind: 'document' });
+    await expect(createDevHook(deps).copyResolve('$.a', 'subtree')).resolves.toEqual({
+      text: 'json',
+      bytes: 4,
+      format: 'subtree',
+    });
+    expect(indents).toEqual([4]);
   });
 
   it('纯转发：treeGeometry / editBadgeText / toastText 不重新解释', () => {

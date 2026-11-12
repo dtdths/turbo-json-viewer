@@ -1939,7 +1939,7 @@ async function exportDoc(): Promise<void> {
   try {
     const picker = saveFilePicker();
     if (!picker) {
-      const { text, bytes } = await core.exportDoc(rootId, 2);
+      const { text, bytes } = await core.exportDoc(rootId, settings.get('jsonIndent'), settings.get('escapeUnicode'));
       downloadText(name, text);
       exportLastAction = { mode: 'file', name, bytes };
       return;
@@ -1955,7 +1955,7 @@ async function exportDoc(): Promise<void> {
       if ((error as { name?: string } | null)?.name === 'AbortError') return;
       // API 存在但被环境/企业策略拒绝：回落普通下载，导出不中断（如实记录在 ADR）
     }
-    const { text, bytes } = await core.exportDoc(rootId, 2);
+    const { text, bytes } = await core.exportDoc(rootId, settings.get('jsonIndent'), settings.get('escapeUnicode'));
     if (!handle) {
       downloadText(name, text);
       exportLastAction = { mode: 'file', name, bytes };
@@ -2052,7 +2052,7 @@ async function copyDocJson(): Promise<void> {
   if (!session.rootId || !meta) return;
   setExportButtonsDisabled(true);
   try {
-    const reply = await core.exportDoc(session.rootId, 2);
+    const reply = await core.exportDoc(session.rootId, settings.get('jsonIndent'), settings.get('escapeUnicode'));
     const refusal = clipboardRefusal(reply.bytes);
     if (refusal) {
       exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied: false };
@@ -2240,7 +2240,7 @@ function setCtxItemDisabled(act: string, disabled: boolean, why?: string, hint?:
 async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<void> {
   if (!session.rootId) return;
   try {
-    const reply = await core.copyNode({ rootId: session.rootId, path, format, indent: settings.get('copyIndent') });
+    const reply = await core.copyNode({ rootId: session.rootId, path, format, indent: settings.get('jsonIndent') });
     const copied = await writeClipboard(reply.text);
     if (copied) showToast(`已复制：${COPY_LABELS[format]}`, 2000, 'success');
     else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');

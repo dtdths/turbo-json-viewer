@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  COPY_INDENT_OPTIONS,
   DEFAULT_SETTINGS,
   INDENT_OPTIONS,
+  JSON_INDENT_OPTIONS,
   normalizeSettings,
   normalizeUiState,
   ROW_HEIGHT_OPTIONS,
@@ -39,12 +39,13 @@ describe('settings-state — 默认值与校验', () => {
       indent: 16,
       typeColumn: false,
       defaultCopyFormat: 'subtree',
-      copyIndent: 2,
+      jsonIndent: 2,
       searchCopyFormat: 'path',
       exportMode: 'file',
       repairTruncated: true,
       adaptiveExpand: true,
       advBudget: 'standard',
+      escapeUnicode: false,
     });
   });
 
@@ -57,10 +58,48 @@ describe('settings-state — 默认值与校验', () => {
     expect(normalizeSettings({ advBudget: 1 }).advBudget).toBe('standard');
   });
 
-  it('选项集合固定：行高 4 档 / 缩进 3 档 / 复制缩进 0-2-4', () => {
+  it('选项集合固定：行高 4 档 / 缩进 3 档 / JSON 缩进 0-2-4', () => {
     expect([...ROW_HEIGHT_OPTIONS]).toEqual([20, 22, 24, 26]);
     expect([...INDENT_OPTIONS]).toEqual([12, 16, 20]);
-    expect([...COPY_INDENT_OPTIONS]).toEqual([0, 2, 4]);
+    expect([...JSON_INDENT_OPTIONS]).toEqual([0, 2, 4]);
+  });
+
+  it('jsonIndent：默认 2 / 三档保留 / 非法回落（#38 / ADR-0022 §2-§3）', () => {
+    expect(DEFAULT_SETTINGS.jsonIndent).toBe(2);
+    expect(normalizeSettings({}).jsonIndent).toBe(2);
+    expect(normalizeSettings({ jsonIndent: 0 }).jsonIndent).toBe(0);
+    expect(normalizeSettings({ jsonIndent: 2 }).jsonIndent).toBe(2);
+    expect(normalizeSettings({ jsonIndent: 4 }).jsonIndent).toBe(4);
+    expect(normalizeSettings({ jsonIndent: 3 }).jsonIndent).toBe(2);
+    expect(normalizeSettings({ jsonIndent: -2 }).jsonIndent).toBe(2);
+    expect(normalizeSettings({ jsonIndent: '4' }).jsonIndent).toBe(4); // 既有 pickNumber 口径：可强转的数字字符串
+  });
+
+  it('jsonIndent：旧键 copyIndent 迁移（读 jsonIndent ?? copyIndent，新键优先；ADR-0022 §3）', () => {
+    expect(normalizeSettings({ copyIndent: 4 }).jsonIndent).toBe(4);
+    expect(normalizeSettings({ copyIndent: 0 }).jsonIndent).toBe(0);
+    expect(normalizeSettings({ copyIndent: 2 }).jsonIndent).toBe(2);
+    expect(normalizeSettings({ jsonIndent: 0, copyIndent: 4 }).jsonIndent).toBe(0);
+    expect(normalizeSettings({ jsonIndent: 4, copyIndent: 0 }).jsonIndent).toBe(4);
+    expect(normalizeSettings({ copyIndent: 3 }).jsonIndent).toBe(2); // 旧键也走白名单校验
+    expect(normalizeSettings({ jsonIndent: undefined, copyIndent: 4 }).jsonIndent).toBe(4);
+  });
+
+  it('normalizeSettings 返回值只含新键：不含 copyIndent（写盘快照只用新键）', () => {
+    const migrated = normalizeSettings({ copyIndent: 4 });
+    expect('copyIndent' in migrated).toBe(false);
+    expect(migrated.jsonIndent).toBe(4);
+    expect(Object.keys(normalizeSettings({})).sort()).not.toContain('copyIndent');
+  });
+
+  it('escapeUnicode：默认关 / 布尔保留 / 非布尔回落（ADR-0022 §2）', () => {
+    expect(DEFAULT_SETTINGS.escapeUnicode).toBe(false);
+    expect(normalizeSettings({}).escapeUnicode).toBe(false);
+    expect(normalizeSettings({ escapeUnicode: true }).escapeUnicode).toBe(true);
+    expect(normalizeSettings({ escapeUnicode: false }).escapeUnicode).toBe(false);
+    expect(normalizeSettings({ escapeUnicode: 'true' }).escapeUnicode).toBe(false);
+    expect(normalizeSettings({ escapeUnicode: 1 }).escapeUnicode).toBe(false);
+    expect(normalizeSettings({ escapeUnicode: null }).escapeUnicode).toBe(false);
   });
 
   it('searchCopyFormat：默认路径 / 合法值保留 / 非法回落（ADR-0011 修订）', () => {
@@ -83,21 +122,24 @@ describe('settings-state — 默认值与校验', () => {
         indent: 'big',
         typeColumn: 'yes',
         defaultCopyFormat: 'compact',
+        jsonIndent: 3,
         copyIndent: 3,
         searchCopyFormat: 'compact',
         exportMode: 'download',
         repairTruncated: 1,
         adaptiveExpand: 'true',
+        escapeUnicode: 'yes',
       }),
     ).toEqual(DEFAULT_SETTINGS);
   });
 
   it('normalizeSettings：合法值保留，部分非法只回落那一项', () => {
-    const s = normalizeSettings({ theme: 'light', rowHeight: 26, indent: 12, copyIndent: 0, adaptiveExpand: false, nope: 1 });
+    const s = normalizeSettings({ theme: 'light', rowHeight: 26, indent: 12, jsonIndent: 0, escapeUnicode: true, adaptiveExpand: false, nope: 1 });
     expect(s.theme).toBe('light');
     expect(s.rowHeight).toBe(26);
     expect(s.indent).toBe(12);
-    expect(s.copyIndent).toBe(0);
+    expect(s.jsonIndent).toBe(0);
+    expect(s.escapeUnicode).toBe(true);
     expect(s.adaptiveExpand).toBe(false);
     expect(s.typeColumn).toBe(DEFAULT_SETTINGS.typeColumn); // 缺省回落
   });
@@ -137,6 +179,61 @@ describe('settings-state — load / set / 持久化', () => {
     expect(state.get('rowHeight')).toBe(22);
     expect(state.uiState()).toEqual({ panel: 'search', railCollapsed: true, viewMode: 'tree' });
     expect(state.loadedFromStore).toBe(true);
+  });
+
+  it('load：旧存储 copyIndent 迁移到 jsonIndent（新键优先；写盘只写新键，ADR-0022 §3）', async () => {
+    const store = fakeStore({ [SETTINGS_STORAGE_KEY]: { theme: 'light', copyIndent: 4 } });
+    const state = new SettingsState();
+    await state.load(store);
+    expect(state.get('jsonIndent')).toBe(4);
+    expect(state.get('theme')).toBe('light'); // 其余字段照常读回
+    expect('copyIndent' in state.snapshot()).toBe(false);
+
+    // 再改一项：写盘快照含新键 jsonIndent，不含旧键 copyIndent
+    expect(state.set('jsonIndent', 0)).toBe(true);
+    const written = store.writes.at(-1)?.value as Record<string, unknown>;
+    expect(written.jsonIndent).toBe(0);
+    expect('copyIndent' in written).toBe(false);
+  });
+
+  it('load：旧存储同时有新键时新键优先，不被旧键覆盖', async () => {
+    const store = fakeStore({ [SETTINGS_STORAGE_KEY]: { jsonIndent: 0, copyIndent: 4 } });
+    const state = new SettingsState();
+    await state.load(store);
+    expect(state.get('jsonIndent')).toBe(0);
+  });
+
+  it('jsonIndent / escapeUnicode：普通读写持久化（set 写穿 + 通知 + 同值 no-op）', async () => {
+    const store = fakeStore();
+    const state = new SettingsState();
+    await state.load(store);
+    const listener = vi.fn();
+    state.subscribe(listener);
+
+    expect(state.set('jsonIndent', 4)).toBe(true);
+    expect(state.get('jsonIndent')).toBe(4);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.writes.at(-1)).toEqual({
+      key: SETTINGS_STORAGE_KEY,
+      value: expect.objectContaining({ jsonIndent: 4, escapeUnicode: false }),
+    });
+
+    expect(state.set('escapeUnicode', true)).toBe(true);
+    expect(state.get('escapeUnicode')).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(store.writes.at(-1)).toEqual({
+      key: SETTINGS_STORAGE_KEY,
+      value: expect.objectContaining({ jsonIndent: 4, escapeUnicode: true }),
+    });
+
+    expect(state.set('escapeUnicode', true)).toBe(false); // 同值 no-op
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('set：jsonIndent 非法值回落默认 2，而不是写进脏数据', () => {
+    const state = new SettingsState();
+    expect(state.set('jsonIndent', 3)).toBe(false); // 默认 2 → 非法回落 2 → 无变化
+    expect(state.get('jsonIndent')).toBe(2);
   });
 
   it('load：读盘抛错 → 默认值继续，不抛错', async () => {

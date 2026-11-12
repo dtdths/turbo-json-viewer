@@ -878,7 +878,11 @@ export function createDevHook(deps: DevHookDeps): DevHook {
     resetEdits: async () => ({ ok: await deps.entries.resetEdits(), ...stateOf() }),
     exportDocText: async () => {
       if (!session.rootId) return null;
-      const reply = await core.exportDoc(session.rootId, 2);
+      const reply = await core.exportDoc(
+        session.rootId,
+        deps.settings.get('jsonIndent'),
+        deps.settings.get('escapeUnicode'),
+      );
       return { bytes: reply.bytes, text: reply.text, name: deps.exportFileName() };
     },
     editBadgeText: () => ({ hidden: ui.editBadge.hidden, text: ui.editBadge.textContent }),
@@ -938,7 +942,7 @@ export function createDevHook(deps: DevHookDeps): DevHook {
           rootId: session.rootId,
           path,
           format,
-          indent: deps.settings.get('copyIndent'),
+          indent: deps.settings.get('jsonIndent'),
         });
         return { text: reply.text, bytes: reply.bytes, format: reply.format };
       } catch (error) {

@@ -15,12 +15,13 @@ export type SettingsKey =
   | 'indent'
   | 'typeColumn'
   | 'defaultCopyFormat'
-  | 'copyIndent'
+  | 'jsonIndent'
   | 'searchCopyFormat'
   | 'exportMode'
   | 'repairTruncated'
   | 'adaptiveExpand'
-  | 'advBudget';
+  | 'advBudget'
+  | 'escapeUnicode';
 
 export interface Settings {
   theme: 'dark' | 'light';
@@ -32,8 +33,8 @@ export interface Settings {
   typeColumn: boolean;
   /** 行尾浮条「复制」使用的格式（右键菜单仍是 4 项显式） */
   defaultCopyFormat: CopyFormat;
-  /** 子树 JSON 缩进：0 = 紧凑 */
-  copyIndent: number;
+  /** JSON 缩进（ADR-0022）：0 = 紧凑 / 2 / 4；导出 + 整份复制 + 子树复制共用 */
+  jsonIndent: number;
   /** 搜索结果行「双击复制」使用的格式（默认路径；与行尾浮条 defaultCopyFormat 相互独立） */
   searchCopyFormat: CopyFormat;
   /** 导出方式（ADR-0012 修订）：分体按钮主操作 + 设置面板「导出方式」 */
@@ -44,6 +45,8 @@ export interface Settings {
   adaptiveExpand: boolean;
   /** 表达式高级预算档位（第 11 项；ADR-0018 §7）：宽松 / 标准（默认）/ 严格 */
   advBudget: ExprBudgetLevel;
+  /** 导出时把非 ASCII 转义为 `\uXXXX`（第 12 项；ADR-0022 §2，默认关） */
+  escapeUnicode: boolean;
 }
 
 /** 布局态（主题之外的工作区 UI 状态，ADR-0011 §2） */
@@ -61,7 +64,7 @@ export const UI_STORAGE_KEY = 'tjv.ui.v1';
 
 export const ROW_HEIGHT_OPTIONS = [20, 22, 24, 26] as const;
 export const INDENT_OPTIONS = [12, 16, 20] as const;
-export const COPY_INDENT_OPTIONS = [0, 2, 4] as const;
+export const JSON_INDENT_OPTIONS = [0, 2, 4] as const;
 /** 表达式预算档位（顺序 = 面板展示顺序；标准为默认） */
 export const EXPR_BUDGET_OPTIONS = ['loose', 'standard', 'strict'] as const;
 
@@ -71,12 +74,13 @@ export const DEFAULT_SETTINGS: Settings = {
   indent: 16,
   typeColumn: false,
   defaultCopyFormat: 'subtree',
-  copyIndent: 2,
+  jsonIndent: 2,
   searchCopyFormat: 'path',
   exportMode: 'file',
   repairTruncated: true,
   adaptiveExpand: true,
   advBudget: 'standard',
+  escapeUnicode: false,
 };
 
 export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, viewMode: 'tree' };
@@ -99,9 +103,12 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-/** 任意读盘内容 → 合法 Settings（逐字段校验，非法回落默认；ADR-0011 §2） */
+/**
+ * 任意读盘内容 → 合法 Settings（逐字段校验，非法回落默认；ADR-0011 §2）。
+ * 旧键迁移（ADR-0022 §3）：`jsonIndent` 缺失时读旧 `copyIndent`（新键优先），返回值只含新键。
+ */
 export function normalizeSettings(raw: unknown): Settings {
-  const bag = (raw ?? {}) as Partial<Record<keyof Settings, unknown>>;
+  const bag = (raw ?? {}) as Partial<Record<keyof Settings, unknown>> & { copyIndent?: unknown };
   return {
     theme: THEMES.has(bag.theme as string) ? (bag.theme as Settings['theme']) : DEFAULT_SETTINGS.theme,
     rowHeight: pickNumber(bag.rowHeight, ROW_HEIGHT_OPTIONS, DEFAULT_SETTINGS.rowHeight),
@@ -110,7 +117,11 @@ export function normalizeSettings(raw: unknown): Settings {
     defaultCopyFormat: COPY_FORMATS.has(bag.defaultCopyFormat as string)
       ? (bag.defaultCopyFormat as CopyFormat)
       : DEFAULT_SETTINGS.defaultCopyFormat,
-    copyIndent: pickNumber(bag.copyIndent, COPY_INDENT_OPTIONS, DEFAULT_SETTINGS.copyIndent),
+    jsonIndent: pickNumber(
+      bag.jsonIndent ?? bag.copyIndent,
+      JSON_INDENT_OPTIONS,
+      DEFAULT_SETTINGS.jsonIndent,
+    ),
     searchCopyFormat: COPY_FORMATS.has(bag.searchCopyFormat as string)
       ? (bag.searchCopyFormat as CopyFormat)
       : DEFAULT_SETTINGS.searchCopyFormat,
@@ -120,6 +131,7 @@ export function normalizeSettings(raw: unknown): Settings {
     advBudget: (EXPR_BUDGET_OPTIONS as readonly string[]).includes(bag.advBudget as string)
       ? (bag.advBudget as Settings['advBudget'])
       : DEFAULT_SETTINGS.advBudget,
+    escapeUnicode: pickBoolean(bag.escapeUnicode, DEFAULT_SETTINGS.escapeUnicode),
   };
 }
 

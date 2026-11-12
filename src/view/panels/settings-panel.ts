@@ -2,7 +2,7 @@
  * view/panels/settings-panel — 设置面板的 DOM 层（ADR-0011 §1 / §4）。
  *
  * 边界：
- *   - 自建 11 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
+ *   - 自建 12 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
  *   - 控件状态只从 `Settings` 快照同步；用户改动经 `opts.onChange` 上抛，由 app 调
  *     `SettingsState.set()`，再经订阅回到 `render()`。本模块不读写存储、不碰主题/CSS 变量。
  *
@@ -11,8 +11,8 @@
  *   - `render()` 只同步 active / checked，**绝不触发 onChange**；必须幂等、可反复调用。
  */
 import {
-  COPY_INDENT_OPTIONS,
   EXPR_BUDGET_OPTIONS,
+  JSON_INDENT_OPTIONS,
   INDENT_OPTIONS,
   ROW_HEIGHT_OPTIONS,
   type Settings,
@@ -25,7 +25,7 @@ export interface SettingsPanelOptions {
   onChange(key: SettingsKey, value: Settings[SettingsKey]): void;
 }
 
-/** 10 项设置的任一值（= 各字段类型的联合） */
+/** 12 项设置的任一值（= 各字段类型的联合） */
 type SettingValue = Settings[SettingsKey];
 interface SegItem {
   value: SettingValue;
@@ -53,7 +53,7 @@ interface CheckRowSpec {
   hint: string;
 }
 
-/* ---------------- 10 行的固定顺序与文案（ADR-0011 §1 及其 2026-11-03 / 2026-11-10 修订 + ADR-0012 修订） ---------------- */
+/* ---------------- 12 行的固定顺序与文案（ADR-0011 §1 及其 2026-11-03 / 2026-11-10 修订 + ADR-0012 修订） ---------------- */
 
 const THEME_ITEMS: readonly SegItem[] = [
   { value: 'dark', label: '深色' },
@@ -79,11 +79,11 @@ const COPY_FORMAT_ITEMS: readonly SegItem[] = [
   { value: 'key', label: '键名' },
 ];
 
-/** 复制缩进的展示顺序：2 → 4 → 紧凑（0）；值集合仍来自 `COPY_INDENT_OPTIONS`。 */
-const COPY_INDENT_RANK: Readonly<Record<number, number>> = { 2: 0, 4: 1, 0: 2 };
+/** JSON 缩进的展示顺序：2 → 4 → 紧凑（0）；值集合仍来自 `JSON_INDENT_OPTIONS`（ADR-0022 §2）。 */
+const JSON_INDENT_RANK: Readonly<Record<number, number>> = { 2: 0, 4: 1, 0: 2 };
 
-const COPY_INDENT_ITEMS: readonly SegItem[] = [...COPY_INDENT_OPTIONS]
-  .sort((a, b) => COPY_INDENT_RANK[a] - COPY_INDENT_RANK[b])
+const JSON_INDENT_ITEMS: readonly SegItem[] = [...JSON_INDENT_OPTIONS]
+  .sort((a, b) => JSON_INDENT_RANK[a] - JSON_INDENT_RANK[b])
   .map((value) => ({ value, label: value === 0 ? '紧凑' : `${value} 空格` }));
 
 /** 导出方式（ADR-0012 修订）：与分体按钮菜单共享同一 SettingsState */
@@ -150,7 +150,7 @@ export class SettingsPanel {
         label: '默认复制格式',
         items: COPY_FORMAT_ITEMS,
       }),
-      this.buildSegRow({ key: 'copyIndent', label: '复制缩进', items: COPY_INDENT_ITEMS }),
+      this.buildSegRow({ key: 'jsonIndent', label: 'JSON 缩进', items: JSON_INDENT_ITEMS }),
       this.buildSegRow({
         key: 'searchCopyFormat',
         label: '搜索结果双击复制',
@@ -171,6 +171,12 @@ export class SettingsPanel {
         key: 'advBudget',
         label: '高级预算',
         items: EXPR_BUDGET_ITEMS,
+      }),
+      // 第 12 行（ADR-0022 §2）：导出转义非 ASCII；默认关，输出仍是合法 JSON
+      this.buildCheckRow({
+        key: 'escapeUnicode',
+        label: '导出转义非 ASCII',
+        hint: '非 ASCII 输出为 \\uXXXX，仍是合法 JSON',
       }),
     );
   }
