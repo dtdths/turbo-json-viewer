@@ -50,11 +50,16 @@ describe('searchDocument — 命中规则', () => {
     expect(result.hits[0]).toMatchObject({ path: "$['a b']", key: 'a b', field: 'key', kind: 'boolean' });
   });
 
-  it('数组下标不参与键名匹配', () => {
-    expect(searchDocument({ arr: ['x'] }, '[0]').total).toBe(0);
+  it('数组下标不参与键名匹配；[0] 仅作为路径后缀命中（ADR-0023）', () => {
+    // 键名搜索：数组下标不是键名
+    expect(searchDocument({ arr: ['x'] }, '[0]', { keysOnly: true }).total).toBe(0);
+    // 路径模式：`[0]` 命中 $.arr[0]
+    expect(searchDocument({ arr: ['x'] }, '[0]').hits.map((h) => [h.path, h.field])).toEqual([
+      ['$.arr[0]', 'path'],
+    ]);
   });
 
-  it('数字按显示文本参与值匹配；布尔/null 不参与（ADR-0014 修订 2026-11-12）', () => {
+  it('数字按显示文本参与值匹配；布尔/null 也按显示文本参与（ADR-0014 修订 / ADR-0023）', () => {
     expect(searchDocument({ n: 123, b: true, z: null }, '123')).toMatchObject({ total: 1 });
     expect(searchDocument({ n: 123, b: true, z: null }, '123').hits[0]).toMatchObject({
       path: '$.n',
@@ -62,8 +67,20 @@ describe('searchDocument — 命中规则', () => {
       kind: 'number',
       preview: '123',
     });
-    expect(searchDocument({ n: 123, b: true, z: null }, 'true').total).toBe(0);
-    expect(searchDocument({ n: 123, b: true, z: null }, 'null').total).toBe(0);
+    expect(searchDocument({ n: 123, b: true, z: null }, 'true')).toMatchObject({ total: 1 });
+    expect(searchDocument({ n: 123, b: true, z: null }, 'true').hits[0]).toMatchObject({
+      path: '$.b',
+      field: 'value',
+      kind: 'boolean',
+      preview: 'true',
+    });
+    expect(searchDocument({ n: 123, b: true, z: null }, 'null')).toMatchObject({ total: 1 });
+    expect(searchDocument({ n: 123, b: true, z: null }, 'null').hits[0]).toMatchObject({
+      path: '$.z',
+      field: 'value',
+      kind: 'null',
+      preview: 'null',
+    });
   });
 
   it('字符串根文档按值命中（path=$、key=root）', () => {
@@ -178,9 +195,14 @@ describe('searchDocument — 正则模式：键优先 / 只匹配键名 + 字符
     expect(result.hits[0]).toMatchObject({ path: '$.abc', key: 'abc', field: 'key' });
   });
 
-  it('数字仍参与值匹配（按显示文本）；布尔/null 不参与', () => {
+  it('数字仍参与值匹配（按显示文本）；布尔/null 也参与（ADR-0023）', () => {
     expect(searchDocument({ n: 123, b: true, z: null }, '^123$', { regex: true }).total).toBe(1);
-    expect(searchDocument({ n: 123, b: true, z: null }, '^true$', { regex: true }).total).toBe(0);
+    expect(searchDocument({ n: 123, b: true, z: null }, '^true$', { regex: true }).hits).toHaveLength(1);
+    expect(searchDocument({ n: 123, b: true, z: null }, '^true$', { regex: true }).hits[0]).toMatchObject({
+      path: '$.b',
+      field: 'value',
+      kind: 'boolean',
+    });
   });
 
   it('空查询不编译正则、直接返回空结果', () => {
@@ -302,5 +324,170 @@ describe('search — 无损数字（BigInt，ADR-0020）口径不变', () => {
       path: '$[0]',
       kind: 'number',
     });
+  });
+});
+
+/* ---------------------------------------------------------------- 布尔/null 值命中（ADR-0023 §1） */
+
+describe('searchDocument — 布尔/null 值命中（ADR-0023 §1）', () => {
+  const doc = { t: true, f: false, z: null, n: 123 };
+
+  it('true / false / null 按显示文本参与值命中（搜到的 == 看到的）', () => {
+    expect(searchDocument(doc, 'true').hits.map((h) => [h.path, h.field, h.kind, h.preview])).toEqual([
+      ['$.t', 'value', 'boolean', 'true'],
+    ]);
+    expect(searchDocument(doc, 'false').hits.map((h) => [h.path, h.field, h.preview])).toEqual([
+      ['$.f', 'value', 'false'],
+    ]);
+    expect(searchDocument(doc, 'null').hits.map((h) => [h.path, h.field, h.kind, h.preview])).toEqual([
+      ['$.z', 'value', 'null', 'null'],
+    ]);
+  });
+
+  it('值匹配规则与字符串/数字一致：子串 + 大小写按 Aa', () => {
+    expect(searchDocument(doc, 'ul').hits.map((h) => h.path)).toEqual(['$.z']); // 'null' 的子串
+    expect(searchDocument(doc, 'TRUE').hits.map((h) => h.path)).toEqual(['$.t']);
+    expect(searchDocument(doc, 'TRUE', { caseSensitive: true }).total).toBe(0);
+    expect(searchDocument(doc, 'True', { caseSensitive: true }).total).toBe(0);
+  });
+
+  it('正则模式同规则（^true$ / ^(?:true|false)$）', () => {
+    expect(searchDocument(doc, '^true$', { regex: true }).hits.map((h) => h.path)).toEqual(['$.t']);
+    expect(searchDocument(doc, '^(?:true|false)$', { regex: true }).hits.map((h) => h.path)).toEqual([
+      '$.t',
+      '$.f',
+    ]);
+  });
+
+  it('keysOnly 仍只搜键名（布尔/null 值不命中）', () => {
+    expect(searchDocument(doc, 'true', { keysOnly: true }).total).toBe(0);
+    expect(searchDocument(doc, 'null', { keysOnly: true }).total).toBe(0);
+  });
+});
+
+/* ---------------------------------------------------------------- 路径命中（ADR-0023 §2–§3） */
+
+/** 路径例表专用文档：键/值都不含 `.` / `[` / `$`，排除键值命中干扰。 */
+const PATH_DOC = {
+  data: { hotel_list: ['a', 'b', 'c', 'd'], other_list: ['w', 'x', 'y', 'z'] },
+  meta: { data: 1 },
+};
+
+describe('searchDocument — 路径模式触发（ADR-0023 §2）', () => {
+  it('查询含 `.` / `[` / `$` 才启用路径命中', () => {
+    // `.` 触发：'x.a' 只可能是路径后缀，键/值都不含它
+    expect(searchDocument({ x: { a: 1 } }, 'x.a').hits.map((h) => [h.path, h.field])).toEqual([
+      ['$.x.a', 'path'],
+    ]);
+    // `[` 触发
+    expect(searchDocument({ x: ['a'] }, '[0]').hits.map((h) => [h.path, h.field])).toEqual([
+      ['$.x[0]', 'path'],
+    ]);
+    // `$` 触发
+    expect(searchDocument({ x: { a: 1 } }, '$').hits.map((h) => [h.path, h.field])).toEqual([
+      ['$', 'path'],
+    ]);
+    // 无触发字符：即使路径以该串结尾也不收（非标识符键路径末尾的 `']`）
+    expect(searchDocument({ 'a b': 1 }, "']").total).toBe(0);
+  });
+
+  it('普通词查询完全不碰路径（`data` 只由键/值命中）', () => {
+    const result = searchDocument(PATH_DOC, 'data');
+    expect(result.hits.map((h) => [h.path, h.field])).toEqual([
+      ['$.data', 'key'],
+      ['$.meta.data', 'key'],
+    ]);
+  });
+});
+
+describe('searchDocument — 路径后缀匹配例表（ADR-0023 §2）', () => {
+  it('$.data → 只命中该节点（不命中子树）', () => {
+    const result = searchDocument(PATH_DOC, '$.data');
+    expect(result.hits.map((h) => [h.path, h.field, h.kind])).toEqual([['$.data', 'path', 'object']]);
+  });
+
+  it('hotel_list[3] → 命中该数组元素节点', () => {
+    expect(searchDocument(PATH_DOC, 'hotel_list[3]').hits.map((h) => [h.path, h.field])).toEqual([
+      ['$.data.hotel_list[3]', 'path'],
+    ]);
+  });
+
+  it('[3] → 命中所有以 [3] 结尾的节点', () => {
+    expect(searchDocument(PATH_DOC, '[3]').hits.map((h) => h.path)).toEqual([
+      '$.data.hotel_list[3]',
+      '$.data.other_list[3]',
+    ]);
+  });
+
+  it('$ → 只命中根', () => {
+    const result = searchDocument(PATH_DOC, '$');
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0]).toMatchObject({ path: '$', key: 'root', field: 'path', kind: 'object' });
+  });
+
+  it('data. / . / 前缀 → 0 条（不做中段/子树匹配）', () => {
+    expect(searchDocument(PATH_DOC, 'data.').total).toBe(0);
+    expect(searchDocument(PATH_DOC, '.').total).toBe(0);
+    expect(searchDocument(PATH_DOC, '$.da').total).toBe(0); // 路径前缀不命中
+  });
+
+  it('路径后缀大小写按 Aa', () => {
+    expect(searchDocument({ Hotel: 1 }, '$.hotel').hits.map((h) => [h.path, h.field])).toEqual([
+      ['$.Hotel', 'path'],
+    ]);
+    expect(searchDocument({ Hotel: 1 }, '$.hotel', { caseSensitive: true }).total).toBe(0);
+  });
+
+  it('正则模式：对整条路径 test()（用户可自行 $ 锚定）', () => {
+    // 后缀正则：$.data / $.meta.data
+    expect(searchDocument(PATH_DOC, '\\.data$', { regex: true }).hits.map((h) => h.path)).toEqual([
+      '$.data',
+      '$.meta.data',
+    ]);
+    // 用户自行锚定：只命中数组下标 3 的 hotel_list 元素
+    expect(searchDocument(PATH_DOC, 'hotel_list\\[3\\]$', { regex: true }).hits.map((h) => h.path)).toEqual([
+      '$.data.hotel_list[3]',
+    ]);
+    // 整条路径完全匹配
+    expect(searchDocument(PATH_DOC, '^\\$\\.data$', { regex: true }).hits.map((h) => h.path)).toEqual([
+      '$.data',
+    ]);
+  });
+});
+
+describe('searchDocument — 一节点一条 + key > value > path（ADR-0023 §3）', () => {
+  it('key > path：键名与路径后缀同时命中只记 key', () => {
+    const result = searchDocument({ $foo: 1 }, '$foo');
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0]).toMatchObject({ path: '$.$foo', key: '$foo', field: 'key' });
+  });
+
+  it('value > path：值等于路径后缀只记 value', () => {
+    const result = searchDocument({ data: '$.data' }, '$.data');
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0]).toMatchObject({ path: '$.data', key: 'data', field: 'value', kind: 'string' });
+  });
+
+  it('keysOnly 不收 path', () => {
+    expect(searchDocument(PATH_DOC, '$.data', { keysOnly: true }).total).toBe(0);
+    expect(searchDocument(PATH_DOC, 'hotel_list[0]', { keysOnly: true }).total).toBe(0);
+  });
+});
+
+describe('searchDocument — 路径命中的 limit / 截断（ADR-0023 §5）', () => {
+  const doc = { a: [1], b: [1], c: [1] };
+
+  it('路径命中同样受 limit 约束并置 truncated', () => {
+    const result = searchDocument(doc, '[0]', { limit: 2 });
+    expect(result.hits.map((h) => h.path)).toEqual(['$.a[0]', '$.b[0]']);
+    expect(result.total).toBe(2);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('未截断时 total = 路径命中数，field 全为 path', () => {
+    const result = searchDocument(doc, '[0]');
+    expect(result.total).toBe(3);
+    expect(result.hits.every((h) => h.field === 'path')).toBe(true);
+    expect(result.truncated).toBe(false);
   });
 });

@@ -52,7 +52,8 @@ export interface Hit {
   key: string;
   kind: JsonKind;
   preview: string;
-  field: 'key' | 'value';
+  /** 命中目标：键名 / 值显示文本 / 规范路径后缀（ADR-0014 / ADR-0023） */
+  field: 'key' | 'value' | 'path';
   /** 行号提示：命中已知可见行时给出（可选） */
   row?: number;
 }

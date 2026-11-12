@@ -9,7 +9,12 @@
  * 已对齐的边界口径（与 core 逐条一致，见 parity 测试）：
  *   - 空 query / 非法 limit（`!Number.isFinite || <= 0`）先于正则编译 → 直接空结果、不抛错；
  *   - 键名命中优先于值命中；数组下标（`isIndex`）与根（`isRoot`）不参与键名匹配；
- *   - 值命中 = 字符串内容 / 数字的**显示文本**（number → JSON.stringify，BigInt → 十进制串）；布尔/null 不参与；
+ *   - 值命中 = 字符串内容 / 标量的**显示文本**（number → JSON.stringify，BigInt → 十进制串，
+ *     boolean → 'true'/'false'，null → 'null'；ADR-0023 §1）；
+ *   - 命中模型：一个 entry 最多一条命中，优先级 key > value > path（ADR-0023 §3）；
+ *   - `keysOnly` 只搜键名（值/路径都不收）；
+ *   - 路径命中（ADR-0023 §2）：仅查询含 `.` / `[` / `$` 时启用，字面量模式 `path` 以 query
+ *     结尾（大小写按 `Aa`），正则模式对整条 path `test()`；普通词查询完全不碰路径；
  *   - `truncated = 命中总数 >= limit`（**恰好等于 limit 时也为 true**，core 现状口径）；
  *   - `total` 是截断后的命中数（`hits.length`），不是全量命中数。
  *
@@ -35,7 +40,7 @@ export interface ReferenceHit {
   path: string;
   key: string;
   kind: JsonKind;
-  field: 'key' | 'value';
+  field: 'key' | 'value' | 'path';
 }
 
 export interface ReferenceResult {
@@ -124,12 +129,17 @@ function compileMatcher(query: string, opts: ReferenceOpts): (text: string) => b
     caseSensitive ? text.includes(needle) : text.toLowerCase().includes(needle);
 }
 
-/** 值搜索文本（与 core 同口径、独立实现）：字符串原文 / 数字显示文本；布尔/null → null。 */
+/**
+ * 值搜索文本（与 core 同口径、独立实现）：字符串原文 / 标量的树内显示文本。
+ * 布尔/null 按 ADR-0023 §1 纳入：'true' / 'false' / 'null'。
+ */
 function referenceValueText(entry: ReferenceEntry): string | null {
   if (entry.kind === 'string') return entry.node as string;
   if (entry.kind === 'number') {
     return typeof entry.node === 'bigint' ? (entry.node as bigint).toString() : JSON.stringify(entry.node) ?? String(entry.node);
   }
+  if (entry.kind === 'boolean') return entry.node === true ? 'true' : 'false';
+  if (entry.kind === 'null') return 'null';
   return null;
 }
 
@@ -142,6 +152,19 @@ export function referenceSearch(value: unknown, query: string, opts: ReferenceOp
 
   const matches = compileMatcher(query, opts);
 
+  // 路径模式（ADR-0023 §2）：查询含 `.` / `[` / `$` 才构造路径匹配器；引用同一条命中判定链。
+  const pathMode = query.includes('.') || query.includes('[') || query.includes('$');
+  let matchesPath: ((path: string) => boolean) | null = null;
+  if (pathMode && !keysOnly) {
+    if (opts.regex === true) matchesPath = matches; // 整条路径 test()，用户可自行 `$` 锚定
+    else {
+      const caseSensitive = opts.caseSensitive ?? false;
+      const needle = caseSensitive ? query : query.toLowerCase();
+      matchesPath = (path: string): boolean =>
+        (caseSensitive ? path : path.toLowerCase()).endsWith(needle);
+    }
+  }
+
   const all: ReferenceHit[] = [];
   for (const entry of flattenDocument(value)) {
     const keyIsName = !entry.isIndex && !entry.isRoot;
@@ -150,6 +173,7 @@ export function referenceSearch(value: unknown, query: string, opts: ReferenceOp
     else if (!keysOnly) {
       const valueText = referenceValueText(entry);
       if (valueText !== null && matches(valueText)) field = 'value';
+      else if (matchesPath !== null && matchesPath(entry.path)) field = 'path';
     }
     if (field !== null) all.push({ path: entry.path, key: entry.key, kind: entry.kind, field });
   }

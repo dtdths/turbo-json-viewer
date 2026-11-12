@@ -5,7 +5,8 @@
  * `keysOnly` / `limit` 语义此前没有对照物——两份冒烟脚本各自手抄一份 reference walk，
  * 于是「期望值」与「被测实现」互相背书。本测试是搜索语义的**单一 oracle**：
  *   - 参考实现与 core 刻意用不同结构（先展平再匹配 vs 单趟 DFS 边走边判）；
- *   - 矩阵覆盖 4 格语义组合 × keysOnly × limit × 空 query × 无命中 × 根形态 × Unicode 等；
+ *   - 矩阵覆盖 4 格语义组合 × keysOnly × limit × 空 query × 无命中 × 根形态 × Unicode ×
+ *     布尔/null 值命中 × 路径后缀命中（ADR-0023）等；
  *   - 失败 message 带 case / query / opts，能直接定位到「哪条语义不同」。
  *
  * 显式边界：不覆盖灾难性回溯静态筛查（参考实现不复制该启发式，避免重复实现/自证）；
@@ -40,6 +41,12 @@ interface ParityCase {
   query: string;
   opts?: ReferenceOpts;
 }
+
+/** 路径后缀对拍 fixture：键/值都不含 `.` / `[` / `$`，排除键值命中干扰。 */
+const PATH_DOC = {
+  data: { hotel_list: ['a', 'b', 'c', 'd'], other_list: ['w', 'x', 'y', 'z'] },
+  meta: { data: 1 },
+};
 
 /** 对拍矩阵：一行 = 一条语义。命名带语义族前缀，失败时 `it` 名 + message 双定位。 */
 const PARITY_CASES: ParityCase[] = [
@@ -84,6 +91,39 @@ const PARITY_CASES: ParityCase[] = [
   { name: 'number + regex', doc: { big: 297532588187238660n, n: 42 }, query: '^\\d+$', opts: { regex: true } },
   { name: 'number + keysOnly 不命中值', doc: { n: 100 }, query: '100', opts: { keysOnly: true } },
 
+  // ---- 布尔/null 值命中（ADR-0023 §1） ----
+  { name: 'boolean: true 值命中', doc: { t: true, f: false }, query: 'true' },
+  { name: 'boolean: false 值命中', doc: { t: true, f: false }, query: 'false' },
+  { name: 'null: 值命中', doc: { z: null, n: 1 }, query: 'null' },
+  { name: 'boolean/null: 大小写不敏感', doc: { t: true, z: null }, query: 'TRUE' },
+  { name: 'boolean/null + Aa 不命中', doc: { t: true }, query: 'TRUE', opts: { caseSensitive: true } },
+  {
+    name: 'boolean/null + regex',
+    doc: { t: true, f: false, z: null },
+    query: '^(?:true|false|null)$',
+    opts: { regex: true },
+  },
+  { name: 'boolean/null + keysOnly 不命中值', doc: { t: true, z: null }, query: 'true', opts: { keysOnly: true } },
+
+  // ---- 路径后缀命中（ADR-0023 §2–§3） ----
+  { name: 'path: $.data 只命中该节点', doc: PATH_DOC, query: '$.data' },
+  { name: 'path: hotel_list[3]', doc: PATH_DOC, query: 'hotel_list[3]' },
+  { name: 'path: [3] 所有后缀', doc: PATH_DOC, query: '[3]' },
+  { name: 'path: $ 只命中根', doc: PATH_DOC, query: '$' },
+  { name: 'path: data. → 0 条', doc: PATH_DOC, query: 'data.' },
+  { name: 'path: . → 0 条', doc: PATH_DOC, query: '.' },
+  { name: 'path: 路径前缀不命中（$.da）', doc: PATH_DOC, query: '$.da' },
+  { name: 'path + Aa', doc: { Hotel: 1 }, query: '$.hotel' },
+  { name: 'path + Aa 敏感不命中', doc: { Hotel: 1 }, query: '$.hotel', opts: { caseSensitive: true } },
+  { name: 'path + regex 后缀锚定', doc: PATH_DOC, query: '\\.data$', opts: { regex: true } },
+  { name: 'path + regex 宽匹配', doc: PATH_DOC, query: 'hotel_list', opts: { regex: true } },
+  { name: 'path + keysOnly 不收路径', doc: PATH_DOC, query: '$.data', opts: { keysOnly: true } },
+  { name: 'path: 一节点一条 key>path', doc: { $foo: 1 }, query: '$foo' },
+  { name: 'path: value>path', doc: { data: '$.data' }, query: '$.data' },
+  { name: 'path + limit 截断', doc: { a: [1], b: [1], c: [1] }, query: '[0]', opts: { limit: 2 } },
+  { name: 'path + limit 恰好等于命中数', doc: { a: [1], b: [1] }, query: '[0]', opts: { limit: 2 } },
+  { name: 'path + regex 无触发字符不启用', doc: { a: [1] }, query: '0]', opts: { regex: true } },
+
   // ---- keysOnly ----
   { name: 'keysOnly: 只命中键名', doc: MIXED_DOC, query: 'alice', opts: { keysOnly: true } },
   { name: 'keysOnly + regex', doc: OPTIONS_DOC, query: '^hotel$', opts: { keysOnly: true, regex: true } },
@@ -109,10 +149,12 @@ interface ProjectedHit {
   path: string;
   key: string;
   kind: string;
-  field: 'key' | 'value';
+  field: 'key' | 'value' | 'path';
 }
 
-function project(hits: readonly { path: string; key: string; kind: string; field: 'key' | 'value' }[]): ProjectedHit[] {
+function project(
+  hits: readonly { path: string; key: string; kind: string; field: 'key' | 'value' | 'path' }[],
+): ProjectedHit[] {
   return hits.map((hit) => ({ path: hit.path, key: hit.key, kind: hit.kind, field: hit.field }));
 }
 

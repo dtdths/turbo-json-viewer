@@ -1,5 +1,5 @@
 /**
- * core/search — 全文档搜索（键名 + **字符串值 + 数字值**）。
+ * core/search — 全文档搜索（键名 + **值** + **规范路径后缀**）。
  *
  * 深度优先 walk 整棵值图，不建 search root（ir-spec §4.3：命中集合是视图状态）。
  * 默认大小写不敏感；命中上限默认 SEARCH_LIMIT（50,000），超过则 truncated。
@@ -7,11 +7,18 @@
  *
  * 数值匹配口径（2026-11-12 用户反馈修订，ADR-0014 修订）：数字（number / BigInt）按
  * **树里显示的文本**匹配（number → `JSON.stringify`，BigInt → 十进制串），所以搜
- * `297532588187238660` 能命中树里显示同串的大整数。布尔/null 仍不参与值匹配。
+ * `297532588187238660` 能命中树里显示同串的大整数。布尔/null 同样按显示文本参与
+ * （`true` / `false` / `null`，ADR-0023 §1），保持「搜到的 == 看到的」。
+ *
+ * 路径命中（ADR-0023 §2）：仅在查询串含 `.` / `[` / `$` 之一（**路径模式**）时启用，
+ * 对 walk 帧上已有的规范路径做**后缀匹配**——字面量模式 `path` 以 query 结尾（大小写按
+ * `Aa`），正则模式对整条 path 跑编译后的 `test()`（用户可自行 `$` 锚定）。普通词查询完全
+ * 不碰路径。命中模型：一节点最多一条，优先级 key > value > path；`keysOnly` 不收路径。
  *
  * 正则模式（ADR-0014 §2.2–§2.4）：`opts.regex === true` 时 query 按 ECMAScript RegExp
  * 解释，`caseSensitive` 只决定 `i` flag；语法错误 / 超长 / 被灾难性回溯静态筛查拒绝
- * 一律抛 `CoreError({ code: 'BAD_PATTERN' })`，不产出命中。匹配目标 = 键名 + 字符串值 + 数字显示文本。
+ * 一律抛 `CoreError({ code: 'BAD_PATTERN' })`，不产出命中。匹配目标 = 键名 + 值显示文本
+ * （字符串 / 数字 / 布尔 / null）+ 路径模式下的整条规范路径。
  */
 import { CoreError } from '../protocol/errors';
 import { SEARCH_LIMIT, SEARCH_PATTERN_MAX } from '../protocol/versions';
@@ -34,12 +41,12 @@ const CANCEL_CHECK_MASK = 4095;
 
 /**
  * 「值搜索」用的文本：字符串 = 内容本身；数字 = **树里显示的文本**
- * （number → JSON.stringify，BigInt → 十进制串）；布尔/null 不参与值匹配。
- * 与 `row-model.scalarPreview` 同源，保证「搜到的 == 看到的」。
+ * （number → JSON.stringify，BigInt → 十进制串）；布尔/null = `'true'/'false'/'null'`。
+ * 与 `row-model.scalarPreview` 同源，保证「搜到的 == 看到的」（ADR-0023 §1）。
  */
 function searchableValueText(node: unknown, kind: ReturnType<typeof jsonKind>): string | null {
   if (kind === 'string') return node as string;
-  if (kind === 'number') return scalarPreview(node);
+  if (kind === 'number' || kind === 'boolean' || kind === 'null') return scalarPreview(node);
   return null;
 }
 
@@ -219,12 +226,22 @@ export function searchDocument(value: unknown, query: string, opts: SearchWalkOp
 
   // 子串模式：默认大小写不敏感（slice 4 现状不变）；正则模式：编译 + 安全筛查（ADR-0014）
   let matches: (text: string) => boolean;
+  let matchesPath: ((path: string) => boolean) | null = null;
+  // 路径模式（ADR-0023 §2）：查询含 `.` / `[` / `$` 之一才启用；普通词查询完全不碰路径。
+  const pathMode = query.includes('.') || query.includes('[') || query.includes('$');
   if (regexMode) {
     matches = compileRegexMatcher(query, caseSensitive);
+    // 正则模式对整条规范路径 test()（不做后缀约束，用户可自行用 `$` 锚定）
+    if (pathMode && !keysOnly) matchesPath = matches;
   } else {
     const needle = caseSensitive ? query : query.toLowerCase();
     matches = (text: string): boolean =>
       caseSensitive ? text.includes(needle) : text.toLowerCase().includes(needle);
+    // 字面量模式 = 规范路径后缀匹配（大小写按 Aa）；`keysOnly` 不收路径
+    if (pathMode && !keysOnly) {
+      matchesPath = (path: string): boolean =>
+        (caseSensitive ? path : path.toLowerCase()).endsWith(needle);
+    }
   }
 
   const stack: Frame[] = [{ node: value, path: ROOT_PATH, key: 'root', idx: false }];
@@ -241,12 +258,14 @@ export function searchDocument(value: unknown, query: string, opts: SearchWalkOp
     const kind = jsonKind(node);
     const keyIsName = !frame.idx && frame.path !== ROOT_PATH;
 
-    // 键名优先于值：一条正则同时命中键名与字符串/数字值时，field 记为 key（与 slice 4 的判定顺序一致）
+    // 一个节点最多一条命中；优先级 key > value > path（ADR-0023 §3）。
+    // 键名优先于值：一条正则同时命中键名与值时，field 记为 key（与 slice 4 的判定顺序一致）
     let field: Hit['field'] | null = null;
     if (keyIsName && matches(frame.key)) field = 'key';
-    else {
+    else if (!keysOnly) {
       const valueText = searchableValueText(node, kind);
-      if (!keysOnly && valueText !== null && matches(valueText)) field = 'value';
+      if (valueText !== null && matches(valueText)) field = 'value';
+      else if (matchesPath !== null && matchesPath(frame.path)) field = 'path';
     }
 
     if (field !== null) {

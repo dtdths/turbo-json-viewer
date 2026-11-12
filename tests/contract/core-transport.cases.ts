@@ -271,6 +271,13 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       expect(bad.code).toBe('BAD_PATTERN');
     });
 
+    it('search：路径查询命中 field=path（双适配器断言协议形状）', async () => {
+      const loaded = await load(JSON.stringify({ data: { hotel_list: [1, 2, 3, 4] } }));
+      const reply = await h.api.search({ rootId: loaded.rootId, seq: 44, query: '$.data' });
+      expect(reply).toMatchObject({ seq: 44, rootId: loaded.rootId, docRevision: 1, total: 1, truncated: false });
+      expect(reply.hits.map((hit) => [hit.path, hit.key, hit.field])).toEqual([['$.data', 'data', 'path']]);
+    });
+
     /* ------------------------------- outline ------------------------------- */
 
     it('outline：按容器分页（start/count 夹取、不依赖展开态、只读）', async () => {
