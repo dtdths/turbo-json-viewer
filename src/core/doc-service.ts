@@ -26,8 +26,8 @@
  * 判定，不能依赖版本号巧合。`closeRoot` 显式释放一个根（未知根幂等），连带丢弃 `parentRootId`
  * 指向它的 expression 根；search 抢占 seq 因此**按根独立**（每个标签的 seq 都从 1 起）。
  *
- * 骨架 slice：getNodeJson / replaceNode / undo / redo / reset / getTrail / profile 只保证签名，
- * 一律抛 BAD_COMMAND('not implemented in skeleton slice')。
+ * 骨架 slice：getTrail 只保证签名，一律抛 BAD_COMMAND('not implemented in skeleton slice')。
+ * `profile`（#43 / ADR-0025）已实装：两遍采样 + 按 (rootId, docRevision) 缓存 + 回填 nodeCountCache。
  */
 import { CoreError } from '../protocol/errors';
 import type {
@@ -50,6 +50,7 @@ import type {
 import { ROOT_PATH } from '../shared/path';
 import type {
   CompleteReply,
+  DocumentProfile,
   EvalReply,
   ExprCompletion,
   ExprLocateReply,
@@ -89,6 +90,8 @@ import { SourcePathIndex } from './path-index';
 import { searchDocument } from './search';
 import { evaluateExpression, countDocumentNodes } from './expression/engine';
 import { getCompletions } from './expression/complete';
+import type { CompletionContext } from './expression/types';
+import { buildDocumentProfile } from './profile';
 import { locateOriginalPath } from './expression/locate';
 
 type Cmd<K extends Command['t']> = Extract<Command, { t: K }>;
@@ -150,6 +153,11 @@ export class DocService {
    * 值 = { docRevision, count }——编辑推进 docRevision 后自动失效重算；首求值才计算（不拖慢导入）。
    */
   private readonly nodeCountCache = new Map<RootId, { docRevision: number; count: number }>();
+  /**
+   * 文档概要采样缓存（#43 / ADR-0025 §3）：键 = doc 根 id，值 = { docRevision, profile }。
+   * 编辑推进 docRevision 后自动失效（不自动重采）；`closeRoot` 随根释放；不持久化。
+   */
+  private readonly profileCache = new Map<RootId, { docRevision: number; profile: DocumentProfile }>();
   private latestLoadId = -1;
   /**
    * 搜索抢占 seq：**按根各自单调**（`Map<rootId, seq>`）。
@@ -186,6 +194,7 @@ export class DocService {
     this.roots.clear();
     this.histories.clear();
     this.nodeCountCache.clear();
+    this.profileCache.clear();
   }
 
   /* ------------------------------ dispatch ------------------------------ */
@@ -262,8 +271,9 @@ export class DocService {
         return this.complete(cmd);
       case 'exprLocate':
         return this.exprLocate(cmd);
-      case 'getTrail':
       case 'profile':
+        return this.profile(cmd);
+      case 'getTrail':
         throw new CoreError({ code: 'BAD_COMMAND', message: NOT_IMPLEMENTED });
       default:
         throw new CoreError({ code: 'BAD_COMMAND', message: `unknown command: ${(cmd as { t: string }).t}` });
@@ -380,6 +390,7 @@ export class DocService {
   private dropRootState(rootId: RootId): void {
     this.histories.delete(rootId);
     this.nodeCountCache.delete(rootId);
+    this.profileCache.delete(rootId);
     this.latestSearchSeq.delete(rootId);
   }
 
@@ -982,12 +993,47 @@ export class DocService {
   }
 
   /**
-   * 静态补全（ADR-0018 §2/§3）：数据源在 worker（根级顶层字段 + 全局白名单 + 方法字典），
-   * 只读、不推版本、不缓存。`pos` 夹到文本范围（CM6 的 `context.pos`）。
+   * 文档概要（#43 / ADR-0025 §3）：只接受**文档根**（与 complete 同口径；expr 根 → BAD_COMMAND）。
+   * 首次调用同步两遍采样；结果按 `(rootId, docRevision)` 缓存，并顺手**回填 nodeCountCache**，
+   * 让表达式首次求值不再重复遍历（一次采样两处用）。只读：不推 docRevision / rowVersion。
    */
-  private complete(cmd: Cmd<'complete'>): CompleteReply {
+  private profile(cmd: Cmd<'profile'>): DocumentProfile {
     const docRoot = this.requireDocRoot(cmd.rootId);
-    const value = docRoot.rowModel.value;
+    const cached = this.profileCache.get(docRoot.rootId);
+    if (cached !== undefined && cached.docRevision === docRoot.docRevision) return cached.profile;
+
+    const profile = buildDocumentProfile(docRoot.rowModel.value);
+    this.profileCache.set(docRoot.rootId, { docRevision: docRoot.docRevision, profile });
+    // 回填节点数缓存（ADR-0025 §3）：profile 已走过全图，表达式预算不需要再数一遍
+    this.nodeCountCache.set(docRoot.rootId, { docRevision: docRoot.docRevision, count: profile.nodeCount });
+    return profile;
+  }
+
+  /** 取与当前 docRevision 一致的缓存 profile（**不触发采样**）；未就绪 → undefined。 */
+  private cachedProfile(root: Root): DocumentProfile | undefined {
+    const cached = this.profileCache.get(root.rootId);
+    return cached !== undefined && cached.docRevision === root.docRevision ? cached.profile : undefined;
+  }
+
+  /**
+   * 补全上下文（ADR-0025 §6）：profile 就绪 → 拼根字段 + 路径样本（类型感知补全的数据源）；
+   * 未就绪 → 退化为现有的根级字段抽取（按需采样不阻塞补全，未命中由 complete 自行回落）。
+   */
+  private completionContext(root: Root): CompletionContext {
+    const profile = this.cachedProfile(root);
+    if (profile !== undefined) {
+      const rootSample = profile.paths[0];
+      const rootKeys: string[] = [];
+      const rootKinds: Record<string, JsonKind> = {};
+      if (rootSample !== undefined && rootSample.kind === 'object') {
+        for (const member of rootSample.members) {
+          rootKeys.push(member.name);
+          if (member.kind !== 'mixed') rootKinds[member.name] = member.kind;
+        }
+      }
+      return { rootKeys, rootKinds, paths: profile.paths };
+    }
+    const value = root.rowModel.value;
     const rootKeys: string[] = [];
     const rootKinds: Record<string, JsonKind> = {};
     if (isContainer(value) && !Array.isArray(value)) {
@@ -997,8 +1043,18 @@ export class DocService {
         rootKinds[key] = jsonKind(object[key]);
       }
     }
+    return { rootKeys, rootKinds };
+  }
+
+  /**
+   * 静态补全（ADR-0018 §2/§3；#43 / ADR-0025 §6）：数据源在 worker（缓存 profile 的路径样本或
+   * 退化为根级顶层字段 + 全局白名单 + 方法字典），只读、不推版本、不触发采样。
+   * `pos` 夹到文本范围（CM6 的 `context.pos`）。
+   */
+  private complete(cmd: Cmd<'complete'>): CompleteReply {
+    const docRoot = this.requireDocRoot(cmd.rootId);
     const pos = clampInt(cmd.pos, 0, cmd.text.length);
-    return { items: getCompletions(cmd.text, pos, { rootKeys, rootKinds }) };
+    return { items: getCompletions(cmd.text, pos, this.completionContext(docRoot)) };
   }
 
   /**

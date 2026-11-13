@@ -83,11 +83,47 @@ export interface SearchResult {
   truncated: boolean;
 }
 
+/* ------------------- 文档概要采样（#43 / ADR-0025 §5） ------------------- */
+
+/** 字段统计项（#28 / ADR-0025 §5）。 */
+export interface FieldStat {
+  name: string;
+  /** 该路径容器实例中含此成员的个数（对象路径通常 1；数组路径 = 取样元素数） */
+  freq: number;
+  /** 多类型混用 → 'mixed' */
+  kind: JsonKind | 'mixed';
+}
+
+/** 路径样本：根 → 容器的键路径（数组下标不参与，根 = []）及其成员字段（ADR-0025 §5）。 */
+export interface PathSample {
+  /** 根 → 容器的键路径（数组下标不参与；根 = []） */
+  segments: string[];
+  kind: 'object' | 'array';
+  /** 采样到的该路径容器实例数（对象路径通常 1；数组路径 = 取样元素个数） */
+  samples: number;
+  /** freq 降序、同频首次出现序 */
+  members: FieldStat[];
+}
+
+/**
+ * 文档概要采样结果（`profile` 命令回包；worker 侧 `buildDocumentProfile` 产出，ADR-0025 §5）。
+ *
+ * 一次采样两处消费：右栏「文档概要」（Slice B）与表达式补全（`complete` 在 worker 内查缓存）。
+ */
 export interface DocumentProfile {
-  /** 顶层键 + 采样字段名（供表达式补全） */
-  sampleKeys: string[];
-  maxDepth: number;
+  rootKind: JsonKind;
+  /** 精确节点数（口径 = countDocumentNodes：`{a:1}`=2、`[1,2,3]`=4） */
   nodeCount: number;
+  /** 最大嵌套深度（根 = 1；`{a:1}` → 2） */
+  maxDepth: number;
+  /** 字段收集是否只覆盖了一部分节点（>50k 节点 / 数组取样） */
+  sampled: boolean;
+  /** 实际参与字段收集的节点数（≤ PROFILE_NODE_BUDGET） */
+  sampledNodes: number;
+  /** 路径 / 字段条目是否被上限截断 */
+  truncated: boolean;
+  /** 至少一条：根（segments = []）；按路径首次出现序 */
+  paths: PathSample[];
 }
 
 /* ------------------------- 表达式视图（#12 / #27 / ADR-0018） ------------------------- */

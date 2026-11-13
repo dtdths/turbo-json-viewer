@@ -4,7 +4,7 @@
  * 与 `protocol/types.ts` 的区别：protocol 只放 structured-clone-safe 的跨线程形状；
  * 这里的 originate 映射（WeakMap）**只在 worker 内**存在，永不跨线程。
  */
-import type { ExprBudgetLevel, ExprCompletion, ExprError, JsonKind } from '../../protocol/types';
+import type { ExprBudgetLevel, ExprCompletion, ExprError, JsonKind, PathSample } from '../../protocol/types';
 
 /** 一次求值的实际预算（由 `protocol/versions.ts` 的 `exprBudget()` 换算）。 */
 export interface EvalBudget {
@@ -56,12 +56,17 @@ export interface EvaluateOptions {
   now?: () => number;
 }
 
-/** 静态补全上下文（由 doc-service 从文档根值抽取；不传整棵文档）。 */
+/** 静态补全上下文（由 doc-service 从文档根值 / 缓存 profile 拼装；不传整棵文档）。 */
 export interface CompletionContext {
   /** 文档根顶层字段名（对象键序；根为数组时为空） */
   rootKeys: string[];
   /** 根字段类型（可选，仅用于 `detail` 文案） */
   rootKinds?: Record<string, JsonKind>;
+  /**
+   * 文档概要采样中的路径样本（#43 / ADR-0025 §6；profile 就绪时由 doc-service 注入）。
+   * 缺失 = profile 未就绪 → 补全退化为方法并集；命中/未命中由 `complete` 判断。
+   */
+  paths?: PathSample[];
 }
 
 export type { ExprCompletion };

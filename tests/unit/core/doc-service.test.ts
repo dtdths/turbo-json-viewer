@@ -262,13 +262,11 @@ describe('DocService — 事件 / 未实现命令 / 关闭', () => {
     expect(phases).toEqual(['decode', 'parse', 'model']);
   });
 
-  it('仍未实现的命令（getTrail / profile）统一 BAD_COMMAND("not implemented in skeleton slice")', async () => {
+  it('仍未实现的命令（getTrail）统一 BAD_COMMAND("not implemented in skeleton slice")', async () => {
     const svc = new DocService();
     await load(svc);
-    const commands: Command[] = [
-      { t: 'getTrail', rootId: DOC_ROOT, path: null },
-      { t: 'profile', rootId: DOC_ROOT },
-    ];
+    // profile 已在 #43 / ADR-0025 实装（见 tests/unit/core/profile-service.test.ts）
+    const commands: Command[] = [{ t: 'getTrail', rootId: DOC_ROOT, path: null }];
     for (const command of commands) {
       const err = await errorOf(svc.dispatch(command));
       expect(err.code).toBe('BAD_COMMAND');

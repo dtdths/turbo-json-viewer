@@ -66,6 +66,10 @@ const DUP_KEY_TEXT = '{\n  "k": 1,\n  "k": 2\n}';
 /** 保真 fixture（ADR-0020）：整数键序失真 + 整数超展开位数上限（overflow）；大整数本身已无损、不再报。 */
 const FIDELITY_TEXT = '{"2":1,"b":2,"1":3,"big":1e10001}';
 
+/** 文档概要采样 fixture（#43 / ADR-0025）：根对象 + 数组元素字段 + 嵌套对象。 */
+const PROFILE_DOC = { items: [{ name: 'a', price: 1 }, { name: 'b', price: 2 }], meta: { v: 1 } };
+const PROFILE_TEXT = JSON.stringify(PROFILE_DOC);
+
 /** 截断源：load 走 repair，同时发 load-progress×3 + repair 事件。 */
 const TRUNCATED_TEXT = '{"a":1,"b":"hello wor';
 
@@ -664,7 +668,7 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
 
     /* --------------------- getTrail / profile / stats --------------------- */
 
-    it('stats 只读快照；getTrail / profile 的未实现错误映射为 BAD_COMMAND', async () => {
+    it('stats 只读快照；getTrail 的未实现错误映射为 BAD_COMMAND', async () => {
       const loaded = await load(BASIC_TEXT);
       expect(await h.api.stats(loaded.rootId)).toEqual({
         rootId: loaded.rootId,
@@ -673,17 +677,73 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
         totalRows: 4,
       });
 
-      // 逐个创建 + await：worker 适配器的 rejection 在宏任务里落地，先建后 await 会触发
-      // 「两条 pending 同时 reject」的未处理拒绝噪音。
-      const notImplemented: Array<() => Promise<unknown>> = [
-        () => h.api.getTrail({ rootId: loaded.rootId, path: null }),
-        () => h.api.profile(loaded.rootId),
-      ];
-      for (const call of notImplemented) {
-        const err = await errorOf(call());
-        expect(err.code).toBe('BAD_COMMAND');
-        expect(err.message).toContain('not implemented in skeleton slice');
+      const err = await errorOf(h.api.getTrail({ rootId: loaded.rootId, path: null }));
+      expect(err.code).toBe('BAD_COMMAND');
+      expect(err.message).toContain('not implemented in skeleton slice');
+    });
+
+    it('profile：文档根返回真实采样、只读且同版本缓存；表达式根 → BAD_COMMAND', async () => {
+      const loaded = await load(PROFILE_TEXT);
+      const before = await h.api.stats(loaded.rootId);
+
+      const expected = {
+        rootKind: 'object',
+        nodeCount: 10,
+        maxDepth: 4,
+        sampled: false,
+        sampledNodes: 10,
+        truncated: false,
+        paths: [
+          {
+            segments: [],
+            kind: 'object',
+            samples: 1,
+            members: [
+              { name: 'items', freq: 1, kind: 'array' },
+              { name: 'meta', freq: 1, kind: 'object' },
+            ],
+          },
+          {
+            segments: ['items'],
+            kind: 'array',
+            samples: 2,
+            members: [
+              { name: 'name', freq: 2, kind: 'string' },
+              { name: 'price', freq: 2, kind: 'number' },
+            ],
+          },
+          {
+            segments: ['meta'],
+            kind: 'object',
+            samples: 1,
+            members: [{ name: 'v', freq: 1, kind: 'number' }],
+          },
+        ],
+      };
+      expect(await h.api.profile(loaded.rootId)).toEqual(expected);
+      // 只读：不推 docRevision / rowVersion；同版本重复调用走缓存、结果一致
+      expect(await h.api.stats(loaded.rootId)).toEqual(before);
+      expect(await h.api.profile(loaded.rootId)).toEqual(expected);
+
+      // complete 在 worker 内消费缓存 profile（签名不变）：items. 给真实元素字段（数组路径带上方法并集）
+      const completed = await h.api.complete({ rootId: loaded.rootId, text: 'items.', pos: 6 });
+      expect(completed.items.map((item) => item.label).slice(0, 2)).toEqual(['name', 'price']);
+      expect(completed.items.map((item) => item.label)).toContain('map');
+      expect(completed.items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 2/2' });
+
+      // 表达式根不做 profile（与 complete 同口径）→ BAD_COMMAND
+      const evaluated = await h.api.eval({
+        rootId: loaded.rootId,
+        seq: 1,
+        text: '$.items',
+        strict: false,
+        budget: 'standard',
+      });
+      if (evaluated.ok) {
+        expect((await errorOf(h.api.profile(evaluated.rootId))).code).toBe('BAD_COMMAND');
       }
+      // 未知根 → NO_ROOT
+      expect((await errorOf(h.api.profile('doc:999'))).code).toBe('NO_ROOT');
     });
 
     /* ------------------------------- 事件通道 ------------------------------- */
