@@ -184,16 +184,16 @@ export interface DocumentProfile {
 ### 决策
 
 1. **语义**：`<纯键链>.map(param => …param. …)` 中 `param` = 该路径的数组元素；补全候选 = 该路径 `PathSample.members`（元素字段），detail 沿用采样格式 `${kind} · 采样 ${freq}/${samples}`；**不追加**数组方法（元素是对象，不是数组）。
-2. **作用域级**：光标位于该回调 body 内任意位置（紧跟 `=>`、对象字面量 `({ …: param. })`、多行 body）都生效；`param?.` 变体、以及**裸前缀**（`map(x => x`，无点）同样按元素字段提示。
-3. **方法白名单**（单参数回调 = 元素）：`map / filter / find / findIndex / some / every`——**从 `whitelist.ELEMENT_CALLBACK_METHODS` 取**（`ARRAY_METHODS` 的子集，单测钉住），不含引擎不支持的 `forEach` / `flatMap` 与累加器语义的 `reduce`（「提示什么 == 允许调什么」红线）；接收者支持纯键链（`items` / `$.data.items` / `?.` 链）。
-4. **非目标 / 不解析**：`reduce` / `sort`（多参数、语义不是元素）；嵌套回调链（`x => x.tags.map(t => t.`，需要多层绑定）；解构参数（`({name}) =>`）；回调已闭合后的文本（不做作用域校验）。这些一律退化为原行为（未命中 → 方法并集）。
-5. **实现**（worker 侧，`core/expression/complete.ts`）：`elementCallbackBind()`（正则按白名单动态拼接、函数内构造）扫光标前文本，取**最近**一条 `param` 与接收者同名的绑定 → `callbackParamSample()` 解析路径链 → `memberFieldCompletions()` 给字段（与数组路径补全共用同一成员映射）；页面零改动、`page.js` 零增量。**审查收口**：方法表改为从 `whitelist` 派生，消除第二份硬编码表。
+2. **作用域级**：光标位于该回调 body 内任意位置（紧跟 `=>`、对象字面量 `({ …: param. })`、多行 body）都生效；`param?.` 变体、以及**裸前缀**（`map(x => x`，无点）同样按元素字段提示；只认**独立出现**的 `param`（`other.param.` 不算）。
+3. **方法白名单**（单参数回调 = 元素）：`map / filter / find / findIndex / some / every`——**从 `whitelist.ELEMENT_CALLBACK_METHODS` 取**（`ARRAY_METHODS` 的子集，单测钉住），不含引擎不支持的 `forEach` / `flatMap` 与累加器语义的 `reduce`（「提示什么 == 允许调什么」红线）；接收者支持纯键链（`items` / `$.data.items` / `?.` 链）与**根数组 `$`**（`$.map(x => x.`）；参数写法支持 `param =>` 与 `(param) =>`（Prettier 默认）。
+4. **非目标 / 不解析**：`reduce` / `sort`（多参数、语义不是元素）；嵌套回调链（`x => x.tags.map(t => t.`，需要多层绑定）；解构参数（`({name}) =>`）。这些退化为原行为。**回调闭合校验已实现**：`items.map(x => x.a); x.` 的 `x.` 不再绑定（与未绑定标识符同行为）。
+5. **实现**（worker 侧，`core/expression/complete.ts`）：`elementCallbackBind()`（正则按白名单动态拼接、函数内构造，支持 `(param) =>`）扫光标前文本；`callbackParamSample()` 只取**独立出现**（前一字符不是 `.`）、**早于使用处**、且 `callStillOpen()`（配对括号/字符串扫描）判定**光标时仍未闭合**的最近绑定；解析路径链（`$` → 根样本）→ `memberFieldCompletions()` 给字段（与数组路径补全共用同一成员映射）。页面零改动、`page.js` 零增量。**审查收口**：方法表从 `whitelist` 派生、闭合校验、链尾同名（`other.param.`）排除。
 
 ### 验收（2026-11-13 晚，实现票 #44）
 
-- **单测 1228 → 1237**（+9：作用域级 / 对象字面量体 / 多行 body / 各回调方法 / `?.` 链与 `x?.` / 裸前缀 / 嵌套不解析 / `reduce`·`sort` 不绑定 / 未绑定标识符不回归 / 白名单子集不漂移）。
+- **单测 1228 → 1241**（+13：作用域级 / 对象字面量体 / 多行 body / 各回调方法 / `?.` 链与 `x?.` / 裸前缀 / 括号单参 / 根数组 `$.map` / 回调闭合不绑定 / 链尾同名不绑定 / 嵌套不解析 / `reduce`·`sort` 不绑定 / 未绑定不回归 / 白名单子集不漂移）。
 - **冒烟 `smoke-expression` 55 → 57/57**：`data.items.map(x => x.` 与 `data.items.map(x => ({ n: x.` 均给 `id/name/price`，且不混入全局名。
-- **体积**：`page.js` **51.2 不变**（预算 52）、`worker.js` 65.8 → **66.0**（+0.2，无硬预算）、`page.css` 8.3 / 懒加载 145.6 不变。
+- **体积**：`page.js` **51.2 不变**（预算 52）、`worker.js` 65.8 → **66.2**（+0.4，无硬预算）、`page.css` 8.3 / 懒加载 145.6 不变。
 - 架构 README §11 新增 **6.30** 行。
 
 ### 被否决的替代
@@ -207,7 +207,7 @@ export interface DocumentProfile {
 
 ### 已知差距（修订）
 
-- 纯**文本**绑定、不做作用域校验：回调闭合后（如 `items.map(x => x.a); x.`）仍可能提示元素字段（CM6 会按前缀过滤，实际影响小）。
+- 纯**文本**绑定、不做变量作用域分析（如 `const y = x; y.` 不跟随）；括号/字符串配对是轻量扫描（表达式子集无注释/正则字面量，边界可控）。
 - 嵌套回调链（`x => x.tags.map(t => t.`）、解构参数（`({ name }) => name.`）、`reduce` 累加器不做绑定。
 
 ## 已知差距 / 本轮不做

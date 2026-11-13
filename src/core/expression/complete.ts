@@ -178,14 +178,39 @@ function memberFieldCompletions(sample: PathSample): ExprCompletion[] {
 }
 
 /**
- * 回调参数绑定正则：`<路径链>.map(param => …`。方法名从 `ELEMENT_CALLBACK_METHODS`
- * （`whitelist` 单一来源）动态拼接；**函数内构造**避免模块级 `/g` 状态被并发调用污染。
+ * 回调参数绑定正则：`<路径链>.map(param => …`（含括号单参 `(param) =>`）。方法名从
+ * `ELEMENT_CALLBACK_METHODS`（`whitelist` 单一来源）动态拼接；**函数内构造**避免模块级 `/g`
+ * 状态被并发调用污染。groups：1 = 路径链、2 = 括号参数、3 = 裸参数。
  */
 function elementCallbackBind(): RegExp {
   return new RegExp(
-    `([A-Za-z_$][A-Za-z0-9_$]*(?:\\s*\\??\\.\\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\\s*\\??\\.\\s*(?:${ELEMENT_CALLBACK_METHODS.join('|')})\\s*\\(\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*=>`,
+    `([A-Za-z_$][A-Za-z0-9_$]*(?:\\s*\\??\\.\\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\\s*\\??\\.\\s*(?:${ELEMENT_CALLBACK_METHODS.join('|')})\\s*\\(\\s*(?:\\(\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\)|([A-Za-z_$][A-Za-z0-9_$]*))\\s*=>`,
     'g',
   );
+}
+
+/** 从 `(`（下标 open）扫到 `before` 末尾：回调是否仍未闭合（配对括号 / 字符串跳过）。 */
+function callStillOpen(before: string, open: number): boolean {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < before.length; i++) {
+    const ch = before[i] as string;
+    if (quote !== null) {
+      if (ch === '\\') i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1;
+      if (depth <= 0) return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -193,20 +218,39 @@ function elementCallbackBind(): RegExp {
  * `<路径链>.map(param => …)` 里 `param` = 该路径的数组元素，返回该路径的元素样本。
  *
  * - **作用域级**：不要求紧跟 `=>`——对象字面量体（`({ a: param.a, b: param. })`）、多行 body 都算；
- * - 只认**单参数**回调（`ELEMENT_CALLBACK_METHODS`：`map/filter/find/findIndex/some/every`，白名单子集）
- *   与纯键链接收者；
- *   `reduce`/`sort`（多参数）与嵌套回调链（`x => x.tags.map(t => t.）不在本层解析（非目标）；
- * - 纯**文本**绑定、不做求值/作用域校验：回调已闭合后仍可能出现字段（已知差距，见 ADR-0025）。
+ * - **只认独立出现的 `param`**（前面不是 `.`）：`other.param.` 不算该绑定（链尾同名校验）；
+ * - **闭合校验**：取「光标时仍未闭合」的最近一个绑定——回调已闭合（`map(x => x.a); x.`）不再提示；
+ * - **根数组**：接收者为 `$`（`$.map(x => x.`）时用根样本；
+ * - 只认**单参数**回调（`ELEMENT_CALLBACK_METHODS`，白名单子集）与纯键链接收者；
+ *   `reduce`/`sort`（多参数）与嵌套回调链（`x => x.tags.map(t => t.`）、解构参数不解析（非目标）；
+ * - 纯**文本**绑定、不做求值/变量作用域分析。
  */
-function callbackParamSample(before: string, receiver: string, ctx: CompletionContext): PathSample | undefined {
+function callbackParamSample(
+  before: string,
+  receiver: string,
+  receiverIndex: number,
+  ctx: CompletionContext,
+): PathSample | undefined {
+  if (receiverIndex > 0 && before[receiverIndex - 1] === '.') return undefined; // `other.param.`：不是该绑定
   let chain: string | undefined;
   const bind = elementCallbackBind();
   for (let match = bind.exec(before); match !== null; match = bind.exec(before)) {
-    if (match[2] === receiver) chain = match[1];
+    const param = match[2] ?? match[3];
+    if (param !== receiver) continue;
+    const arrowEnd = match.index + match[0].length;
+    if (arrowEnd > receiverIndex) continue; // 参数出现必须早于使用处
+    const open = match.index + match[0].indexOf('(');
+    if (!callStillOpen(before, open)) continue; // 已闭合的回调不再绑定
+    chain = match[1];
   }
   if (chain === undefined) return undefined;
   const segments = parseKeyChain(chain);
   if (segments === null) return undefined;
+  // `$.map(x => x.`：`$` 去根后 segments 为空 → 根样本（根为数组时才有元素字段）
+  if (segments.length === 0) {
+    const root = ctx.paths?.[0];
+    return root !== undefined && root.kind === 'array' ? root : undefined;
+  }
   const sample = findPathSample(ctx.paths, segments);
   return sample !== undefined && sample.kind === 'array' ? sample : undefined;
 }
@@ -258,13 +302,17 @@ export function getCompletions(text: string, pos: number, ctx: CompletionContext
   let items: ExprCompletion[];
   if (tail === null) {
     // 无 `.` 的裸前缀（`param` / `param.` 被剥掉后）：先看是不是回调参数（作用域级绑定，ADR-0025 修订）
-    const bound = prefix.length > 0 ? callbackParamSample(before, prefix, ctx) : undefined;
+    const bound =
+      prefix.length > 0 ? callbackParamSample(before, prefix, before.length - prefix.length, ctx) : undefined;
     items = bound !== undefined ? memberFieldCompletions(bound) : rootCompletions(ctx);
   } else {
     const chainText = head.slice(0, head.length - tail[0].length);
     // `param?.` 等尾部为 `.` / `?.` 时：取接收者末段标识符，若是回调参数则给元素字段
     const receiver = TRAILING_IDENTIFIER.exec(chainText)?.[1];
-    const bound = receiver === undefined ? undefined : callbackParamSample(before, receiver, ctx);
+    const bound =
+      receiver === undefined
+        ? undefined
+        : callbackParamSample(before, receiver, chainText.length - receiver.length, ctx);
     items = bound !== undefined ? memberFieldCompletions(bound) : memberCompletions(chainText, ctx);
   }
 

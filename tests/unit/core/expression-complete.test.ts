@@ -409,6 +409,29 @@ describe('core/expression/complete — 回调参数绑定（ADR-0025 修订 2026
     expect(labels(at('items.sort((a, b) => a.'))).toEqual(FALLBACK_LABELS);
   });
 
+  it('括号单参 `(item) =>` 同样绑定（Prettier 默认 arrowParens=always）', () => {
+    expect(labels(at('items.map((item) => item.'))).toEqual(['name', 'price']);
+  });
+
+  it('回调已闭合 → 不再绑定：与未绑定标识符行为一致（不出现元素字段）', () => {
+    const closed = labels(at('items.map(x => x.id); x.'));
+    expect(closed).not.toContain('name');
+    expect(labels(at('z.'))).toEqual(closed);
+  });
+
+  it('链尾同名不算绑定：other.x. 不按回调参数给元素字段', () => {
+    const foreign = labels(at('items.map(x => other.x.'));
+    expect(foreign).not.toContain('name');
+    expect(labels(at('z.'))).toEqual(foreign);
+  });
+
+  it('根数组接收者：$.map(x => x. 给元素字段（根样本）', () => {
+    expect(getCompletions('$.map(x => x.', '$.map(x => x.'.length, ARRAY_ROOT_CTX).map((i) => i.label)).toEqual([
+      'name',
+      'price',
+    ]);
+  });
+
   it('未绑定标识符仍走原行为（不回归）：z. → 方法并集；根前缀 → 根字段', () => {
     expect(labels(at('z.'))).toEqual(FALLBACK_LABELS);
     expect(labels(at('da'))).toEqual(labels(at('')));
