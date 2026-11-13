@@ -226,6 +226,8 @@ export class DocService {
         return this.setOrder(cmd);
       case 'rowOfPath':
         return this.rowOfPath(cmd);
+      case 'setNodeOrder':
+        return this.setNodeOrder(cmd);
       case 'getNodeJson':
         return this.getNodeJson(cmd);
       case 'copyNode':
@@ -1063,7 +1065,8 @@ export class DocService {
     const value = root.rowModel.valueAt(cmd.path);
     return {
       rootId: root.rootId,
-      ...outlinePage(value, cmd.path, cmd.start, cmd.count, this.order),
+      // 按**被查询容器**的生效顺序分页（#41：单节点覆盖优先于全局；数组恒索引序）
+      ...outlinePage(value, cmd.path, cmd.start, cmd.count, root.rowModel.displayOrderAt(cmd.path)),
     };
   }
 
@@ -1110,6 +1113,23 @@ export class DocService {
       row: root.rowModel.rowOfPath(cmd.path),
       totalRows: root.rowModel.totalRows,
     };
+  }
+
+  /**
+   * 单节点子键排序覆盖（#41 / ADR-0024 修订 2026-11-13）：`order=null` = 恢复全局排序。
+   *
+   * 走既有根变更路径（intent = view，回包 = 恒定 `EditReply`）：
+   *   - 覆盖变化才 `rowVersion++`（`docRevision` 不动）；
+   *   - no-op（同覆盖 / 本来就无覆盖再清）零抖动、无 `changedRow`；
+   *   - 覆盖是**标签会话态**：只存在于该根的 RowModel（不落盘），换文档 / 关根即丢弃；
+   *   - 表达式根是独立 RowModel，覆盖不跨根共享。
+   */
+  private setNodeOrder(cmd: Cmd<'setNodeOrder'>): EditReply {
+    const root = this.roots.require(cmd.rootId);
+    return this.mutateRoot(root, {
+      intent: 'view',
+      run: () => root.rowModel.setNodeOrder(cmd.path, cmd.order),
+    });
   }
 
   /* ------------------------------- events ------------------------------- */

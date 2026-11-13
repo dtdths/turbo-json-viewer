@@ -105,7 +105,11 @@ export type Command =
   | { t: 'setOrder'; order: SortOrder }
   /* 路径 → 可见行号（切档后的视口锚点换算）：只读，不推任何版本；
    * 祖先折叠 → row=-1；路径不存在 → BAD_COMMAND（与 valueAt 同口径）。 */
-  | { t: 'rowOfPath'; rootId: RootId; path: Path };
+  | { t: 'rowOfPath'; rootId: RootId; path: Path }
+  /* 单节点子键排序覆盖（#41 / ADR-0024 修订 2026-11-13）：`order=null` = 恢复全局排序。
+   * 只排该节点的**直接子键**（不向下继承）；目标必须是对象容器（数组 / 标量 / 路径不存在 →
+   * BAD_COMMAND）。回包复用 `EditReply`；覆盖变化才推 rowVersion，无变化零抖动。 */
+  | { t: 'setNodeOrder'; rootId: RootId; path: Path; order: SortOrder | null };
 
 export interface LoadReply {
   rootId: RootId;
@@ -261,6 +265,8 @@ export interface ReplyByKind {
   exprLocate: ExprLocateReply;
   setOrder: SetOrderReply;
   rowOfPath: RowOfPathReply;
+  /* 单节点覆盖（#41）：回包复用 EditReply（不新增回包类型） */
+  setNodeOrder: EditReply;
 }
 
 export type ReplyOf<C extends Command> = ReplyByKind[C['t']];

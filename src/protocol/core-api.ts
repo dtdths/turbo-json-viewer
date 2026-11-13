@@ -151,6 +151,12 @@ export interface CoreApi {
    * 祖先折叠 → `row=-1`；路径不存在 → `BAD_COMMAND`。
    */
   rowOfPath(req: { rootId: RootId; path: Path }): Promise<RowOfPathReply>;
+  /**
+   * 单节点子键排序覆盖（#41 / ADR-0024 修订 2026-11-13）：`order=null` = 恢复全局排序。
+   * 只排该节点的**直接子键**（不向下继承）；目标必须是对象容器（数组 / 标量 / 路径不存在 →
+   * `BAD_COMMAND`）。回包复用 `EditReply`：覆盖变化才推 `rowVersion`，无变化零抖动。
+   */
+  setNodeOrder(req: { rootId: RootId; path: Path; order: SortOrder | null }): Promise<EditReply>;
 
   getNodeJson(req: { rootId: RootId; path: Path }): Promise<NodeJsonReply>;
   /** 复制四格式（ADR-0010）：文本在 core 侧生成；只读，不推进版本。 */
@@ -232,6 +238,7 @@ export function commandCore(send: Sender, subscribe?: (fn: (e: CoreEvent) => voi
     outline: (req) => send({ t: 'outline', ...req }),
     setOrder: (order) => send({ t: 'setOrder', order }),
     rowOfPath: (req) => send({ t: 'rowOfPath', ...req }),
+    setNodeOrder: (req) => send({ t: 'setNodeOrder', ...req }),
     getNodeJson: (req) => send({ t: 'getNodeJson', ...req }),
     copyNode: (req) => send({ t: 'copyNode', ...req }),
     replaceNode: (req) => send({ t: 'replaceNode', ...req }),

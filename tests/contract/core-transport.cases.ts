@@ -362,6 +362,65 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       expect(windowPaths(back)).toEqual(['$', '$.a', '$.b', '$.b.c']);
     });
 
+    /* --------------- 单节点覆盖（#41 / ADR-0024 修订 2026-11-13） --------------- */
+
+    it('setNodeOrder：设置 → 窗口行序 → no-op → 清覆盖恢复（EditReply 版本纪律）', async () => {
+      const loaded = await load(BASIC_TEXT); // { a: 1, b: { c: 2 } } → 自适应全展开
+      const before = await h.api.stats(loaded.rootId);
+      expect(before).toMatchObject({ docRevision: 1, rowVersion: 1, totalRows: 4 });
+
+      // 根覆盖：desc → b > a（b 的直接子键 c 不因覆盖而变化，只排一层）
+      const set = await h.api.setNodeOrder({ rootId: loaded.rootId, path: '$', order: 'key-desc' });
+      expect(set).toEqual({
+        rootId: loaded.rootId,
+        docRevision: 1,
+        rowVersion: before.rowVersion + 1,
+        totalRows: 4,
+        changedRow: 0,
+        history: { applied: 0, canUndo: false, canRedo: false },
+      });
+      const win = await h.api.window({
+        rootId: loaded.rootId,
+        rowVersion: set.rowVersion,
+        seq: 1,
+        start: 0,
+        count: 10,
+      });
+      expect(windowPaths(win)).toEqual(['$', '$.b', '$.b.c', '$.a']);
+
+      // 同覆盖 no-op：rowVersion 不动、无 changedRow
+      const again = await h.api.setNodeOrder({ rootId: loaded.rootId, path: '$', order: 'key-desc' });
+      expect(again).toEqual({
+        rootId: loaded.rootId,
+        docRevision: 1,
+        rowVersion: set.rowVersion,
+        totalRows: 4,
+        history: { applied: 0, canUndo: false, canRedo: false },
+      });
+
+      // 标量路径 → BAD_COMMAND，且不推版本
+      expect(
+        (await errorOf(h.api.setNodeOrder({ rootId: loaded.rootId, path: '$.a', order: 'key-asc' }))).code,
+      ).toBe('BAD_COMMAND');
+      expect(await h.api.stats(loaded.rootId)).toMatchObject({ rowVersion: set.rowVersion, docRevision: 1 });
+
+      // 清覆盖（null）→ 回全局 raw
+      const cleared = await h.api.setNodeOrder({ rootId: loaded.rootId, path: '$', order: null });
+      expect(cleared).toMatchObject({ docRevision: 1, rowVersion: set.rowVersion + 1, changedRow: 0 });
+      const restored = await h.api.window({
+        rootId: loaded.rootId,
+        rowVersion: cleared.rowVersion,
+        seq: 2,
+        start: 0,
+        count: 10,
+      });
+      expect(windowPaths(restored)).toEqual(['$', '$.a', '$.b', '$.b.c']);
+
+      // 大纲读取同一容器的生效顺序（覆盖已清 → raw）
+      const outline = await h.api.outline({ rootId: loaded.rootId, path: '$', start: 0, count: 10 });
+      expect(outline.children.map((child) => child.key)).toEqual(['a', 'b']);
+    });
+
     /* --------------------------- 子树编辑 / 版本 --------------------------- */
 
     it('getNodeJson / replaceNode / undo / redo / reset：版本与 editCount 逐级正确', async () => {

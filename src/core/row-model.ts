@@ -283,6 +283,12 @@ export class RowModel {
 
   private readonly indexes = new Map<Container, Fenwick>();
   private keysCache = new WeakMap<Container, string[]>();
+  /**
+   * 单节点子键排序覆盖表（#41 / ADR-0024 修订 2026-11-13）：容器对象 → 该容器**直接子键**的显示顺序。
+   * 覆盖优先于全局 `order`，且**不向下继承**（子树各层按各自规则 / 全局规则）；按容器对象身份存
+   * （WeakMap）——编辑替换产生的新对象天然无覆盖（回全局），即「编辑后覆盖失效」的既定语义。
+   */
+  private readonly nodeOrders = new WeakMap<Container, SortOrder>();
   private readonly rowBudget: number;
   /** 对象成员的显示顺序（#40 / ADR-0024）：`keysOf` 是它唯一的出口。 */
   private order: SortOrder;
@@ -310,6 +316,9 @@ export class RowModel {
    * 实现要点：**子树可见行数（Fenwick 总和）与顺序无关**，所以只需重置键缓存，
    * 再对 `expanded` 集合里每个对象容器独立 `measureChildren` 重建 Fenwick——不需要自底向上遍历值图。
    * 数组恒索引序，其 Fenwick 不受影响。
+   *
+   * #41 起：**不清单节点覆盖**（`nodeOrders`）——`keysOf` 是「覆盖 ?? 全局」，重置键缓存后
+   * 覆盖容器按自己的规则重排、未覆盖容器跟随新全局档。
    */
   setOrder(order: SortOrder): boolean {
     const next = normalizeSortOrder(order);
@@ -322,6 +331,48 @@ export class RowModel {
       this.indexes.set(container, new Fenwick(sizes));
     }
     return true;
+  }
+
+  /**
+   * 设置 / 清除**单节点**子键排序覆盖（#41 / ADR-0024 修订 2026-11-13）：
+   * `order=null` = 恢复全局排序；只影响该容器的**直接子键**，不向下继承。
+   *
+   * - 目标必须是**对象容器**：数组 / 标量 / 路径不存在 → `BAD_COMMAND`（路径口径与 `valueAt` 同）。
+   * - 与现有覆盖相同 → `{ changed:false }`（不失效缓存、不重建索引；版本零抖动）。
+   * - 覆盖变化**始终 `changed=true`**（即使容器折叠——保证后续展开 / 大纲 / 其他视图一致）。
+   * - 只失效该容器的键缓存；已展开时重建该容器自己的 Fenwick（`measureChildren` 天然按新序，
+   *   子树行数与顺序无关，祖先 Fenwick 不用动）。
+   */
+  setNodeOrder(path: Path, order: SortOrder | null): { row: number; changed: boolean; totalRows: number } {
+    const chain = this.locateChain(path);
+    const node = chain.length === 0 ? this.rootValue : (chain[chain.length - 1] as ChainEntry).node;
+    if (!isContainer(node) || Array.isArray(node)) {
+      throw new CoreError({ code: 'BAD_COMMAND', message: `setNodeOrder: not an object container at ${path}` });
+    }
+    const next = order === null ? null : normalizeSortOrder(order);
+    const current = this.nodeOrders.get(node) ?? null;
+    if (next === current) {
+      return { row: this.rowOfPath(path), changed: false, totalRows: this.totalRows };
+    }
+    if (next === null) this.nodeOrders.delete(node);
+    else this.nodeOrders.set(node, next);
+    this.keysCache.delete(node);
+    if (this.expanded.has(node)) {
+      const { sizes } = this.measureChildren(node);
+      this.indexes.set(node, new Fenwick(sizes));
+    }
+    return { row: this.rowOfPath(path), changed: true, totalRows: this.totalRows };
+  }
+
+  /**
+   * 该路径节点当前生效的显示顺序（#41 / ADR-0024 修订，大纲按容器取顺序用）：只读，不推版本。
+   * 对象容器 = 覆盖 ?? 全局；数组 / 标量 = 全局（数组恒索引序）。路径不存在 → BAD_COMMAND。
+   */
+  displayOrderAt(path: Path): SortOrder {
+    const chain = this.locateChain(path);
+    const node = chain.length === 0 ? this.rootValue : (chain[chain.length - 1] as ChainEntry).node;
+    if (isContainer(node) && !Array.isArray(node)) return this.nodeOrders.get(node) ?? this.order;
+    return this.order;
   }
 
   /** 根可见行 + 根下所有可见子树行。 */
@@ -587,7 +638,8 @@ export class RowModel {
    */
   replaceNode(path: Path, value: unknown): ReplaceResult {
     if (path === ROOT_PATH) {
-      this.releaseSubtree(this.rootValue);
+      // 编辑替换（含 undo/redo/reset 的落地路径）→ 被替换子树的单节点覆盖一并失效（回全局）
+      this.releaseSubtree(this.rootValue, true);
       this.expanded.clear();
       this.indexes.clear();
       this.keysCache = new WeakMap();
@@ -625,8 +677,8 @@ export class RowModel {
       if (next > this.rowBudget) throw this.tooManyRows(next);
     }
 
-    // 释放旧子树的状态，再写回值图
-    this.releaseSubtree(target.node);
+    // 释放旧子树的状态，再写回值图（编辑替换 → 旧子树的单节点覆盖失效，undo 恢复的值也回全局）
+    this.releaseSubtree(target.node, true);
     if (Array.isArray(target.container)) {
       target.container[target.slot] = value;
     } else {
@@ -761,13 +813,14 @@ export class RowModel {
 
   /**
    * 对象容器的**显示键序**（slot 序的唯一来源，ADR-0024 §1）：首次需要时才排序并缓存（懒排序）。
+   * #41 起顺序 = 单节点覆盖 ?? 全局档（覆盖只作用于该容器自己的直接子键）。
    * 数组没有键序概念，返回空数组（调用方用下标）。
    */
   private keysOf(container: Container): string[] {
     if (Array.isArray(container)) return [];
     let keys = this.keysCache.get(container);
     if (!keys) {
-      keys = orderedKeys(container, this.order);
+      keys = orderedKeys(container, this.nodeOrders.get(container) ?? this.order);
       this.keysCache.set(container, keys);
     }
     return keys;
@@ -905,8 +958,15 @@ export class RowModel {
     return chain;
   }
 
-  /** 释放子树内所有展开状态与键缓存（编辑替换前调用）。 */
-  private releaseSubtree(node: unknown): void {
+  /**
+   * 释放子树内所有展开状态与键缓存（编辑替换 / 收起前调用）。
+   *
+   * `clearNodeOrders=true` 时同时清掉子树内各容器的**单节点覆盖**（#41）：只有「编辑替换」会这么调
+   * （含 undo/redo/reset 的落地路径），保证替换后的值回全局规则、undo 恢复的旧值也不复活旧覆盖；
+   * `clear()` / `toggleSubtree(open=false)` 等纯视图收起调用**不传**该标志——覆盖是标签会话态，
+   * 折叠 / 全收起不该丢它。
+   */
+  private releaseSubtree(node: unknown, clearNodeOrders = false): void {
     if (!isContainer(node)) return;
     const stack: Container[] = [node];
     while (stack.length > 0) {
@@ -914,6 +974,7 @@ export class RowModel {
       this.indexes.delete(current);
       this.expanded.delete(current);
       this.keysCache.delete(current);
+      if (clearNodeOrders) this.nodeOrders.delete(current);
       if (Array.isArray(current)) {
         for (let i = 0; i < current.length; i++) {
           const child = current[i];
