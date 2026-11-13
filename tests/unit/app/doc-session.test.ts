@@ -284,6 +284,48 @@ describe('DocSession — 回包落地（版本状态 + 意图动作矩阵）', (
     });
   }
 
+  it('order 意图：只换行版本（保持视口），不重推命中 / 不刷新大纲 / 不动搜索与选中（#41 / ADR-0024 v1.1）', () => {
+    const session = opened();
+    const plan = session.land(
+      { rootId: ROOT, docRevision: 1, rowVersion: 2, totalRows: 3 },
+      { kind: 'order' },
+    );
+    // 会话版本照常落地（docRevision 不变：显示顺序不是值图变化）
+    expect(session.snapshot).toEqual({ rootId: ROOT, docRevision: 1, rowVersion: 2, totalRows: 3 });
+    expect(plan.state).toEqual({ rootId: ROOT, docRevision: 1, rowVersion: 2, totalRows: 3 });
+    // changed 依 rowVersion 比较（1 → 2）= 真的换了行映射
+    expect(plan.changed).toBe(true);
+    // 滚动策略 = keep：锚点由 app 用 captureOrderAnchor + rowOfPath 按路径还原
+    expect(plan.scroll).toEqual({ kind: 'keep' });
+    // 附加动作全部关闭（行序变化不影响命中集 / 大纲数据 / 选中 / 编辑历史）
+    expect(plan.reapplyHits).toBe(false);
+    expect(plan.refreshOutline).toBe(false);
+    expect(plan.markSearchStale).toBe(false);
+    expect(plan.clearSelection).toBe(false);
+    expect(plan.selectPath).toBeUndefined();
+    expect(plan.flashPath).toBeUndefined();
+    expect(plan.history).toBeUndefined();
+  });
+
+  it('order 意图 no-op：rowVersion 不变 → changed=false 且会话状态不变', () => {
+    const session = opened();
+    const before = session.snapshot;
+    const plan = session.land(
+      { rootId: ROOT, docRevision: 1, rowVersion: 1, totalRows: 3 },
+      { kind: 'order' },
+    );
+    expect(plan.changed).toBe(false);
+    expect(session.snapshot).toEqual(before);
+    expect(plan.scroll).toEqual({ kind: 'keep' });
+    expect(plan.reapplyHits).toBe(false);
+    expect(plan.refreshOutline).toBe(false);
+    expect(plan.markSearchStale).toBe(false);
+    expect(plan.clearSelection).toBe(false);
+    expect(plan.selectPath).toBeUndefined();
+    expect(plan.flashPath).toBeUndefined();
+    expect(plan.history).toBeUndefined();
+  });
+
   it('jump 缺几何参数时退回保持视口（不猜行高）', () => {
     const session = opened();
     const plan = session.land({ rootId: ROOT, rowVersion: 2, totalRows: 20 }, { kind: 'jump', path: '$.a', row: 3 });

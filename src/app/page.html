@@ -253,7 +253,7 @@
   </div>
 </div>
 
-<!-- 树行右键菜单（slice 5 编辑 + ADR-0010 复制四格式 + #22 子树批量展开/收起；交互契约 ADR-0015） -->
+<!-- 树行右键菜单（slice 5 编辑 + ADR-0010 复制四格式 + #22 子树批量展开/收起 + #41 单节点子键排序；交互契约 ADR-0015） -->
 <div class="ctxmenu" id="ctxMenu" role="menu" aria-label="行操作" hidden>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>复制子树 JSON</button>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="copy-path"><span class="ctxmenu__lead" aria-hidden="true"></span>复制路径</button>
@@ -262,6 +262,10 @@
   <div class="ctxmenu__sep" role="separator"></div>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="expand-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>展开整棵子树</button>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="collapse-subtree"><span class="ctxmenu__lead" aria-hidden="true"></span>收起整棵子树</button>
+  <div class="ctxmenu__sep" role="separator"></div>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="order-asc"><span class="ctxmenu__lead" aria-hidden="true"></span>子键升序</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="order-desc"><span class="ctxmenu__lead" aria-hidden="true"></span>子键降序</button>
+  <button class="ctxmenu__item" type="button" role="menuitem" data-act="order-inherit"><span class="ctxmenu__lead" aria-hidden="true"></span>恢复全局排序</button>
   <div class="ctxmenu__sep" role="separator"></div>
   <button class="ctxmenu__item" type="button" role="menuitem" data-act="edit"><span class="ctxmenu__lead" aria-hidden="true"></span>编辑此节点 JSON</button>
   <div class="ctxmenu__sep" role="separator"></div>

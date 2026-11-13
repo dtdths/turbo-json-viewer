@@ -1763,6 +1763,58 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
 }
 
 /**
+ * 单节点子键排序覆盖（#41 / ADR-0024 修订 v1.1）：右键菜单三项 → `core.setNodeOrder`。
+ *
+ * - 覆盖只影响该节点的**直接子键**（不向下继承），且优先于全局设置；「恢复全局排序」传 null 清除；
+ * - 覆盖是标签会话态（core 侧 WeakMap）：换文档 / 关标签丢弃，编辑替换后自动失效；
+ * - 行序变化走 `{ kind: 'order' }` 落地（滚动策略 keep），再用与 #40 切档同口径的
+ *   `captureOrderAnchor` + `rowOfPath` 按路径还原视口；拿不到锚点则显式回顶部；
+ * - 大纲按容器生效顺序刷新（`outlineState.refreshOrder`），搜索结果高亮按路径天然正确（不重跑）。
+ */
+async function setNodeOrder(path: string, order: SortOrder | null): Promise<void> {
+  if (!session.rootId) return;
+  // 树动作：原文视图下先切回树（与 toggleSubtree 一致）
+  if (isRawView()) await setViewMode('tree');
+  const anchor = captureOrderAnchor(session.rootId);
+  try {
+    const reply = await core.setNodeOrder({ rootId: session.rootId, path, order });
+    if (!isActiveDocRoot(reply.rootId)) return;
+    // no-op 判据统一来自落地计划（rowVersion 是否真的推进；回包 EditReply 无 changed 字段）
+    const plan = session.land(reply, { kind: 'order' });
+    if (!plan.changed) {
+      showToast(order === null ? '该节点本来就用全局排序' : '子键已经是该顺序', 1800, 'info');
+      return;
+    }
+    applyLanding(plan);
+    void outlineState.refreshOrder();
+    // 锚点还原：按路径换算新行号；拿不到（含祖先折叠）则显式回顶部
+    if (!anchor) {
+      tree.scrollToPx(0);
+      rowSource.scrollTo(0);
+      rowSource.requestWindow();
+    } else {
+      const { row } = await core.rowOfPath({ rootId: reply.rootId, path: anchor.path });
+      if (!isActiveDocRoot(reply.rootId)) return;
+      const targetPx = row >= 0 ? row * tree.rowHeightPx() + anchor.offsetPx : 0;
+      tree.scrollToPx(targetPx);
+      rowSource.scrollTo(tree.scrollTopPx());
+      rowSource.requestWindow();
+    }
+    showToast(
+      order === 'key-asc'
+        ? '已按升序排列该节点的子键'
+        : order === 'key-desc'
+          ? '已按降序排列该节点的子键'
+          : '已恢复全局排序',
+      2000,
+      'success',
+    );
+  } catch (error) {
+    showError(error);
+  }
+}
+
+/**
  * 全部展开 / 全部收起（#9 / ADR-0002 修订）。
  * 预算护栏在 core（超 ROW_BUDGET 抛 TOO_MANY_ROWS，零部分修改）；失败走 toast。
  * Q7：成功后滚回顶部，选中路径保留、不强行滚动到选中行。
@@ -2217,6 +2269,14 @@ const ctxMenuController = createMenu({
       void toggleSubtree(path, false);
       return;
     }
+    // 单节点子键排序覆盖（#41 / ADR-0024 修订 v1.1）：三项固定，不做勾选态（点击后 toast 反馈规则）
+    if (act === 'order-asc' || act === 'order-desc' || act === 'order-inherit') {
+      void setNodeOrder(
+        path,
+        act === 'order-asc' ? 'key-asc' : act === 'order-desc' ? 'key-desc' : null,
+      );
+      return;
+    }
     if (act === 'edit') void openEditor(path);
     if (act === 'locate-raw') void jumpTreeToRaw(path);
   },
@@ -2284,6 +2344,19 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
   const subtreeHint = '含该节点自身；不含更上层';
   setCtxItemDisabled('expand-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
+  // 单节点子键排序覆盖（#41 / ADR-0024 修订 v1.1）：只对「对象容器且直接成员 ≥ 2」可用；
+  // 数组恒索引序；三项常显、不做勾选态（点击后用 toast 反馈规则）
+  const canOrder = kind === 'object' && row.count >= 2;
+  const orderWhy =
+    kind === 'array'
+      ? '数组保持索引序，不能排序'
+      : kind === 'object'
+        ? '该对象成员少于 2 个'
+        : '只能排序对象成员的子键';
+  const orderHint = '仅影响该节点的直接子键；不影响复制/导出';
+  for (const act of ['order-asc', 'order-desc', 'order-inherit']) {
+    setCtxItemDisabled(act, !canOrder, orderWhy, orderHint);
+  }
   // 表达式结果只读（ADR-0018 §1）：结果根上的编辑入口一律禁用（复制四格式照常可用）
   setCtxItemDisabled('edit', exprViewActive, '表达式结果只读');
   // 双向定位（#30）：表达式结果根没有源文本；plain（修复文档）没有可靠的行/路径映射

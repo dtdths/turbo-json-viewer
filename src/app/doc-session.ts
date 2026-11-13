@@ -40,6 +40,7 @@ export type LandingIntent =
   | { kind: 'expandAll' } // 全部展开 / 收起（回顶）
   | { kind: 'edit' } // 值图编辑（replaceNode / undo / redo / reset）
   | { kind: 'expression' } // 表达式结果（expr:N）成为当前视图根（回顶 + 清选中）
+  | { kind: 'order' } // 行序变化（单节点子键排序覆盖 / 全局切档）：滚动保持视口，锚点由 app 按路径换算
   | { kind: 'jump'; path: string; row: number }; // expandTo 跳转（居中 + 选中）
 
 /** 滚动策略（目标 px 已算好；执行器只照做）。 */
@@ -161,6 +162,9 @@ function scrollPlanFor(
   if (intent.kind === 'document' || intent.kind === 'expandAll') return { kind: 'top' };
   // 表达式结果：新视图根从顶部开始（用户正在看结果的第一屏）
   if (intent.kind === 'expression') return { kind: 'top' };
+  // 行序变化（单节点覆盖 / 全局切档）：机器层保持 scrollTop，app 再用 captureOrderAnchor +
+  // rowOfPath 按路径把视口还原到原节点（ADR-0024 §5 / v1.1 修订）
+  if (intent.kind === 'order') return { kind: 'keep' };
 
   if (intent.kind === 'jump') {
     const viewportPx = ctx.viewportPx;
