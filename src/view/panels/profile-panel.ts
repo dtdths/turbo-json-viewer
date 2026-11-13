@@ -43,7 +43,7 @@ function nodesText(count: number): string {
 /** 元信息行：`296 万个节点 · 深度 5 · 已采样 2.0 万个节点`（sampled / truncated 各自独立追加）。 */
 export function profileMetaText(profile: DocumentProfile): string {
   const parts = [nodesText(profile.nodeCount), `深度 ${profile.maxDepth}`];
-  if (profile.sampled) parts.push(`已采样 ${compactCount(profile.sampledNodes)} 个节点`);
+  if (profile.sampled) parts.push(`已采样 ${nodesText(profile.sampledNodes)}`);
   if (profile.truncated) parts.push('已截断');
   return parts.join(' · ');
 }
