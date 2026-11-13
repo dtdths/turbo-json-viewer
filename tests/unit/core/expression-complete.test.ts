@@ -3,6 +3,7 @@ import { getCompletions } from '../../../src/core/expression/complete';
 import type { CompletionContext } from '../../../src/core/expression/types';
 import {
   ARRAY_METHODS,
+  ELEMENT_CALLBACK_METHODS,
   GLOBAL_NAMES,
   MATH_MEMBERS,
   STRING_METHODS,
@@ -373,12 +374,24 @@ describe('core/expression/complete — 回调参数绑定（ADR-0025 修订 2026
     expect(labels(at('items.map(item => ({ a: 1, b: item.'))).toEqual(['name', 'price']);
   });
 
-  it('多行 body（=> 后换行）+ 其他单参数回调（filter/find/some/forEach）同样绑定', () => {
+  it('多行 body（=> 后换行）+ 其他单参数回调（filter/find/findIndex/some/every）同样绑定', () => {
     expect(labels(at('items.map(item =>\n  item.'))).toEqual(['name', 'price']);
     expect(labels(at('items.filter(x => x.'))).toEqual(['name', 'price']);
     expect(labels(at('items.find(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.findIndex(x => x.'))).toEqual(['name', 'price']);
     expect(labels(at('items.some(x => x.'))).toEqual(['name', 'price']);
-    expect(labels(at('items.forEach(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.every(x => x.'))).toEqual(['name', 'price']);
+  });
+
+  it('裸前缀 `items.map(x => x`（无点）同样按元素字段提示', () => {
+    expect(labels(at('items.map(x => x'))).toEqual(['name', 'price']);
+  });
+
+  it('回调方法表取自 whitelist 单一来源：ELEMENT_CALLBACK_METHODS ⊂ ARRAY_METHODS，且不含 forEach/flatMap/reduce', () => {
+    for (const method of ELEMENT_CALLBACK_METHODS) expect(ARRAY_METHODS).toContain(method);
+    expect(ELEMENT_CALLBACK_METHODS).not.toContain('forEach');
+    expect(ELEMENT_CALLBACK_METHODS).not.toContain('flatMap');
+    expect(ELEMENT_CALLBACK_METHODS).not.toContain('reduce');
   });
 
   it('任意深路径链 + ?. 变体：$.data.items.map(x => x. / x?..', () => {

@@ -1,6 +1,6 @@
 # ADR-0025：文档概要采样（Document Profile）与类型感知补全
 
-- 状态：**Accepted（设计定稿 2026-11-13；grill 一轮 9 问全部按推荐）；实现票 #43**
+- 状态：**Accepted（设计定稿 2026-11-13；grill 一轮 9 问全部按推荐；实现票 #43）**；**修订（2026-11-13 晚）：回调参数绑定（#44，见本页「修订」）**
 - 日期：2026-11-13
 - 依据：`#28`（设计票：类型感知补全与文档概要采样）、`docs/research/expression-engine.md` §5.1（采样算法调研）、`#12` / ADR-0018（表达式视图与静态补全定稿）、`#15`（真机性能基线）
 - 相关：#1（地图）、ADR-0001（worker 常驻 + 行窗口）、ADR-0002（值图 / 行模型）、ADR-0005（构建与预算）、ADR-0008（分层与 seam）、ADR-0018（补全数据源 = 文档概要）、ADR-0022 §8（预算记账纪律）
@@ -108,7 +108,7 @@ export interface DocumentProfile {
 
 ### 6. 补全能力边界：任意深「纯键链」，不做部分求值
 
-- 接收者解析：把 `X.` / `X?.` 的 `X` 解析为**键链**——仅允许 `$`、标识符、`.`、`?.`（如 `items`、`data.items`、`$.data.items`）；链去 `$` 后作为 `segments` 在 profile.paths 中精确匹配。
+- 接收者解析（v1 仅文档路径链；**回调参数绑定见「修订（2026-11-13 晚）」**）：把 `X.` / `X?.` 的 `X` 解析为**键链**——仅允许 `$`、标识符、`.`、`?.`（如 `items`、`data.items`、`$.data.items`）；链去 `$` 后作为 `segments` 在 profile.paths 中精确匹配。
 - 命中 → 给该路径的 `members`（`detail` 固定格式：`${kind} · 采样 ${freq}/${samples}`，`kind` 为 `mixed` 时用「混合」）。**数组路径额外追加数组/字符串方法并集 + `length`**（这些方法对数组元素字段补全同样有效，且标量数组命中时 members 为空、不追加就会得到空候选 = 退化成"没提示"；对象路径只给成员字段）；未命中 / profile 未就绪 → **退化**为现有行为（数组/字符串方法并集 + `length`）。
 - 根字段（`$` / 裸标识符 / `$.`）保持现有 `detail` 格式 `根字段 · <kind>`（`main.ts` 依赖它生成动态示例，勿改）。
 - 根为数组时：`$.` 给**元素字段**样本（`detail` 同上），不再只给全局名。
@@ -184,14 +184,14 @@ export interface DocumentProfile {
 ### 决策
 
 1. **语义**：`<纯键链>.map(param => …param. …)` 中 `param` = 该路径的数组元素；补全候选 = 该路径 `PathSample.members`（元素字段），detail 沿用采样格式 `${kind} · 采样 ${freq}/${samples}`；**不追加**数组方法（元素是对象，不是数组）。
-2. **作用域级**：光标位于该回调 body 内任意位置（紧跟 `=>`、对象字面量 `({ …: param. })`、多行 body）都生效；`param?.` 变体同样生效。
-3. **方法白名单**（单参数回调 = 元素）：`map / filter / find / findIndex / some / every / flatMap / forEach`；接收者支持纯键链（`items` / `$.data.items` / `?.` 链）。
+2. **作用域级**：光标位于该回调 body 内任意位置（紧跟 `=>`、对象字面量 `({ …: param. })`、多行 body）都生效；`param?.` 变体、以及**裸前缀**（`map(x => x`，无点）同样按元素字段提示。
+3. **方法白名单**（单参数回调 = 元素）：`map / filter / find / findIndex / some / every`——**从 `whitelist.ELEMENT_CALLBACK_METHODS` 取**（`ARRAY_METHODS` 的子集，单测钉住），不含引擎不支持的 `forEach` / `flatMap` 与累加器语义的 `reduce`（「提示什么 == 允许调什么」红线）；接收者支持纯键链（`items` / `$.data.items` / `?.` 链）。
 4. **非目标 / 不解析**：`reduce` / `sort`（多参数、语义不是元素）；嵌套回调链（`x => x.tags.map(t => t.`，需要多层绑定）；解构参数（`({name}) =>`）；回调已闭合后的文本（不做作用域校验）。这些一律退化为原行为（未命中 → 方法并集）。
-5. **实现**（worker 侧，`core/expression/complete.ts`）：`ELEMENT_CALLBACK_BIND` 正则扫光标前文本，取**最近**一条 `param` 与接收者同名的绑定 → `lambdaElementSample()` 解析路径链 → `elementFieldCompletions()` 给字段；页面零改动、`page.js` 零增量。
+5. **实现**（worker 侧，`core/expression/complete.ts`）：`elementCallbackBind()`（正则按白名单动态拼接、函数内构造）扫光标前文本，取**最近**一条 `param` 与接收者同名的绑定 → `callbackParamSample()` 解析路径链 → `memberFieldCompletions()` 给字段（与数组路径补全共用同一成员映射）；页面零改动、`page.js` 零增量。**审查收口**：方法表改为从 `whitelist` 派生，消除第二份硬编码表。
 
 ### 验收（2026-11-13 晚，实现票 #44）
 
-- **单测 1228 → 1235**（+7：作用域级/对象字面量体/多行 body/`.filter` 等/`?.` 链与 `x?.`/嵌套不解析/`reduce`·`sort` 不绑定/未绑定标识符不回归）。
+- **单测 1228 → 1237**（+9：作用域级 / 对象字面量体 / 多行 body / 各回调方法 / `?.` 链与 `x?.` / 裸前缀 / 嵌套不解析 / `reduce`·`sort` 不绑定 / 未绑定标识符不回归 / 白名单子集不漂移）。
 - **冒烟 `smoke-expression` 55 → 57/57**：`data.items.map(x => x.` 与 `data.items.map(x => ({ n: x.` 均给 `id/name/price`，且不混入全局名。
 - **体积**：`page.js` **51.2 不变**（预算 52）、`worker.js` 65.8 → **66.0**（+0.2，无硬预算）、`page.css` 8.3 / 懒加载 145.6 不变。
 - 架构 README §11 新增 **6.30** 行。
@@ -204,6 +204,11 @@ export interface DocumentProfile {
 | 只支持紧跟 `=>` 的位置 | 对象字面量/多行 body 是主流写法，只支持一种位置反而更奇怪 |
 | 支持嵌套回调链 / 解构 | 需要作用域链与模式解构分析，复杂度不成比例（单层已覆盖绝大多数真实用法） |
 | 执行部分表达式求值取字段 | 违反「不为补全执行用户表达式」红线（#3 §5.1） |
+
+### 已知差距（修订）
+
+- 纯**文本**绑定、不做作用域校验：回调闭合后（如 `items.map(x => x.a); x.`）仍可能提示元素字段（CM6 会按前缀过滤，实际影响小）。
+- 嵌套回调链（`x => x.tags.map(t => t.`）、解构参数（`({ name }) => name.`）、`reduce` 累加器不做绑定。
 
 ## 已知差距 / 本轮不做
 

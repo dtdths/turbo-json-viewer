@@ -36,6 +36,13 @@ export const ARRAY_METHODS: readonly string[] = [
   'reduce',
 ];
 
+/**
+ * 数组**单参数回调**方法（回调参数 = 元素）：只用于补全的回调参数绑定（ADR-0025 修订 2026-11-13）。
+ * 必须是 `ARRAY_METHODS` 的**子集**（单测钉住，避免「补全给了却执行报错」）；不含 `reduce`
+ * （累加器语义）与引擎不支持的 `forEach` / `flatMap`。
+ */
+export const ELEMENT_CALLBACK_METHODS: readonly string[] = ['map', 'filter', 'find', 'findIndex', 'some', 'every'];
+
 /** 字符串只读方法 12（#3 §5.2；无正则参数 → 无 ReDoS 面）。`length` 是属性，另列。 */
 export const STRING_METHODS: readonly string[] = [
   'includes',

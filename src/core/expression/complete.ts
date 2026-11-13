@@ -21,7 +21,14 @@
  */
 import type { ExprCompletion, FieldStat, PathSample } from '../../protocol/types';
 import type { CompletionContext } from './types';
-import { ARRAY_METHODS, GLOBAL_NAMES, LENGTH_PROP, MATH_MEMBERS, STRING_METHODS } from './whitelist';
+import {
+  ARRAY_METHODS,
+  ELEMENT_CALLBACK_METHODS,
+  GLOBAL_NAMES,
+  LENGTH_PROP,
+  MATH_MEMBERS,
+  STRING_METHODS,
+} from './whitelist';
 
 /** 尾随标识符（可作为补全前缀 / 成员接收者的最后一段）。 */
 const TRAILING_IDENTIFIER = /([A-Za-z_$][A-Za-z0-9_$]*)$/;
@@ -150,11 +157,7 @@ function methodCompletions(): ExprCompletion[] {
  * 方法会得到空候选 = 退化成「没提示」）。对象路径只给成员字段（对象上没有数组/字符串方法）。
  */
 function pathSampleCompletions(sample: PathSample): ExprCompletion[] {
-  const items: ExprCompletion[] = sample.members.map((member) => ({
-    label: member.name,
-    kind: 'field' as const,
-    detail: sampleDetail(member, sample.samples),
-  }));
+  const items = memberFieldCompletions(sample);
   if (sample.kind !== 'array') return items;
   const seen = new Set(items.map((item) => item.label));
   for (const item of methodCompletions()) {
@@ -165,23 +168,40 @@ function pathSampleCompletions(sample: PathSample): ExprCompletion[] {
   return items;
 }
 
-/** 单参数数组回调：`<路径链>.map(param => …`（ADR-0025 修订 2026-11-13：回调参数绑定）。 */
-const ELEMENT_CALLBACK_BIND =
-  /([A-Za-z_$][A-Za-z0-9_$]*(?:\s*\??\.\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*\??\.\s*(?:map|filter|find|findIndex|some|every|flatMap|forEach)\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g;
+/** 数组元素字段候选（path 样本 / 回调参数共用，避免两处逐行重复）。 */
+function memberFieldCompletions(sample: PathSample): ExprCompletion[] {
+  return sample.members.map((member) => ({
+    label: member.name,
+    kind: 'field' as const,
+    detail: sampleDetail(member, sample.samples),
+  }));
+}
+
+/**
+ * 回调参数绑定正则：`<路径链>.map(param => …`。方法名从 `ELEMENT_CALLBACK_METHODS`
+ * （`whitelist` 单一来源）动态拼接；**函数内构造**避免模块级 `/g` 状态被并发调用污染。
+ */
+function elementCallbackBind(): RegExp {
+  return new RegExp(
+    `([A-Za-z_$][A-Za-z0-9_$]*(?:\\s*\\??\\.\\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\\s*\\??\\.\\s*(?:${ELEMENT_CALLBACK_METHODS.join('|')})\\s*\\(\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s*=>`,
+    'g',
+  );
+}
 
 /**
  * 解析「光标所在位置」最近的单层回调参数绑定（ADR-0025 修订）：
  * `<路径链>.map(param => …)` 里 `param` = 该路径的数组元素，返回该路径的元素样本。
  *
  * - **作用域级**：不要求紧跟 `=>`——对象字面量体（`({ a: param.a, b: param. })`）、多行 body 都算；
- * - 只认**单参数**回调与纯键链接收者（`map/filter/find/findIndex/some/every/flatMap/forEach`）；
+ * - 只认**单参数**回调（`ELEMENT_CALLBACK_METHODS`：`map/filter/find/findIndex/some/every`，白名单子集）
+ *   与纯键链接收者；
  *   `reduce`/`sort`（多参数）与嵌套回调链（`x => x.tags.map(t => t.）不在本层解析（非目标）；
  * - 纯**文本**绑定、不做求值/作用域校验：回调已闭合后仍可能出现字段（已知差距，见 ADR-0025）。
  */
-function lambdaElementSample(before: string, receiver: string, ctx: CompletionContext): PathSample | undefined {
+function callbackParamSample(before: string, receiver: string, ctx: CompletionContext): PathSample | undefined {
   let chain: string | undefined;
-  ELEMENT_CALLBACK_BIND.lastIndex = 0;
-  for (let match = ELEMENT_CALLBACK_BIND.exec(before); match !== null; match = ELEMENT_CALLBACK_BIND.exec(before)) {
+  const bind = elementCallbackBind();
+  for (let match = bind.exec(before); match !== null; match = bind.exec(before)) {
     if (match[2] === receiver) chain = match[1];
   }
   if (chain === undefined) return undefined;
@@ -189,15 +209,6 @@ function lambdaElementSample(before: string, receiver: string, ctx: CompletionCo
   if (segments === null) return undefined;
   const sample = findPathSample(ctx.paths, segments);
   return sample !== undefined && sample.kind === 'array' ? sample : undefined;
-}
-
-/** 回调参数（= 数组元素对象）的成员候选：只给元素字段，不追加数组方法（元素不是数组）。 */
-function elementFieldCompletions(sample: PathSample): ExprCompletion[] {
-  return sample.members.map((member) => ({
-    label: member.name,
-    kind: 'field' as const,
-    detail: sampleDetail(member, sample.samples),
-  }));
 }
 
 /**
@@ -246,15 +257,15 @@ export function getCompletions(text: string, pos: number, ctx: CompletionContext
   const tail = MEMBER_TAIL.exec(head);
   let items: ExprCompletion[];
   if (tail === null) {
-    // `param.` 出现在 `=> ` 之后 / 对象字面量体内：先看是不是回调参数（作用域级绑定）
-    const lambda = prefix.length > 0 ? lambdaElementSample(before, prefix, ctx) : undefined;
-    items = lambda !== undefined ? elementFieldCompletions(lambda) : rootCompletions(ctx);
+    // 无 `.` 的裸前缀（`param` / `param.` 被剥掉后）：先看是不是回调参数（作用域级绑定，ADR-0025 修订）
+    const bound = prefix.length > 0 ? callbackParamSample(before, prefix, ctx) : undefined;
+    items = bound !== undefined ? memberFieldCompletions(bound) : rootCompletions(ctx);
   } else {
     const chainText = head.slice(0, head.length - tail[0].length);
-    // `param.` / `param?.` 出现在链中间位置时同样按回调参数解析（如 `x => x.a?.` 后的 `x.`）
+    // `param?.` 等尾部为 `.` / `?.` 时：取接收者末段标识符，若是回调参数则给元素字段
     const receiver = TRAILING_IDENTIFIER.exec(chainText)?.[1];
-    const lambda = receiver === undefined ? undefined : lambdaElementSample(before, receiver, ctx);
-    items = lambda !== undefined ? elementFieldCompletions(lambda) : memberCompletions(chainText, ctx);
+    const bound = receiver === undefined ? undefined : callbackParamSample(before, receiver, ctx);
+    items = bound !== undefined ? memberFieldCompletions(bound) : memberCompletions(chainText, ctx);
   }
 
   // 「前缀完全相同」优先（稳定：同组内保持字段/白名单顺序）；其余交给 CM6 过滤。
