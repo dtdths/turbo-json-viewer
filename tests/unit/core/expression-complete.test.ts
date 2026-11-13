@@ -357,3 +357,47 @@ describe('core/expression/complete — 类型感知补全（链解析 / detail /
     expect(labels(getCompletions('items.', 6, CTX))).toEqual(FALLBACK_LABELS);
   });
 });
+
+describe('core/expression/complete — 回调参数绑定（ADR-0025 修订 2026-11-13）', () => {
+  const at = (text: string) => getCompletions(text, text.length, PROFILE_CTX);
+
+  it('items.map(item => item. → 元素字段（作用域级，不只紧跟 =>）', () => {
+    const items = at('items.map(item => item.');
+    expect(labels(items)).toEqual(['name', 'price']);
+    expect(items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 2/2' });
+    expect(labels(items)).not.toContain('map');
+  });
+
+  it('对象字面量体：items.map(item => ({ a: item. → 元素字段', () => {
+    expect(labels(at('items.map(item => ({ a: item.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.map(item => ({ a: 1, b: item.'))).toEqual(['name', 'price']);
+  });
+
+  it('多行 body（=> 后换行）+ 其他单参数回调（filter/find/some/forEach）同样绑定', () => {
+    expect(labels(at('items.map(item =>\n  item.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.filter(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.find(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.some(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.forEach(x => x.'))).toEqual(['name', 'price']);
+  });
+
+  it('任意深路径链 + ?. 变体：$.data.items.map(x => x. / x?..', () => {
+    expect(labels(at('$.data.items.map(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('$?.data?.items?.map(x => x.'))).toEqual(['name', 'price']);
+    expect(labels(at('items.map(x => x?.'))).toEqual(['name', 'price']);
+  });
+
+  it('嵌套回调链不解析（单层边界）→ 退化方法并集', () => {
+    expect(labels(at('items.map(item => item.name.map(t => t.'))).toEqual(FALLBACK_LABELS);
+  });
+
+  it('多参数回调（reduce / sort）不绑定 → 方法并集', () => {
+    expect(labels(at('items.reduce((a, b) => b.'))).toEqual(FALLBACK_LABELS);
+    expect(labels(at('items.sort((a, b) => a.'))).toEqual(FALLBACK_LABELS);
+  });
+
+  it('未绑定标识符仍走原行为（不回归）：z. → 方法并集；根前缀 → 根字段', () => {
+    expect(labels(at('z.'))).toEqual(FALLBACK_LABELS);
+    expect(labels(at('da'))).toEqual(labels(at('')));
+  });
+});

@@ -244,6 +244,11 @@ try {
     out.element = element;
     // 标量数组 big（60k 数字）：命中路径但 members 为空 → 仍应给方法并集（不返回空候选）
     out.scalarArray = await window.__tjv.expressionComplete('big.', 4);
+    // ADR-0025 修订（2026-11-13）：回调参数绑定——作用域级（对象字面量体同样生效）
+    const lambdaText = 'data.items.map(x => x.';
+    out.lambda = await window.__tjv.expressionComplete(lambdaText, lambdaText.length);
+    const lambdaObjText = 'data.items.map(x => ({ n: x.';
+    out.lambdaObject = await window.__tjv.expressionComplete(lambdaObjText, lambdaObjText.length);
     return out;
   })()`);
   report.complete = phase3;
@@ -271,6 +276,17 @@ try {
     'complete:scalar-array-methods',
     labels(phase3.scalarArray).includes('map') && labels(phase3.scalarArray).includes('length'),
     { labels: labels(phase3.scalarArray).slice(0, 8) },
+  );
+  check(
+    'complete:lambda-param',
+    ['id', 'name', 'price'].every((label) => labels(phase3.lambda).includes(label)) &&
+      !labels(phase3.lambda).includes('Math'),
+    { labels: labels(phase3.lambda).slice(0, 10) },
+  );
+  check(
+    'complete:lambda-object-body',
+    ['id', 'name', 'price'].every((label) => labels(phase3.lambdaObject).includes(label)),
+    { labels: labels(phase3.lambdaObject).slice(0, 10) },
   );
   check(
     'complete:methods',
