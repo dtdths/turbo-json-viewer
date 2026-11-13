@@ -101,6 +101,14 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+/** 规范路径深度（段数）：根 = 0；用于 refreshOrder 的父先序（仅排序提示，键内点号会多计不影响正确性）。 */
+function depthOfPath(path: Path): number {
+  if (path === ROOT_PATH) return 0;
+  let depth = 0;
+  for (const ch of path) if (ch === '.' || ch === '[') depth += 1;
+  return depth;
+}
+
 /** `path` 是否为 `ancestor` 的严格后代（规范路径：段分隔为 `.` / `[`）。 */
 function isDescendant(path: Path, ancestor: Path): boolean {
   if (path === ancestor || path.length <= ancestor.length) return false;
@@ -179,6 +187,36 @@ export class OutlineState {
     this.dirty = true;
     this.emit();
     await this.loadPage(ROOT_PATH, 0);
+  }
+
+  /**
+   * 显示顺序变化后的刷新（#40 / ADR-0024 §4/§5）：**保留展开集合与每容器已加载子项数**，
+   * 只把已缓存的页按新顺序重取（旧回包由 epoch 丢弃）——不是回到根页。
+   * 无文档 / 根页尚未加载 → no-op（与 `refresh` 一致）。
+   */
+  async refreshOrder(): Promise<void> {
+    if (this.rootIdValue === null) return;
+    const loaded = new Map<Path, number>();
+    for (const [path, container] of this.containers) {
+      if (container.loaded) loaded.set(path, container.items.length);
+    }
+    if (!loaded.has(ROOT_PATH)) return; // 根页未就绪（加载中 / 失败）：不动
+    this.epochValue += 1;
+    this.containers.clear();
+    this.dirty = true;
+    this.emit();
+    // 父先序取页；每容器重取到原先已加载的数量（不出界、到底即停）
+    const paths = [...this.expandedValue].sort((a, b) => depthOfPath(a) - depthOfPath(b));
+    await Promise.all(
+      paths.map(async (path) => {
+        const target = Math.max(this.page, loaded.get(path) ?? this.page);
+        for (let start = 0; start < target; start += this.page) {
+          const container = this.containers.get(path);
+          if (container?.loaded && container.items.length >= container.total) break;
+          await this.loadPage(path, start);
+        }
+      }),
+    );
   }
 
   /** 关闭大纲（文档被替换 / 无文档）：清空状态，在途回包由 epoch 丢弃。 */

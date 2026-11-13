@@ -38,25 +38,27 @@
 - 规则三档：**原始顺序（默认）** / **键名升序** / **键名降序**。默认「原始顺序」= 行为与今天完全一致。
 - **自然序比较器**（自研、确定性）：
   - 数字段按**数值**比较（`item2 < item10`；前导零由数值比较吸收）；
-  - 非数字段**忽略大小写**比较；
+  - **同一位置数字段排在非数字段前**（让 `1a` 与 `a1` 这类形状有确定答案；代价是它与纯码元序在少数键上相反，例如 `-a` 与 `1a`，这是自然序的刻意口径）；
+- 非数字段**忽略大小写**比较；
   - 全部平局时用**原码元序**兜底（保证是全序、结果与平台无关）；
   - **不用** `Intl.Collator` / `localeCompare`：ICU 版本漂移会让不同 Chrome 版本 / 单测结果不一致。
 - 中文 / 非 ASCII 键按**码元序**（不做拼音、不做 locale 排序）——写进已知差距。
-- 入口：**设置面板第 13 行**（segmented：原始 / 升序 / 降序），随 `tjv.settings.v1` 持久化；不做树区下拉、不做工具栏按钮（避免两个入口两个真相源）。
+- 入口：**设置面板第 4 行**（共 13 项，紧接「缩进」；segmented：原始 / 升序 / 降序），随 `tjv.settings.v1` 持久化；不做树区下拉、不做工具栏按钮（避免两个入口两个真相源）。
+- 行下说明（hint）「仅影响树、大纲与表达式结果树的显示顺序；复制、导出与路径不变」+ `aria-describedby`：**有意增量**（与设置面板其它行一致的可访问性说明；issue 原文只要求 segmented 三档）。
 - v1 **无单节点覆盖**（每节点单独排 / 右键菜单）→ v1.1。
 
 ### 4. 生效范围：树 + 大纲 + 表达式结果树跟随；其余不跟
 
 - **跟随**：树行序、**大纲面板**子项序（ADR-0013 §2 相应修订）、**表达式结果树**（同一渲染器 + 同一规则，一致性优先）。
 - **不跟**：搜索结果列表（保持命中 / walk 序）、原文视图（原文顺序即原文）、复制 / 导出 / 编辑回填 / 表达式补全列表（`complete` 的根字段提示仍是值图序）。
-- 大纲的分页按**显示序**切页；`total` 不变。
+- 大纲的分页按**显示序**切页；`total` 不变；切档时**保留大纲展开集合与每容器已加载数量**并重取已加载页（`OutlineState.refreshOrder`）。
 
 ### 5. 切换排序后的视图动作：按路径保持锚点
 
 - 切换前记录**视口顶端可见行的规范路径**；切换后询问该路径的新行号并把视口滚回该节点（保留行内像素偏移）；不可见则回顶部。
 - **选中节点按路径保留**（路径与身份与 slot 无关，选中态天然不受影响）。
 - **搜索不重跑**：命中集与 `Hit.field` 不变；树行高亮本来就按 `row.path` 匹配（`tree-view.ts:266`），重排后自动正确。
-- 大纲若正开着 → 刷新当前页。
+- 大纲若正开着 → **重取已加载页**（保留展开集合与每容器已加载子项数，不是回根页）；面板关着也重取，避免下次打开看到旧顺序。
 
 ### 6. 实现载体
 
@@ -66,7 +68,9 @@
 - **`doc-service`**：服务级 `order`（根创建时套用到 `RowModel`——doc 根与 `expr:` 根都套）；新命令 `setOrder { order }` 对**全部活根**生效并各推 `rowVersion++`，回包给每个根的新版本快照（页面按 rootId 回填标签会话 / 表达式视图坐标）。
 - **新命令 `rowOfPath { rootId, path }`（只读）**：路径 → 可见行号（不可见 −1），供切换后的锚点换算。不推任何版本。
 - **`protocol`**：`Command` 两条 + `CoreApi` 两个方法 + 双适配器契约（InProcess / Worker）。
-- **页面**：`settings-state` 新增 `sortOrder`；`settings-panel` 13 行；`main.applySettings` 检测规则变化 → `core.setOrder` → 回填全部标签 / 表达式根的 `rowVersion`/`totalRows` → 重取活动根窗口 → 按路径还原锚点；`WindowMachine` 对切换瞬间的 `STALE_ROOT` 自动重取。
+  - **实现期命名收口（语义等价，非契约变更）**：`SetOrderReply.roots` 的元素提为命名类型 **`RootVersion`**（`{ rootId, rowVersion, totalRows }`，消除三处重复字段簇）；`SORT_ORDER_OPTIONS` 从 settings-state **上提到 `protocol/versions`** 作为单一来源（core / viewmodel 共用，viewmodel 再导出保持原 import 面）。
+  - 实现细节（非协议面）：`RowModel.sortOrder` 只读 getter（内省/测试用）；`DocSession.syncRootVersion(rootId, rowVersion, totalRows)` 作为多根版本快照写会话字段的**唯一入口**（不绕过 `land()` 的单一落地纪律）。
+- **页面**：`settings-state` 新增 `sortOrder`；`settings-panel` 13 行（第 4 行）；`main.applySettings` 检测规则变化 → `core.setOrder` → 回填全部标签 / 表达式根的 `rowVersion`/`totalRows` → 重取活动根窗口 → 按路径还原锚点（拿不到顶端可见行时显式回顶部，不保留旧行号）→ 大纲 `refreshOrder`；失败时 UI / 持久化回滚到上一次成功档（不留「UI 新档 / core 旧档」长期不一致），`WindowMachine` 对切换瞬间的 `STALE_ROOT` 自动重取。
 
 ### 7. 性能与护栏
 
@@ -85,7 +89,7 @@
 | `core` | `order.ts`（新）、`row-model.ts`（显示序 + setOrder + 懒排序缓存）、`doc-service.ts`（服务级 order、两条命令、`outlinePage` 传 order）、`outline.ts`（接收 order） |
 | `protocol` | `types.ts`（`SortOrder` + 两个回包）、`messages.ts`（两条 Command）、`core-api.ts`（两个方法 + `commandCore` 映射） |
 | `viewmodel` | `settings-state.ts`（`sortOrder` 键 / 默认 / 白名单 / 归一化） |
-| `view` | `settings-panel.ts`（第 13 行，segmented 三档） |
+| `view` | `settings-panel.ts`（第 4 行 / 共 13 项，segmented 三档 + 行下说明） |
 | `app` | `main.ts`（applySettings 规则分发 + 全根版本回填 + 锚点还原 + 大纲刷新）；`dev-hook` 无需新增（`setSetting` 已覆盖） |
 | 测试 | `tests/unit/core/order.test.ts`、`row-model-order.test.ts`、`outline-order.test.ts`、`doc-service-order.test.ts`、契约（双适配器）、`settings-state` 归一化；冒烟新增 `scripts/smoke-order.mjs` |
 
@@ -107,10 +111,10 @@
 
 ## 验收（待实现实测，见实现票）
 
-- **单测**：1070 → **1135**（**42 文件全绿**；+65：`order.test` 17 / `row-model-order.test` 18 / `outline-order.test` 11 / `doc-service-order.test` 12 / 契约 **+2**（`setOrder` + `rowOfPath` 各 1 用例 × InProcess/Worker 双适配器）/ `settings-state` +4 / `doc-session` +1（`syncRootVersion`））。覆盖比较器全序性质（随机键对自反/反对称/传递）、自然序例表（`item2<item10`、前导零、大小写、中文码元序、超长数字段）、三档行序、未展开容器不受影响、`setOrder` 后 Fenwick/`descend`/`rowOfPath` 与直接构造逐行等价、切档后 toggle、编辑后重排、数组不动、raw 与改前逐行一致、load/expr 根套用、全活根版本推进与旧版本 `STALE_ROOT`、幂等/非法值归一化、大纲按显示序分页。
-- **冒烟**：**16 套串行全绿**。新增 `smoke-order` **19/19**：默认原始序 / 真实点击设置第 13 行切升序、降序（含嵌套对象与数组不动）/ 大文档切档**按路径保持锚点**（`$.k120` 从行 120 → 行 181，`scrollTop` 2880 → 4344 精确）/ 切档后**选中按路径保留** / 大纲跟随 / 搜索命中高亮跟随且不重跑 / 表达式结果树跟随 / 复制与导出仍是**值图键序** / 刷新后持久化 + 新 load 直接按规则 / 0 长任务 / 0 page 异常 / 0 console error；`smoke-settings` **26/26**（13 行契约同步），其余 14 套计数不变。
-- **体积**：`page.js` 49.0 → **49.6KB gz**（预算 **50** 未动，+0.6 = 设置第 13 行 + 切档接线 + 两条命令的页面侧）；`worker.js` 63.5 → **64.2KB gz**（+0.7 = 自然序比较器 + 显示序 `keysOf` + 两条命令；无硬预算）；`page.css` **8.2** 不变、懒加载 **145.6**（146）不变。
-- **截图**：`.spike/smoke/order-{settings,anchor,outline,light}.png`（设置面板第 13 行 / 切档后树 / 大纲跟随 / 亮色）。
+- **单测**：1070 → **1138**（**42 文件全绿**；+68：`order.test` 17 / `row-model-order.test` 18 / `outline-order.test` 11 / `doc-service-order.test` 12 / 契约 **+2**（`setOrder` + `rowOfPath` 各 1 用例 × InProcess/Worker 双适配器）/ `settings-state` +4 / `doc-session` +1（`syncRootVersion`）/ `outline-state` +3（`refreshOrder` 保留展开现场 / no-op / epoch 丢弃））。覆盖比较器全序性质（随机键对自反/反对称/传递）、自然序例表（`item2<item10`、前导零、大小写、中文码元序、超长数字段）、三档行序、未展开容器不受影响、`setOrder` 后 Fenwick/`descend`/`rowOfPath` 与直接构造逐行等价、切档后 toggle、编辑后重排、数组不动、raw 与改前逐行一致、load/expr 根套用、全活根版本推进与旧版本 `STALE_ROOT`、幂等/非法值归一化、大纲按显示序分页。
+- **冒烟**：**16 套串行全绿**。新增 `smoke-order` **20/20**：默认原始序 / 真实点击设置面板「子键排序」行切升序、降序（含嵌套对象与数组不动）/ 大文档切档**按路径保持锚点**（`$.k120` 从行 120 → 行 181，`scrollTop` 2880 → 4344 精确）/ 切档后**选中按路径保留** / 大纲跟随 / 搜索命中高亮跟随且不重跑 / 表达式结果树跟随 / 复制与导出仍是**值图键序** / 刷新后持久化 + 新 load 直接按规则 / 0 长任务 / 0 page 异常 / 0 console error（含大纲展开 $.beta 后切档仍保留展开、子项按新序重取的断言）；`smoke-settings` **26/26**（13 行契约同步），其余 14 套计数不变。
+- **体积**：`page.js` 49.0 → **49.9KB gz**（预算 **50** 未动，+0.9 = 设置第 4 行 + 切档接线 + 两条命令的页面侧 + 大纲 `refreshOrder` / 失败回滚 / 锚点兜底）；`worker.js` 63.5 → **64.2KB gz**（+0.7 = 自然序比较器 + 显示序 `keysOf` + 两条命令；无硬预算）；`page.css` **8.2** 不变、懒加载 **145.6**（146）不变。
+- **截图**：`.spike/smoke/order-{settings,anchor,outline,light}.png`（设置面板「子键排序」行 / 切档后树 / 大纲跟随 / 亮色）。
 - **文档**：`CONTEXT.md`（显示顺序 / 子键排序词条 + 设置 13 项）、`direction.md` 设置 12 → 13 行、ADR-0013 §2 修订指针、架构 README §11 **6.27** 行 + 体积归因。
 
 ## 已知差距 / 本轮不做
@@ -130,7 +134,7 @@
 - **Q1 语义** = 显示顺序（view-only）；值图 / 路径 / 复制 / 导出 / 编辑 / 搜索不变。
 - **Q2 范围** = 只排对象成员，数组保持索引序。
 - **Q3 规则集** = 原始 / 键名升序 / 键名降序；自然序自研比较器（数字段数值、忽略大小写、平局码元序），不用 `Intl.Collator`；中文按码元序。
-- **Q4 控制面** = 全局统一设置，设置面板第 13 行，持久化 `tjv.settings.v1`，默认原始顺序；单节点覆盖留 v1.1。
+- **Q4 控制面** = 全局统一设置，设置面板第 4 行（共 13 项），持久化 `tjv.settings.v1`，默认原始顺序；单节点覆盖留 v1.1。
 - **Q5 生效范围** = 树 + 大纲 + 表达式结果树跟随；搜索结果 / 原文 / 复制 / 导出 / 编辑 / 补全不跟；需 ADR-0013 §2 修订指针。
 - **Q6 切换动作** = 按路径保持锚点；选中按路径保留；搜索不重跑（高亮按 path 天然正确）。
 - **Q7 大容器** = 懒排序（首次需要键序时）+ 缓存；不设硬上限，50MB 实测后按需兜底。

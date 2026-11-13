@@ -174,7 +174,7 @@ export class SettingsPanel {
         key: 'sortOrder',
         label: '子键排序',
         items: SORT_ORDER_ITEMS,
-        hint: '仅影响树与大纲的显示顺序；复制、导出与路径不变',
+        hint: '仅影响树、大纲与表达式结果树的显示顺序；复制、导出与路径不变',
       }),
       this.buildCheckRow({ key: 'typeColumn', label: '显示类型列', hint: '键右侧显示 JSON 类型' }),
       this.buildSegRow({

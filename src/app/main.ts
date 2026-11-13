@@ -834,6 +834,7 @@ function applyRootVersions(roots: readonly RootVersion[]): void {
 async function syncSortOrder(next: SortOrder): Promise<void> {
   if (next === appliedOrder) return;
   const seq = ++sortSyncSeq;
+  const prevOrder = appliedOrder; // 失败回滚用（null = 首次同步）
   appliedOrder = next;
   const activeRoot = exprViewActive && exprView ? exprView.rootId : session.rootId;
   const anchor = captureOrderAnchor(activeRoot);
@@ -842,8 +843,9 @@ async function syncSortOrder(next: SortOrder): Promise<void> {
     if (seq !== sortSyncSeq) return; // 更晚的切档已接管：旧回包丢弃
     // 全根版本回填（docRevision 不变；rowVersion 是行映射的唯一失效令牌）
     applyRootVersions(reply.roots);
-    // 大纲跟随显示序（未打开 / 已关闭时 refresh 自身 no-op）
-    void outlineState.refresh();
+    // 大纲跟随显示序（#40 / ADR-0024 §4/§5）：重取已加载页（保留展开现场）；
+    // 面板关着也要做——大纲状态随文档常驻，否则下次打开面板会看到旧顺序。
+    void outlineState.refreshOrder();
     // 等待期间切了标签 / 进了表达式视图 → 显示根已变：只做版本回填，不碰当前窗口与视口
     if (!activeRoot || !isActiveDocRoot(activeRoot)) return;
     const version = reply.roots.find((entry) => entry.rootId === activeRoot);
@@ -854,7 +856,15 @@ async function syncSortOrder(next: SortOrder): Promise<void> {
       {},
     );
     rowSource.requestWindow();
-    if (!anchor) return;
+    if (!anchor) {
+      // 拿不到顶端可见行（窗口在途 / 未渲染）：显式回顶部。原文视图不显示树，跳过。
+      if (!isRawView()) {
+        tree.scrollToPx(0);
+        rowSource.scrollTo(0);
+        rowSource.requestWindow();
+      }
+      return;
+    }
     try {
       const { row } = await core.rowOfPath({ rootId: activeRoot, path: anchor.path });
       if (seq !== sortSyncSeq || !isActiveDocRoot(activeRoot)) return;
@@ -868,7 +878,10 @@ async function syncSortOrder(next: SortOrder): Promise<void> {
     }
   } catch (error) {
     if (seq !== sortSyncSeq) return;
-    appliedOrder = null; // 失败不记挡：下一次设置变化会重试
+    // 失败不留「UI 新档 / core 旧档」的长期不一致：UI 与持久化回滚到上一次成功档
+    // （core 这次没换挡）。回滚触发的 applySettings 会因 appliedOrder 相同而 no-op。
+    appliedOrder = prevOrder;
+    if (prevOrder !== null && settings.get('sortOrder') === next) settings.set('sortOrder', prevOrder);
     if (session.rootId) showStatusHint(`子键排序切换失败：${formatCoreError(error)}`);
   }
 }

@@ -95,7 +95,11 @@ window.__orderTopVisible = () => {
   return hit ? hit.path : (rows[0]?.path ?? null);
 };
 window.__orderSettingRows = () => [...document.querySelectorAll('#settingsPanel [data-setting]')].map((n) => n.dataset.setting ?? '');
-window.__orderOutlinePaths = () => [...document.querySelectorAll('.outline-row[data-path]')].map((el) => el.dataset.path);
+window.__orderOutlineRows = () => [...document.querySelectorAll('.outline-row[data-path]')].map((el) => ({
+  path: el.dataset.path,
+  open: el.classList.contains('is-open'),
+}));
+window.__orderOutlinePaths = () => window.__orderOutlineRows().map((r) => r.path);
 window.__orderHitPaths = () => [...document.querySelectorAll('.row.is-hit[data-path]')].map((el) => el.dataset.path);
 window.__orderLongTasks = [];
 try {
@@ -242,7 +246,25 @@ try {
       await sleep(450);
       document.querySelector('[data-panel-btn="outline"]').click();
       await sleep(500);
-      out.outline = { paths: window.__orderOutlinePaths() };
+      out.outline = { paths: window.__orderOutlinePaths(), setting: h.settingsState().sortOrder, state: h.state().rowVersion };
+      // 展开大纲里的嵌套容器 $.beta：切档后必须保留展开现场（refreshOrder，不是回根页）
+      const caret = document.querySelector('.outline-row[data-path="$.beta"] .outline-row__caret');
+      if (!caret) throw new Error('missing outline caret $.beta');
+      caret.click();
+      await sleep(400);
+      const betaOpen = (rows) => rows.find((r) => r.path === '$.beta')?.open ?? false;
+      out.outlineExpandedAsc = {
+        paths: window.__orderOutlinePaths(),
+        betaOpen: betaOpen(window.__orderOutlineRows()),
+      };
+      await h.setSetting('sortOrder', 'key-desc');
+      await sleep(550);
+      out.outlineExpandedDesc = {
+        paths: window.__orderOutlinePaths(),
+        betaOpen: betaOpen(window.__orderOutlineRows()),
+      };
+      await h.setSetting('sortOrder', 'key-asc');
+      await sleep(450);
       document.querySelector('[data-panel-btn="search"]').click();
       await sleep(200);
       const search = await h.search('item');
@@ -392,6 +414,19 @@ const checks = {
   'outline:follows-display-order':
     eq((report.outline?.paths ?? []).filter(isDirectChild), ROOT_ASC),
   'outline:has-chinese-bracket-path': (report.outline?.paths ?? []).includes("$['中文']"),
+  // 切档保留大纲展开现场：$.beta 仍展开，子项按新（降序）顺序重取
+  'outline:keeps-expansion-on-sort':
+    report.outlineExpandedAsc?.betaOpen === true &&
+    eq(
+      (report.outlineExpandedAsc?.paths ?? []).filter((p) => p.startsWith('$.beta.')),
+      ['$.beta.a', '$.beta.b', '$.beta.c'],
+    ) &&
+    report.outlineExpandedDesc?.betaOpen === true &&
+    eq(
+      (report.outlineExpandedDesc?.paths ?? []).filter((p) => p.startsWith('$.beta.')),
+      ['$.beta.c', '$.beta.b', '$.beta.a'],
+    ) &&
+    eq((report.outlineExpandedDesc?.paths ?? []).filter(isDirectChild), ROOT_DESC),
   'search:hits-follow-path':
     eq([...(report.searchAsc?.hits ?? [])].sort(), ['$.item10', '$.item2']) &&
     report.searchAsc?.found === 2 &&

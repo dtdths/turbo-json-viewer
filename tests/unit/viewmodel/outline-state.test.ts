@@ -555,6 +555,64 @@ describe('OutlineState — 文档生命周期', () => {
   });
 });
 
+describe('OutlineState — refreshOrder（#40 / ADR-0024 显示序变化）', () => {
+  it('保留展开集合与已加载数量：只重取根 + 已展开容器，不回根页', async () => {
+    const source = new FakeSource();
+    const state = await opened(source); // 根页：a(object,1) / b(number)
+    const expanding = state.setOpen('$.a', true);
+    source.resolveAt(1, { total: 1, children: [child('x', 'number', 0, '$.a')] });
+    await expanding;
+    expect(paths(state.view())).toEqual(['$', '$.a', '$.a.x', '$.b']);
+
+    const refreshing = state.refreshOrder();
+    // 只重取根与已展开的 $.a（两次请求），展开集合不重置
+    expect(source.requests).toHaveLength(4);
+    expect(source.requests[2]).toMatchObject({ path: '$', start: 0 });
+    expect(source.requests[3]).toMatchObject({ path: '$.a', start: 0 });
+    expect(state.expandedPaths()).toContain('$.a');
+
+    // 新顺序：b 在前、a 在后
+    source.resolveAt(2, { total: 2, children: [child('b', 'number'), child('a', 'object', 1)] });
+    source.resolveAt(3, { total: 1, children: [child('x', 'number', 0, '$.a')] });
+    await refreshing;
+
+    expect(paths(state.view())).toEqual(['$', '$.b', '$.a', '$.a.x']);
+    expect(state.expandedPaths()).toContain('$.a');
+    expect(state.view().phase).toBe('ready');
+  });
+
+  it('无文档 / 根页未就绪 → 空操作（不发请求）', async () => {
+    const empty = new OutlineState(new FakeSource());
+    await empty.refreshOrder();
+    expect(empty.view().phase).toBe('idle');
+
+    const source = new FakeSource();
+    const state = new OutlineState(source);
+    const opening = state.open('r1'); // 根页在途
+    expect(source.requests).toHaveLength(1);
+    await state.refreshOrder(); // 根页未 loaded → no-op
+    expect(source.requests).toHaveLength(1);
+    source.resolveAt(0, { total: 1, children: [child('a', 'number')] });
+    await opening;
+    expect(paths(state.view())).toEqual(['$', '$.a']);
+  });
+
+  it('旧档在途回包按 epoch 丢弃（切档后不串页）', async () => {
+    const source = new FakeSource();
+    const state = await opened(source);
+    const expanding = state.setOpen('$.a', true); // #1 在途
+    const refreshing = state.refreshOrder(); // epoch++：根 #2、$.a #3
+    source.resolveAt(1, { total: 1, children: [child('stale', 'number', 0, '$.a')] });
+    await expanding;
+    expect(source.requests).toHaveLength(4);
+    source.resolveAt(2, { total: 2, children: [child('b', 'number'), child('a', 'object', 1)] });
+    source.resolveAt(3, { total: 1, children: [child('x', 'number', 0, '$.a')] });
+    await refreshing;
+    expect(paths(state.view()).some((path) => path.includes('stale'))).toBe(false);
+    expect(paths(state.view())).toEqual(['$', '$.b', '$.a', '$.a.x']);
+  });
+});
+
 describe('OutlineState — setSelected / view / 订阅', () => {
   it('setSelected：写入 selected，行不变；同值不重复通知', async () => {
     const state = await opened(new FakeSource());
