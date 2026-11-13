@@ -15,6 +15,7 @@ import type { CoreApi } from '../protocol/core-api';
 import type {
   CopyFormat,
   DocumentMeta,
+  DocumentProfile,
   ExprBudgetLevel,
   ExprCompletion,
   FidelityReport,
@@ -400,6 +401,10 @@ export interface DevHook {
   /** 设置高级预算档位（= 设置第 11 项）。 */
   expressionSetBudget(level: ExprBudgetLevel): { changed: boolean } & ExpressionHookState;
 
+  /* ---- 文档概要（#43 / ADR-0025） ---- */
+  /** 主动请求当前文档根的 profile（null = 无文档）；供冒烟断言形状与采样计时。 */
+  documentProfile(): Promise<DocumentProfile | null>;
+
   /* ---- 多文档工作区（#18 / ADR-0009 §9） ---- */
   /** 工作区快照：标签列表 / 活动标签 / 每标签版本 + 标签条布局探针。 */
   workspaceState(): WorkspaceHookState;
@@ -438,6 +443,8 @@ export interface DevHookDeps {
   exportLastAction(): ExportLastAction | null;
   /** 导出文件名（含 -edited / -truncated-repaired 后缀）。 */
   exportFileName(): string | null;
+  /** 文档概要（#43 / ADR-0025）：当前文档根的 profile；无文档 → null。 */
+  documentProfile(): Promise<DocumentProfile | null>;
 
   /* ---- 模块句柄（状态由模块自报） ---- */
   tree: TreeView;
@@ -1145,6 +1152,7 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       return expressionHookState();
     },
     expressionComplete: (text?: string, pos?: number) => deps.expression.entries.complete(text, pos),
+    documentProfile: () => deps.documentProfile(),
     expressionSetStrict: (strict: boolean) => {
       deps.expression.entries.setStrict(strict);
       return expressionHookState();

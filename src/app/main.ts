@@ -10,6 +10,7 @@ import '../view/panels/search-panel.css';
 import '../view/panels/outline-panel.css';
 import '../view/panels/settings-panel.css';
 import '../view/panels/expression-panel.css';
+import '../view/panels/profile-panel.css';
 import '../view/raw/raw-view.css';
 
 import { createWorkerCore } from './transport/worker-transport';
@@ -23,6 +24,7 @@ import { RawView } from '../view/raw/raw-view';
 import { DomRowPool } from '../view/tree/row-renderer';
 import { SearchPanel } from '../view/panels/search-panel';
 import { OutlinePanel } from '../view/panels/outline-panel';
+import { renderProfilePanel, type ProfilePanelState } from '../view/panels/profile-panel';
 import { CoreError } from '../protocol/errors';
 import {
   EXPR_BUDGETS,
@@ -140,6 +142,7 @@ const expressionHost = el('expressionPanel');
 const exprBarRoot = el('exprBar');
 const selPath = el('selPath');
 const selMeta = el('selMeta');
+const profilePanel = el('profilePanel');
 const repairBar = el('repairBar');
 const repairText = el('repairText');
 const repairToggle = el<HTMLButtonElement>('repairToggle');
@@ -564,6 +567,9 @@ function restoreActiveTabView(): void {
       rawSource.requestWindow();
     });
   } else updateStatus();
+  // 文档概要（#43 / ADR-0025 §2）：切标签 = 换目标根，清空后按需重采（右栏可见时）
+  clearProfile();
+  scheduleProfile();
 }
 
 /** 切标签：存档旧标签 → 换绑定 → 重绘（不关根、不重解析，ADR-0009 §3）。 */
@@ -634,6 +640,8 @@ function enterEmptyState(): void {
   fidelity = null;
   fidelityPending = false;
   fidelitySeq += 1;
+  // 文档概要（#43 / ADR-0025 §8）：回空态 = 清空，不采
+  clearProfile();
   rawOpenSeq += 1;
   exprView = null;
   exprViewActive = false;
@@ -726,6 +734,8 @@ function applyLanding(plan: LandingPlan): void {
   if (plan.reapplyHits) applySearchToTree();
   if (plan.refreshOutline) void outlineState.refresh();
   if (plan.markSearchStale) markSearchStale();
+  // 文档概要失效（#43 / ADR-0025 §8）：编辑（含 undo/redo/reset）推进 docRevision → 标记待更新
+  if (plan.markSearchStale) staleProfile();
   if (plan.history) editState.sync(plan.history);
   if (plan.clearSelection) setSelection(null);
   if (plan.selectPath) setSelection(plan.selectPath);
@@ -1273,6 +1283,95 @@ function consumeWatchdogFlag(): void {
   }
 }
 
+/* ---------------- 文档概要（#43 / ADR-0025 §7–§8）：按需采样 + 惰性失效 ---------------- */
+
+/**
+ * 右栏「文档概要」状态（只活在活动标签会话：不持久化、不跨标签缓存，ADR-0025 §8）。
+ * - `rootId + docRevision` 是回包校验键：切标签 / 换文档 / 编辑推进版本后的迟到回包一律丢弃；
+ * - profile 本体只在 ready 时持有（不常驻大对象；worker 侧按 (rootId, docRevision) 缓存）。
+ */
+let profileView: ProfilePanelState = { status: 'idle' };
+let profileRootId: string | null = null;
+let profileDocRev = 0;
+/** 采样代次：清空 / 失效 / 重新触发都递增，迟到回包按代次丢弃（与 fidelitySeq 同口径）。 */
+let profileSeq = 0;
+
+/** 概要描述的目标 = **文档根**（表达式结果视图下也不采 expr 根；ADR-0025 §7）。 */
+function profileTarget(): { rootId: string; docRevision: number } | null {
+  const rootId = documentRootId();
+  return rootId ? { rootId, docRevision: currentDocRevision() } : null;
+}
+
+function renderProfile(): void {
+  renderProfilePanel(profilePanel, profileView);
+}
+
+/** 清空概要（切标签 / 换文档 / 回空态 / 采样失败）：不重采，等下次触发。 */
+function clearProfile(): void {
+  profileSeq += 1;
+  profileRootId = null;
+  profileDocRev = 0;
+  profileView = { status: 'idle' };
+  renderProfile();
+}
+
+/** 文档已修改（docRevision 推进）：清空 + 「概要待更新」，**不自动重采**（ADR-0025 §8）。 */
+function staleProfile(): void {
+  if (profileView.status === 'idle' || profileDocRev === currentDocRevision()) return;
+  profileSeq += 1;
+  profileDocRev = currentDocRevision();
+  profileView = { status: 'stale' };
+  renderProfile();
+}
+
+/**
+ * 按需触发一次采样（ADR-0025 §2）：导入 / 切标签后的首帧之后、右栏由折叠展开、
+ * 或首次进表达式模式（`force` = 右栏折叠也要采，补全需要）时调用。
+ * 实际 `core.profile` 调用推迟到 `requestIdleCallback`（无则 `setTimeout 0`），导入路径零新增成本。
+ */
+function scheduleProfile(force = false): void {
+  const target = profileTarget();
+  if (!target || (!force && document.body.classList.contains('rail-collapsed'))) return;
+  // 同一目标已在途 / 已就绪：不重复调度（编辑失效后状态是 stale，会正常重采）
+  if (
+    (profileView.status === 'loading' || profileView.status === 'ready') &&
+    profileRootId === target.rootId &&
+    profileDocRev === target.docRevision
+  ) {
+    return;
+  }
+  const seq = ++profileSeq;
+  profileRootId = target.rootId;
+  profileDocRev = target.docRevision;
+  profileView = { status: 'loading' };
+  renderProfile();
+  const stillValid = (): boolean => {
+    const now = profileTarget();
+    return seq === profileSeq && now !== null && now.rootId === target.rootId && now.docRevision === target.docRevision;
+  };
+  const run = (): void => {
+    if (!stillValid()) return;
+    void core
+      .profile(target.rootId)
+      .then((profile) => {
+        if (!stillValid()) return;
+        profileView = { status: 'ready', profile };
+        renderProfile();
+      })
+      .catch(() => {
+        // 采样失败属辅助功能降级（根已换 / 取消是正常竞态）：回空态，下次触发再试
+        if (!stillValid()) return;
+        profileView = { status: 'idle' };
+        renderProfile();
+      });
+  };
+  const idle = (
+    window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }
+  ).requestIdleCallback;
+  if (typeof idle === 'function') idle(run, { timeout: 2000 });
+  else window.setTimeout(run, 0);
+}
+
 /* ---------------- import layer（文档入口层） ---------------- */
 
 const EMPTY_TITLE_INITIAL = '拖入 JSON，毫秒级开始查看';
@@ -1575,6 +1674,9 @@ function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
   // 保真扫描按新根重排（resetFidelity 递增 seq 丢弃旧在途），再调度首帧后扫描
   resetFidelity();
   scheduleFidelityScan();
+  // 文档概要（#43 / ADR-0025 §2）：换文档后首帧之后按需采样（右栏未折叠才调度）
+  clearProfile();
+  scheduleProfile();
   maybeShowWorkspaceMemoryHint(tab);
 }
 
@@ -2527,6 +2629,8 @@ function setPanel(panel: PanelId): void {
   }
   if (panel === 'settings') settingsPanel.focus();
   if (panel === 'expression') {
+    // 进入表达式模式 = 补全需要 profile（ADR-0025 §2）：右栏折叠也按需采样一次
+    scheduleProfile(true);
     // 结果视图只在树形态下有意义（原文视图下恢复结果根会看不见）→ 先切回树
     if (!exprViewActive && isRawView()) void setViewMode('tree');
     void expressionPanel.mount();
@@ -2756,6 +2860,8 @@ function toggleRail(): void {
   const collapsed = document.body.classList.toggle('rail-collapsed');
   el('railToggle').setAttribute('aria-pressed', collapsed ? 'false' : 'true');
   settings.setUi({ railCollapsed: collapsed });
+  // 右栏由折叠 → 展开：文档概要按需补采（ADR-0025 §2；已就绪 / 在途时 schedule 内部去重）
+  if (!collapsed) scheduleProfile();
 }
 
 el('railToggle').addEventListener('click', toggleRail);
@@ -3365,6 +3471,11 @@ function buildDevHookDeps(): DevHookDeps {
     exportLastAction: () => exportLastAction,
     // 与真实导出口径一致（表达式结果视图下也是 -expr-N.json，ADR-0021）
     exportFileName: () => currentExportName(),
+    // 文档概要（#43 / ADR-0025）：冒烟直接向 worker 要当前文档根的 profile（null = 无文档）
+    documentProfile: () => {
+      const target = profileTarget();
+      return target === null ? Promise.resolve(null) : core.profile(target.rootId);
+    },
     tree,
     rowSource,
     rawView,

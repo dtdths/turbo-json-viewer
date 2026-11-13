@@ -1,0 +1,71 @@
+/* ==========================================================================
+   view/panels/profile-panel — 右栏「文档概要」模块（#43 / ADR-0025 §7）
+   元信息行 + 根字段 / 元素字段列表；外框（.module / .placeholder / token）在
+   app/styles/shell.css 与 view/styles/tokens.css，这里只加模块内部排版，不新增颜色 token。
+   冒烟依赖 .profile__* class，不要改名。
+   ========================================================================== */
+
+.profile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 元信息行：节点数 · 最大深度 · 采样 / 截断标记 */
+.profile__meta {
+  color: var(--muted);
+  font-size: var(--text-micro);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 字段列表标题：根字段 / 元素字段 */
+.profile__title {
+  color: var(--faint);
+  font-size: var(--text-micro);
+  letter-spacing: 0.04em;
+}
+
+.profile__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  line-height: 1.6;
+}
+
+/* 字段名：超长省略（路径 / 键名可能很长） */
+.profile__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--syntax-key);
+}
+
+/* 类型：与大纲行的类型标同构 */
+.profile__kind {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: var(--text-micro);
+  color: var(--faint);
+}
+
+/* 频率：freq>1 才渲染 */
+.profile__freq {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}

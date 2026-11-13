@@ -9,7 +9,7 @@ import { createDevHook, type DevHookDeps } from '../../../src/app/dev-hook';
 import { DocSession } from '../../../src/app/doc-session';
 import { CoreError } from '../../../src/protocol/errors';
 
-/** 82 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
+/** 83 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
 const HOOK_MEMBERS = [
   'loadText', 'scrollToPx', 'togglePath', 'expandAll', 'collapseAll', 'state',
   'search', 'searchNext', 'searchPrev', 'searchJump', 'searchMarkStale', 'setSearchFilter',
@@ -33,6 +33,8 @@ const HOOK_MEMBERS = [
   'expressionSetBudget',
   // #18 / ADR-0009 §9：多文档工作区（6 个）
   'workspaceState', 'tabStripState', 'tabOpen', 'tabImportText', 'tabSwitch', 'tabClose',
+  // #43 / ADR-0025：文档概要（1 个）
+  'documentProfile',
 ].sort();
 
 function fakeElement(over: Record<string, unknown> = {}): HTMLElement {
@@ -68,6 +70,7 @@ function fakeDeps(over: Record<string, unknown> = {}): DevHookDeps {
     fidelityIndex: () => 0,
     exportLastAction: () => null,
     exportFileName: () => null,
+    documentProfile: async () => null,
     tree: {
       scrollTopPx: () => 0,
       rowHeightPx: () => 24,
