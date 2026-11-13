@@ -41,7 +41,7 @@ export interface CoreApi {
   outline(r: OutlineRequest): Promise<OutlineReply>;                    // 大纲页：按容器分页取子项（只读，ADR-0013）
   fidelity(r: { rootId: RootId }): Promise<FidelityReply>;             // 保真扫描：源文本线性扫描（只读，ADR-0003 修订）
   redo(rootId: RootId): Promise<EditReply>;        reset(rootId: RootId): Promise<EditReply>;          // 回到导入值
-  profile(rootId: RootId): Promise<ProfileReply>;  stats(rootId: RootId): Promise<StatsReply>;         // 版本/行数只读快照
+  profile(rootId: RootId): Promise<DocumentProfile>;  stats(rootId: RootId): Promise<StatsReply>;      // 文档概要：#28 / ADR-0025，只读、按 (rootId,docRevision) 缓存；stats = 版本/行数快照
 }
 // src/protocol/messages.ts —— 线上形态（structured-clone-safe）
 export type Command =
