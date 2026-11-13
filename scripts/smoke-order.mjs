@@ -44,6 +44,9 @@ const BIG = (() => {
 })();
 const BIG_ROWS = BIG_N + 1;
 
+/** 单节点覆盖禁用矩阵用的小文档：单键对象 / 数组 / 标量 / 可排对象 */
+const SOLO = '{"only":{"x":1},"arr":[1,2],"z":1,"obj":{"b":1,"a":2}}';
+
 const DEFAULT_KEYS = [
   'theme',
   'rowHeight',
@@ -301,6 +304,163 @@ try {
     })()`,
   );
 
+  // ---- phase 6.4：右键菜单截图（v1.1 三项 + 禁用矩阵可视）----
+  await runPhase(
+    'menu-shot',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      await h.setSetting('sortOrder', 'raw');
+      await h.setSetting('theme', 'dark');
+      await h.loadText(${JSON.stringify(SMALL)}, 'order.json');
+      await sleep(450);
+      h.ctxOpen('$.beta');
+      await sleep(220);
+      out.menuHidden = document.getElementById('ctxMenu')?.hidden ?? null;
+      return out;
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'order-menu.png'));
+  await runPhase(
+    'menu-close',
+    `(async () => {
+      await window.__tjv.ctxClick('order-inherit');
+      return {};
+    })()`,
+  );
+
+  // ---- phase 6.5：v1.1 单节点覆盖（右键菜单三档 / 禁用矩阵 / 不继承）----
+  await runPhase(
+    'node-order',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const orderItems = (state) => (state.items ?? []).filter((item) => (item.act ?? '').startsWith('order-'));
+      const betaChildren = () => window.__orderPaths().filter((p) => p.startsWith('$.beta.'));
+      const top = () => window.__orderTopLevel();
+
+      await h.setSetting('sortOrder', 'raw');
+      await h.loadText(${JSON.stringify(SMALL)}, 'order.json');
+      await sleep(450);
+      out.rawTop = top();
+
+      // 菜单契约：对象容器三项可用、顺序与文案固定
+      const menuBeta = h.ctxOpen('$.beta');
+      out.menu = { hidden: menuBeta.hidden, items: orderItems(menuBeta) };
+
+      // 禁用矩阵：数组 / 标量 / 单键对象禁用并给 title；可排对象可用
+      await h.loadText(${JSON.stringify(SOLO)}, 'solo.json');
+      await sleep(450);
+      out.disabled = {
+        array: orderItems(h.ctxOpen('$.arr')),
+        scalar: orderItems(h.ctxOpen('$.z')),
+        single: orderItems(h.ctxOpen('$.only')),
+        object: orderItems(h.ctxOpen('$.obj')),
+      };
+
+      await h.loadText(${JSON.stringify(SMALL)}, 'order.json');
+      await sleep(450);
+
+      // 单节点升序：只改 $.beta 直接子键；根顺序不变（不向下继承）
+      h.ctxOpen('$.beta');
+      out.ascClick = await h.ctxClick('order-asc');
+      await sleep(450);
+      out.nodeAsc = { betaChildren: betaChildren(), top: top(), toast: h.toastText() };
+
+      // 单节点降序
+      h.ctxOpen('$.beta');
+      await h.ctxClick('order-desc');
+      await sleep(450);
+      out.nodeDesc = { betaChildren: betaChildren(), toast: h.toastText() };
+
+      // 恢复全局（beta 回 raw: c,a,b）
+      h.ctxOpen('$.beta');
+      await h.ctxClick('order-inherit');
+      await sleep(450);
+      out.nodeInherit = { betaChildren: betaChildren(), toast: h.toastText() };
+
+      // 根覆盖升序：根成员 asc；beta 自己无覆盖 → 子键仍跟全局 raw（c,a,b）
+      h.ctxOpen('$');
+      await h.ctxClick('order-asc');
+      await sleep(450);
+      out.rootAsc = { top: top(), betaChildren: betaChildren() };
+
+      // 全局切档不清覆盖：全局 desc 后根仍 asc
+      await h.setSetting('sortOrder', 'key-desc');
+      await sleep(500);
+      out.globalDescKeepsOverride = { top: top(), global: h.settingsState().sortOrder };
+
+      // 清根覆盖 → 跟随全局 desc
+      h.ctxOpen('$');
+      await h.ctxClick('order-inherit');
+      await sleep(450);
+      out.rootInherit = { top: top() };
+
+      // 大纲跟随单节点覆盖（$.beta 降序，根保持全局 raw）
+      await h.setSetting('sortOrder', 'raw');
+      await sleep(450);
+      h.ctxOpen('$.beta');
+      await h.ctxClick('order-desc');
+      await sleep(450);
+      document.querySelector('[data-panel-btn="outline"]').click();
+      await sleep(550);
+      // 展开大纲里的 $.beta，才能看到它按覆盖（降序）分出的子项
+      document.querySelector('.outline-row[data-path="$.beta"] .outline-row__caret')?.click();
+      await sleep(450);
+      out.nodeOutline = { paths: window.__orderOutlinePaths() };
+
+      // 表达式结果根可单独覆盖（独立根；清覆盖后回全局）
+      await h.expressionRunText('$.beta');
+      await sleep(600);
+      h.ctxOpen('$');
+      await h.ctxClick('order-desc');
+      await sleep(500);
+      out.exprOverride = { paths: window.__orderPaths(), toast: h.toastText() };
+      h.ctxOpen('$');
+      await h.ctxClick('order-inherit');
+      await sleep(450);
+      out.exprInherit = { paths: window.__orderPaths() };
+      h.expressionBack();
+      await sleep(250);
+      return out;
+    })()`,
+  );
+  await page.screenshot(path.join(SHOTS, 'order-node.png'));
+
+  // ---- phase 6.6：单节点覆盖的按路径锚点（大文档）----
+  await runPhase(
+    'node-anchor',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      await h.setSetting('sortOrder', 'raw');
+      await h.loadText(${JSON.stringify(BIG)}, 'big.json');
+      await sleep(500);
+      // 真实场景：容器行可见（根在顶）时右键覆盖 → 视口不跳、仅其子行重排
+      h.scrollToPx(0);
+      await sleep(300);
+      out.before = { scrollTop: h.state().scrollTop, topPath: window.__orderTopVisible() };
+      h.ctxOpen('$');
+      out.click = await h.ctxClick('order-desc');
+      await sleep(600);
+      out.after = {
+        scrollTop: h.state().scrollTop,
+        topPath: window.__orderTopVisible(),
+        firstChildren: window.__orderPaths().filter((p) => p !== '$').slice(0, 3),
+      };
+      // 收尾：清覆盖并把全局档留在 key-asc（reload 阶段的持久化期望）
+      h.ctxOpen('$');
+      await h.ctxClick('order-inherit');
+      await sleep(400);
+      await h.setSetting('sortOrder', 'key-asc');
+      await sleep(450);
+      return out;
+    })()`,
+  );
+
   // ---- phase 7：刷新 → 持久化 + 新 load 直接按规则 ----
   await page.goto(url, { timeoutMs: 20000 });
   await page.waitFor('document.readyState === "complete"', { timeoutMs: 20000 });
@@ -317,6 +477,8 @@ try {
       await h.loadText(${JSON.stringify(SMALL)}, 'order.json');
       await sleep(500);
       out.reloadedAfterLoad = { top: window.__orderTopLevel(), totalRows: h.state().totalRows };
+      // 单节点覆盖是会话态：刷新后同一文档不再有覆盖（beta 子键回全局 raw）
+      out.betaChildrenAfterReload = window.__orderPaths().filter((p) => p.startsWith('$.beta.'));
       return out;
     })()`,
   );
@@ -438,6 +600,57 @@ const checks = {
     eq((report.exprAsc?.paths ?? []).filter((p) => p !== '$'), ['$.a', '$.b', '$.c']) &&
     report.exprAsc?.order === 'key-asc' &&
     eq((report.exprDesc?.paths ?? []).filter((p) => p !== '$'), ['$.c', '$.b', '$.a']),
+
+  // v1.1 单节点覆盖
+  'menu:visible-shot': report.menuHidden === false,
+  'node:menu-contract':
+    report.menu?.hidden === false &&
+    eq(
+      (report.menu?.items ?? []).map((item) => [item.act, item.label, item.disabled]),
+      [
+        ['order-asc', '子键升序', false],
+        ['order-desc', '子键降序', false],
+        ['order-inherit', '恢复全局排序', false],
+      ],
+    ),
+  'node:disabled-matrix':
+    (report.disabled?.array ?? []).length === 3 &&
+    (report.disabled?.array ?? []).every((item) => item.disabled === true && (item.title ?? '').length > 0) &&
+    (report.disabled?.scalar ?? []).every((item) => item.disabled === true && (item.title ?? '').length > 0) &&
+    (report.disabled?.single ?? []).every((item) => item.disabled === true && (item.title ?? '').length > 0) &&
+    (report.disabled?.object ?? []).every((item) => item.disabled === false),
+  'node:asc-direct-children-only':
+    eq(report.nodeAsc?.betaChildren, ['$.beta.a', '$.beta.b', '$.beta.c']) &&
+    eq(report.nodeAsc?.top, ROOT_RAW) &&
+    (report.nodeAsc?.toast ?? '').includes('升序'),
+  'node:desc':
+    eq(report.nodeDesc?.betaChildren, ['$.beta.c', '$.beta.b', '$.beta.a']) &&
+    (report.nodeDesc?.toast ?? '').includes('降序'),
+  'node:inherit':
+    eq(report.nodeInherit?.betaChildren, ['$.beta.c', '$.beta.a', '$.beta.b']) &&
+    (report.nodeInherit?.toast ?? '').includes('全局'),
+  'node:root-override-no-inherit':
+    eq(report.rootAsc?.top, ROOT_ASC) && eq(report.rootAsc?.betaChildren, ['$.beta.c', '$.beta.a', '$.beta.b']),
+  'node:global-keeps-override':
+    report.globalDescKeepsOverride?.global === 'key-desc' &&
+    eq(report.globalDescKeepsOverride?.top, ROOT_ASC),
+  'node:inherit-follows-global': eq(report.rootInherit?.top, ROOT_DESC),
+  'node:outline-follows':
+    eq(
+      (report.nodeOutline?.paths ?? []).filter((p) => p.startsWith('$.beta.')),
+      ['$.beta.c', '$.beta.b', '$.beta.a'],
+    ),
+  'node:expression-root-override':
+    eq((report.exprOverride?.paths ?? []).filter((p) => p !== '$'), ['$.c', '$.b', '$.a']) &&
+    eq((report.exprInherit?.paths ?? []).filter((p) => p !== '$'), ['$.c', '$.a', '$.b']),
+  'node:viewport-stable-and-rows-reordered':
+    report.before?.topPath === '$' &&
+    report.after?.topPath === '$' &&
+    report.after?.scrollTop === 0 &&
+    eq(report.after?.firstChildren, ['$.k300', '$.k299', '$.k298']) &&
+    (report.click?.toast ?? '').includes('降序'),
+  'node:overrides-are-session-only':
+    eq(report.betaChildrenAfterReload, ['$.beta.a', '$.beta.b', '$.beta.c']),
 
   // 7) 持久化 + 刷新后新 load 直接按规则
   'persist:sortOrder':

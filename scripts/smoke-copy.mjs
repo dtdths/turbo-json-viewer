@@ -38,6 +38,9 @@ const MENU_ACTS = [
   'copy-key',
   'expand-subtree',
   'collapse-subtree',
+  'order-asc',
+  'order-desc',
+  'order-inherit',
   'edit',
   'locate-raw',
 ];
@@ -48,6 +51,9 @@ const MENU_LABELS = [
   '复制键名',
   '展开整棵子树',
   '收起整棵子树',
+  '子键升序',
+  '子键降序',
+  '恢复全局排序',
   '编辑此节点 JSON',
   '在原文中定位',
 ];
@@ -606,7 +612,8 @@ const checks = {
   'menu:nav-skips-disabled':
     report.menuContract?.rootFirst === 'copy-subtree' &&
     report.menuContract?.rootSecond === 'copy-path' &&
-    report.menuContract?.rootThird === 'edit' &&
+    // 根对象成员 ≥2 → 排序三项可用（#41），↓ 跳过禁用项后落「子键升序」
+    report.menuContract?.rootThird === 'order-asc' &&
     report.menuContract?.afterRoot?.open === false,
 
   'resolve:subtree-object':
