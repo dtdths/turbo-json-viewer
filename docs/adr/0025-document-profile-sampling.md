@@ -48,7 +48,6 @@
 - 为什么不是单遍：数组是否截断取决于 `nodeCount`，而 nodeCount 必须先走完整图才能知道（鸡生蛋）；两遍的额外成本只有第二遍的 1–2.5ms（探针实测），换来语义清晰。
 - **同步、不分片**：在用户主动进入右栏/表达式模式时触发，worker 内两遍都是同步的；不引入分片调度。**若实测 50MB > 100ms 再评估分片**，数字记入验收。
 - `doc-service.profile(rootId)`：只接受**文档根**（与 `complete` 同口径；`expr:N` 根 → `BAD_COMMAND`）；结果按 `(rootId, docRevision)` 缓存；**顺手回填 `nodeCountCache`**，让表达式首次求值不再重复遍历（一次采样两处用）。
-- **同步、不分片**：在用户主动进入右栏/表达式模式时触发，worker 内单次遍历；不引入分片调度（复杂度换不来收益）。**若实测 50MB > 100ms 再评估分片**，数字记入验收。
 
 ### 4. 字段收集算法与硬上限（确定性优先）
 
@@ -171,10 +170,10 @@ export interface DocumentProfile {
 
 ### 实现后回填（2026-11-13，实现票 #43 实测）
 
-- **单测 1165 → 1226**（48 文件全绿，+61：`profile-build` 15 / `profile-limits` 11 / `profile-service` 11 / `expression-complete` +11 / 右栏 `profile-panel` 10 / 契约 +2（`profile` × 双适配器）/ `dev-hook` +1）。
+- **单测 1165 → 1228**（48 文件全绿，+63：`profile-build` 16 / `profile-limits` 11 / `profile-service` 11 / `expression-complete` +13 / 右栏 `profile-panel` 10 / 契约 +2（`profile` × 双适配器）/ `dev-hook` 成员契约扩到 83（无新增用例））。
 - **契约**：`profile` InProcess / Worker 双适配器 + expr 根 `BAD_COMMAND` + `complete` 消费缓存 profile。
 - **冒烟 16 套串行全绿**：`smoke` 新增右栏概要真实数据断言（10MB：595,030 节点 / 深度 6 / `sampled` / 面板文案「59.5 万个节点 · 深度 6 · 已采样 518 个节点」）；`smoke-expression` **52 → 55/55**（`data.items.` 给真实字段 `id/name/price` + 采样 detail + 标量数组 `big.` 仍给方法并集）；`smoke-expand` **21 → 22/22**。
-- **Chrome worker 实测采样耗时**：**50MB（2,958,550 节点）profile = 42ms**（≤100ms 门槛内；含 postMessage 往返，冷态、按需），`sampled=true`、`maxDepth=6`、`paths=5`、根字段 2 个；10MB（595,030 节点）同口径；主线程 **0 长任务**（采样全在 worker）。
+- **Chrome worker 实测采样耗时**：**50MB（2,958,550 节点）profile = 33–42ms**（两次实测；≤100ms 门槛内，含 postMessage 往返，冷态、按需），`sampled=true`、`maxDepth=6`、`paths=5`、根字段 2 个；**10MB（595,030 节点）profile = 9ms**；主线程 **0 长任务**（采样全在 worker）。
 - **体积**：`page.js` 50.3 → **51.2KB gz**（**预算 51 → 52 经用户 2026-11-13 批准**，ADR-0022 §8 记账；+0.9 = 右栏概要模块 + 补全接线/类型/缓存）、`worker.js` 64.4 → **65.8**（+1.4，无硬预算）、`page.css` 8.2 → **8.3**、懒加载 145.6 不变。
 - **截图**：`.spike/smoke/after-scroll.png`（10MB 右栏概要）、`expression-*.png`（表达式面板/补全场景）。
 

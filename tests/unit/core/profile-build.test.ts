@@ -116,6 +116,14 @@ describe('core/profile — 根路径样本（根 = []）', () => {
     }
   });
 
+  it('非 JSON 值 undefined（防御分支）：nodeCount=0 且仍含根样本（契约不变式：paths 至少一条）', () => {
+    const profile = buildDocumentProfile(undefined);
+    expect(profile.nodeCount).toBe(0);
+    expect(profile.maxDepth).toBe(0);
+    expect(profile.paths).toHaveLength(1);
+    expect(profile.paths[0]).toEqual({ segments: [], kind: 'object', samples: 0, members: [] });
+  });
+
   it('根对象 fields 的 kind 取 jsonKind（object / array 也算）', () => {
     const profile = buildDocumentProfile({ obj: { a: 1 }, arr: [1], s: 'x', n: 1, b: true, z: null });
     expect(sampleOf(profile, []).members).toEqual([

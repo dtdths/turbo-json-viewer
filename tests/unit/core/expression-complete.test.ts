@@ -322,15 +322,25 @@ describe('core/expression/complete — 类型感知补全（链解析 / detail /
     expect(find(items, 'num')).toMatchObject({ kind: 'field', detail: '根字段 · number' });
   });
 
-  it('根为数组：`$.` 给元素字段样本（采样 detail）+ 全局名，不再只给全局', () => {
+  it('根为数组：`$.` 给元素字段样本（采样 detail）+ 数组方法并集 + 全局名', () => {
     const items = getCompletions('$.', 2, ARRAY_ROOT_CTX);
-    expect(labels(items).slice(0, 2)).toEqual(['name', 'price']);
+    expect(labels(items)).toEqual(['name', 'price', ...FALLBACK_LABELS, ...GLOBAL_NAMES]);
     expect(items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 3/3' });
     expect(items[1]).toMatchObject({ kind: 'field', detail: 'number · 采样 2/3' });
-    expect(labels(items).slice(2)).toEqual([...GLOBAL_NAMES]);
     expect(find(getCompletions('', 0, ARRAY_ROOT_CTX), 'name')).toMatchObject({
       detail: 'string · 采样 3/3',
     });
+  });
+
+  it('标量根数组（members 为空）：`$.` 仍给数组方法并集 + length，不退化到只有全局名', () => {
+    const scalarRoot: CompletionContext = {
+      rootKeys: [],
+      paths: [{ segments: [], kind: 'array', samples: 3, members: [] }],
+    };
+    const items = getCompletions('$.', 2, scalarRoot);
+    expect(labels(items)).toEqual([...FALLBACK_LABELS, ...GLOBAL_NAMES]);
+    expect(labels(items)).toContain('map');
+    expect(labels(items)).toContain('length');
   });
 
   it('内建接收者优先于 paths（Math. 仍是 MATH_MEMBERS）', () => {

@@ -56,13 +56,14 @@ try {
       await new Promise((r) => setTimeout(r, 8));
     }
     await loadPromise.catch((e) => { out.loadError = String(e); });
+    // #43 / ADR-0025：文档概要（右栏）—— load 回包后立即冷调一次（在右栏 idle 调度之前），
+    // 既拿形状也记 10MB 采样耗时；随后等面板渲染（requestIdleCallback 调度，最迟 3s）。
+    const tpProfile = performance.now();
+    const profile = await window.__tjv.documentProfile();
+    out.profileMs = Math.round(performance.now() - tpProfile);
     await new Promise((r) => setTimeout(r, 200));
     out.firstRowMs = firstRowMs;
     out.collapsedDefault = window.__tjv.state();
-
-    // #43 / ADR-0025：文档概要（右栏）—— 导入后按需采样，右栏占位符必须被真实数据替换。
-    // 主动要一次 profile（形状断言），再等面板渲染（requestIdleCallback 调度，最迟 3s）。
-    const profile = await window.__tjv.documentProfile();
     out.profile = profile
       ? {
           nodeCount: profile.nodeCount,

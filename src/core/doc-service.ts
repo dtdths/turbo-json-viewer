@@ -1021,18 +1021,9 @@ export class DocService {
    */
   private completionContext(root: Root): CompletionContext {
     const profile = this.cachedProfile(root);
-    if (profile !== undefined) {
-      const rootSample = profile.paths[0];
-      const rootKeys: string[] = [];
-      const rootKinds: Record<string, JsonKind> = {};
-      if (rootSample !== undefined && rootSample.kind === 'object') {
-        for (const member of rootSample.members) {
-          rootKeys.push(member.name);
-          if (member.kind !== 'mixed') rootKinds[member.name] = member.kind;
-        }
-      }
-      return { rootKeys, rootKinds, paths: profile.paths };
-    }
+    // profile 就绪时补全只消费 `paths`（根字段也来自 paths[0]），不再复制一份 rootKeys/rootKinds：
+    // 每次 keystroke 都走这里，20k 成员的白复制不可接受（双轴审查 2026-11-13）。
+    if (profile !== undefined) return { rootKeys: [], paths: profile.paths };
     const value = root.rowModel.value;
     const rootKeys: string[] = [];
     const rootKinds: Record<string, JsonKind> = {};

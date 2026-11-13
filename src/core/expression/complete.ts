@@ -79,6 +79,15 @@ function rootCompletions(ctx: CompletionContext): ExprCompletion[] {
         rootSample.kind === 'array' ? sampleDetail(member, rootSample.samples) : `根字段 · ${kindLabel(member.kind)}`;
       items.push({ label: member.name, kind: 'field', detail });
     }
+    // 根数组同样追加数组/字符串方法并集 + length（ADR-0025 §6 修订）：标量根数组 members 为空时
+    // 不追加就会得到「只有全局名」的退化候选；与 `items.` 等数组路径保持同一规则。
+    if (rootSample.kind === 'array') {
+      for (const item of methodCompletions()) {
+        if (seen.has(item.label)) continue;
+        seen.add(item.label);
+        items.push(item);
+      }
+    }
   } else {
     const rootKeys = Array.isArray(ctx.rootKeys) ? ctx.rootKeys : [];
     for (const key of rootKeys) {

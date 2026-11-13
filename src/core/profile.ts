@@ -252,6 +252,7 @@ function collectSamples(root: unknown, largeDocument: boolean): CollectResult {
  */
 export function buildDocumentProfile(value: unknown): DocumentProfile {
   if (value === undefined) {
+    // 非 JSON 值（防御分支，文档根不可达）：契约要求 `paths` 至少一条根样本，给合法的零样本根。
     return {
       rootKind: 'null',
       nodeCount: 0,
@@ -259,7 +260,7 @@ export function buildDocumentProfile(value: unknown): DocumentProfile {
       sampled: false,
       sampledNodes: 0,
       truncated: false,
-      paths: [],
+      paths: [{ segments: [], kind: 'object', samples: 0, members: [] }],
     };
   }
   const { nodeCount, maxDepth } = countNodesAndDepth(value);

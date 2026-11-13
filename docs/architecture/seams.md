@@ -75,7 +75,7 @@ export interface CoreTransport {
 
 | Command | Reply（关键字段） | 不变式 |
 |---|---|---|
-| `load` | `LoadedReply(rootId, docRevision, rowVersion, totalRows, profile, repair?)` | 首帧不等待保真扫描/概要采样（ADR-0004） |
+| `load` | `LoadedReply(rootId, docRevision, rowVersion, totalRows, repair?)` | 首帧不等待保真扫描（ADR-0004）；**文档概要不随 load 返回**（#28 / ADR-0025 §2：按需 `profile` 命令，不在导入路径上采样） |
 | `window` | `WindowReply(rootId, rowVersion, seq, start, rows, totalRows)` | 40 行 ≈3.1KB；p95 0.1ms |
 | `toggle` / `toggleSubtree` / `expandAll` / `collapseAll` / `replaceNode` / `undo·redo·reset` | `EditReply(rootId, docRevision, rowVersion, totalRows, changedRow?, changedPath?, history)` | 8 条命令走**根变更路径**（ADR-0002 修订 2026-11-09）：`view` 意图（前四条）只在 `changed` 时推 `rowVersion`，`value` 意图推 `docRevision` + `rowVersion`（reset 的每步各推一次）；`history` 恒定必填；`replaceNode` 只 `JSON.parse` 编辑文本一次；`undo`/`redo` 空栈抛 `NO_HISTORY`、`reset` 空栈 no-op 不推版本 |
 | `toggleSubtree` | `EditReply(...)`（同上，`history` 恒定） | 子树批量展开/收起（#22 / ADR-0002 修订）：展开 = 子树内所有非空容器 open（与 expandAll 同口径）、收起 = 深度复位；**原子**（超 `ROW_BUDGET` 抛 `TOO_MANY_ROWS` 零部分修改）；根/空容器 no-op、标量 `BAD_COMMAND`；只有可见结果变化才推 `rowVersion` |
@@ -90,7 +90,7 @@ export interface CoreTransport {
 | `rawOpen` / `rawWindow` / `rawLocate` / `rawSource` | `RawMeta(mode,totalLines,chars,maxLineLength,buildMs?,damaged?)` / `RawWindow(seq,start,lines,totalLines,mode,truncated?)` / `RawLocateReply(line,totalLines)` / `RawSourceReply(text,bytes)` | 只读、不推版本；首调惰性建索引；行文本 ≤4096 字符；`rawSource` 超 `maxBytes` 抛 `TOO_LARGE`（ADR-0003 修订） |
 | `outline` | `OutlineReply(rootId, path, kind, total, start, children[OutlineChild])` | 只读、不推版本；按容器**按需分页**（`OUTLINE_PAGE=200` / 上限 500），不建树、不缓存、不依赖树展开态；scalar 路径回 `total:0`（ADR-0013） |
 | `eval` | `EvalReply(rootId, docRevision, totalRows, ms)` | 最多保留 3 个结果根 |
-| `copy` / `profile` | `CopyReply(text, bytes)` / `ProfileReply(profile)` | 大子树 `truncated`；profile 可缺省 |
+| `copy` / `profile` | `CopyReply(text, bytes)` / `DocumentProfile(rootKind, nodeCount, maxDepth, sampled, sampledNodes, truncated, paths[PathSample])` | 大子树 `truncated`；`profile` **只读**、不推版本、只接受文档根（expr 根 → `BAD_COMMAND`）、按 `(rootId, docRevision)` 缓存并回填 `nodeCountCache`（#28 / ADR-0025） |
 
 | Adapter | implementation | 用途 |
 |---|---|---|

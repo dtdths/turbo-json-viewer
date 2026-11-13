@@ -734,8 +734,9 @@ function applyLanding(plan: LandingPlan): void {
   if (plan.reapplyHits) applySearchToTree();
   if (plan.refreshOutline) void outlineState.refresh();
   if (plan.markSearchStale) markSearchStale();
-  // 文档概要失效（#43 / ADR-0025 §8）：编辑（含 undo/redo/reset）推进 docRevision → 标记待更新
-  if (plan.markSearchStale) staleProfile();
+  // 文档概要失效（#43 / ADR-0025 §8）：任何时候 docRevision 推进都让概要失效；
+  // staleProfile 内部比对 (rootId, docRevision)，无变化即 no-op——不借用搜索语义的 plan 标志。
+  staleProfile();
   if (plan.history) editState.sync(plan.history);
   if (plan.clearSelection) setSelection(null);
   if (plan.selectPath) setSelection(plan.selectPath);
