@@ -60,6 +60,31 @@ try {
     out.firstRowMs = firstRowMs;
     out.collapsedDefault = window.__tjv.state();
 
+    // #43 / ADR-0025：文档概要（右栏）—— 导入后按需采样，右栏占位符必须被真实数据替换。
+    // 主动要一次 profile（形状断言），再等面板渲染（requestIdleCallback 调度，最迟 3s）。
+    const profile = await window.__tjv.documentProfile();
+    out.profile = profile
+      ? {
+          nodeCount: profile.nodeCount,
+          maxDepth: profile.maxDepth,
+          sampled: profile.sampled,
+          truncated: profile.truncated,
+          rootKind: profile.rootKind,
+          pathCount: profile.paths.length,
+          rootFields: (profile.paths[0]?.members ?? []).map((m) => m.name).slice(0, 5),
+        }
+      : null;
+    let panelText = '';
+    const pDeadline = performance.now() + 3000;
+    while (performance.now() < pDeadline) {
+      panelText = document.getElementById('profilePanel')?.textContent ?? '';
+      if (panelText.includes('个节点')) break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    out.profilePanelText = panelText;
+    out.profilePanelMeta = document.querySelector('#profilePanel .profile__meta')?.textContent ?? '';
+    out.profileFirstRow = document.querySelector('#profilePanel .profile__name')?.textContent ?? '';
+
     // expand deep enough to get a scrollable document
     await window.__tjv.togglePath('$.data', true).catch((e) => { out.toggleDataError = String(e); });
     await new Promise((r) => setTimeout(r, 250));
@@ -102,6 +127,16 @@ try {
 }
 
 console.log(JSON.stringify(report, null, 2));
+const profileOk =
+  report.profile != null &&
+  report.profile.nodeCount > 0 &&
+  report.profile.maxDepth >= 1 &&
+  report.profile.pathCount >= 1 &&
+  Array.isArray(report.profile.rootFields) &&
+  report.profile.rootFields.length > 0 &&
+  !String(report.profilePanelText).includes('导入后采样') &&
+  String(report.profilePanelText).includes('个节点') &&
+  String(report.profilePanelText).includes(report.profile.rootFields[0]);
 const ok =
   report.firstRowMs != null &&
   report.visibleRows > 0 &&
@@ -109,6 +144,7 @@ const ok =
   report.afterUiCollapse?.rowVersion > report.expanded?.rowVersion &&
   report.afterUiExpand?.rowVersion > report.afterUiCollapse?.rowVersion &&
   report.afterUiExpand?.totalRows === report.expanded?.totalRows &&
+  profileOk &&
   report.consoleErrors?.length === 0;
 console.log(ok ? '\nsmoke: OK' : '\nsmoke: FAILED');
 process.exitCode = ok ? 0 : 1;

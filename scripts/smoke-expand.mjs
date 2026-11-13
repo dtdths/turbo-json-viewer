@@ -313,6 +313,20 @@ try {
     const t0 = performance.now();
     await window.__tjv.loadText(text, '50mb.json');
     out.loadMs = Math.round(performance.now() - t0);
+    // #43 / ADR-0025 §9：50MB 采样耗时（冷态：loadText 刚回来、右栏 idle 调度尚未执行时主动调一次）
+    const tp = performance.now();
+    const profile = await window.__tjv.documentProfile();
+    out.profileMs = Math.round(performance.now() - tp);
+    out.profile = profile
+      ? {
+          nodeCount: profile.nodeCount,
+          maxDepth: profile.maxDepth,
+          sampled: profile.sampled,
+          truncated: profile.truncated,
+          pathCount: profile.paths.length,
+          rootFields: (profile.paths[0]?.members ?? []).length,
+        }
+      : null;
     await sleep(400);
     out.collapsed = window.__tjv.state();
     // #11 / ADR-0003 修订：>50MB 文档 → 「源文本常驻内存」提示条（不阻断导入）
@@ -461,6 +475,15 @@ const docWarnOk =
   /源文本/.test(report.budget?.docWarnText ?? '') &&
   report.budget?.docWarnHiddenAfterClose === true;
 
+// #43 / ADR-0025 §9：50MB 采样 ≤100ms（一次性、按需、worker 内）+ 精确节点数 + 大文档标记
+const profile50Ok =
+  typeof report.budget?.profileMs === 'number' &&
+  report.budget.profileMs <= 100 &&
+  report.budget?.profile?.nodeCount > 2_000_000 &&
+  report.budget?.profile?.sampled === true &&
+  report.budget?.profile?.pathCount >= 1 &&
+  report.budget?.profile?.rootFields > 0;
+
 const checks = {
   'adaptive:small-doc-fully-expanded': smallAdaptiveOk,
   'adaptive:buttons-enabled': report.buttonsPresent === true && report.buttonsEnabled === true,
@@ -481,6 +504,7 @@ const checks = {
   '50mb:budget-reject': budgetRejectOk,
   '50mb:subtree-budget-reject': subtreeBudgetOk,
   '50mb:doc-warn-bar': docWarnOk,
+  '50mb:profile-sampling': profile50Ok,
   'stale:no-layout-shift': staleLayoutOk,
   'perf:no-long-task-no-console-error': perfOk,
 };

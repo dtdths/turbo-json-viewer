@@ -227,12 +227,23 @@ try {
   );
   check('run:no-long-task', (phase2.longTasks || []).every((t) => t < 50), { longTasks: phase2.longTasks });
 
-  // ---- phase 3：补全（根字段 / Math / 数组方法） ----
+  // ---- phase 3：补全（根字段 / Math / 数组方法 / #43 类型感知元素字段） ----
   const phase3 = await page.eval(`(async () => {
     const out = {};
     out.root = await window.__tjv.expressionComplete('da', 2);
     out.math = await window.__tjv.expressionComplete('Math.', 5);
     out.methods = await window.__tjv.expressionComplete('$.data.items.', 13);
+    // #43 / ADR-0025：等 profile 就绪（导入/进表达式模式时按需采样）→ data.items（40 个对象）给真实字段
+    let element = [];
+    const deadline = performance.now() + 5000;
+    while (performance.now() < deadline) {
+      element = await window.__tjv.expressionComplete('data.items.', 11);
+      if (element.some((i) => i.label === 'name')) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    out.element = element;
+    // 标量数组 big（60k 数字）：命中路径但 members 为空 → 仍应给方法并集（不返回空候选）
+    out.scalarArray = await window.__tjv.expressionComplete('big.', 4);
     return out;
   })()`);
   report.complete = phase3;
@@ -243,6 +254,24 @@ try {
   check('complete:math', labels(phase3.math).includes('max') && labels(phase3.math).includes('floor'), {
     labels: labels(phase3.math),
   });
+  check(
+    'complete:element-fields',
+    labels(phase3.element).includes('id') &&
+      labels(phase3.element).includes('name') &&
+      labels(phase3.element).includes('price') &&
+      labels(phase3.element).includes('map'),
+    { labels: labels(phase3.element).slice(0, 10) },
+  );
+  check(
+    'complete:element-detail',
+    (phase3.element || []).some((i) => i.label === 'name' && /采样 \d+\/\d+/.test(String(i.detail))),
+    { detail: (phase3.element || []).find((i) => i.label === 'name')?.detail },
+  );
+  check(
+    'complete:scalar-array-methods',
+    labels(phase3.scalarArray).includes('map') && labels(phase3.scalarArray).includes('length'),
+    { labels: labels(phase3.scalarArray).slice(0, 8) },
+  );
   check(
     'complete:methods',
     labels(phase3.methods).includes('filter') && labels(phase3.methods).includes('map') && labels(phase3.methods).includes('length'),
