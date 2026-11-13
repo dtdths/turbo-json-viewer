@@ -29,7 +29,7 @@ npm run smoke:ext    # 以真实 unpacked 扩展跑同一套冒烟
 ## 目录
 
 - `src/{app,view,viewmodel,core,protocol,shared}` — 分层与依赖方向见 `docs/architecture/README.md`
-- `docs/adr/` — 架构决策（0001–0018）；`CONTEXT.md` — 领域词汇
+- `docs/adr/` — 架构决策（0001–0024）；`CONTEXT.md` — 领域词汇
 - `prototype/` — 视觉方向（A/B/C）与性能 spike，不发布
 - `scripts/smoke*.mjs` — 真机冒烟
 - `tests/unit/` — vitest 纯逻辑测试
