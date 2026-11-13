@@ -831,6 +831,36 @@ function applyRootVersions(roots: readonly RootVersion[]): void {
   }
 }
 
+/**
+ * 切档后按路径还原视口（#40 全局切档 / #41 单节点覆盖共用）：
+ * 有锚点 → `rowOfPath` 换算新行号 + 行内像素偏移还原；拿不到锚点或行不可见 → 显式回顶部
+ * （原文视图不显示树，跳过）。`stillValid` 用于迟到回包 / 切标签守卫。
+ */
+async function restoreOrderAnchor(
+  anchor: { path: string; offsetPx: number } | null,
+  rootId: string,
+  stillValid: () => boolean,
+): Promise<void> {
+  if (!anchor) {
+    if (!isRawView()) {
+      tree.scrollToPx(0);
+      rowSource.scrollTo(0);
+      rowSource.requestWindow();
+    }
+    return;
+  }
+  try {
+    const { row } = await core.rowOfPath({ rootId, path: anchor.path });
+    if (!stillValid()) return;
+    const targetPx = row >= 0 ? row * tree.rowHeightPx() + anchor.offsetPx : 0;
+    tree.scrollToPx(targetPx);
+    rowSource.scrollTo(tree.scrollTopPx());
+    rowSource.requestWindow();
+  } catch {
+    /* 锚点换算失败不阻断切档：保留上一帧，用户可继续滚动 */
+  }
+}
+
 async function syncSortOrder(next: SortOrder): Promise<void> {
   if (next === appliedOrder) return;
   const seq = ++sortSyncSeq;
@@ -856,26 +886,7 @@ async function syncSortOrder(next: SortOrder): Promise<void> {
       {},
     );
     rowSource.requestWindow();
-    if (!anchor) {
-      // 拿不到顶端可见行（窗口在途 / 未渲染）：显式回顶部。原文视图不显示树，跳过。
-      if (!isRawView()) {
-        tree.scrollToPx(0);
-        rowSource.scrollTo(0);
-        rowSource.requestWindow();
-      }
-      return;
-    }
-    try {
-      const { row } = await core.rowOfPath({ rootId: activeRoot, path: anchor.path });
-      if (seq !== sortSyncSeq || !isActiveDocRoot(activeRoot)) return;
-      // 不可见（祖先折叠 / 总行数变化）→ 回顶部；否则按新行号 + 行内像素偏移还原视口
-      const targetPx = row >= 0 ? row * tree.rowHeightPx() + anchor.offsetPx : 0;
-      tree.scrollToPx(targetPx);
-      rowSource.scrollTo(tree.scrollTopPx());
-      rowSource.requestWindow();
-    } catch {
-      /* 锚点换算失败不阻断切档：保留上一帧，用户可继续滚动 */
-    }
+    await restoreOrderAnchor(anchor, activeRoot, () => seq === sortSyncSeq && isActiveDocRoot(activeRoot));
   } catch (error) {
     if (seq !== sortSyncSeq) return;
     // 失败不留「UI 新档 / core 旧档」的长期不一致：UI 与持久化回滚到上一次成功档
@@ -1771,44 +1782,27 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
  *   `captureOrderAnchor` + `rowOfPath` 按路径还原视口；拿不到锚点则显式回顶部；
  * - 大纲按容器生效顺序刷新（`outlineState.refreshOrder`），搜索结果高亮按路径天然正确（不重跑）。
  */
-async function setNodeOrder(path: string, order: SortOrder | null): Promise<void> {
+async function setNodeOrder(
+  path: string,
+  action: { order: SortOrder | null; done: string; noop: string },
+): Promise<void> {
   if (!session.rootId) return;
   // 树动作：原文视图下先切回树（与 toggleSubtree 一致）
   if (isRawView()) await setViewMode('tree');
   const anchor = captureOrderAnchor(session.rootId);
   try {
-    const reply = await core.setNodeOrder({ rootId: session.rootId, path, order });
+    const reply = await core.setNodeOrder({ rootId: session.rootId, path, order: action.order });
     if (!isActiveDocRoot(reply.rootId)) return;
     // no-op 判据统一来自落地计划（rowVersion 是否真的推进；回包 EditReply 无 changed 字段）
     const plan = session.land(reply, { kind: 'order' });
     if (!plan.changed) {
-      showToast(order === null ? '该节点本来就用全局排序' : '子键已经是该顺序', 1800, 'info');
+      showToast(action.noop, 1800, 'info');
       return;
     }
     applyLanding(plan);
     void outlineState.refreshOrder();
-    // 锚点还原：按路径换算新行号；拿不到（含祖先折叠）则显式回顶部
-    if (!anchor) {
-      tree.scrollToPx(0);
-      rowSource.scrollTo(0);
-      rowSource.requestWindow();
-    } else {
-      const { row } = await core.rowOfPath({ rootId: reply.rootId, path: anchor.path });
-      if (!isActiveDocRoot(reply.rootId)) return;
-      const targetPx = row >= 0 ? row * tree.rowHeightPx() + anchor.offsetPx : 0;
-      tree.scrollToPx(targetPx);
-      rowSource.scrollTo(tree.scrollTopPx());
-      rowSource.requestWindow();
-    }
-    showToast(
-      order === 'key-asc'
-        ? '已按升序排列该节点的子键'
-        : order === 'key-desc'
-          ? '已按降序排列该节点的子键'
-          : '已恢复全局排序',
-      2000,
-      'success',
-    );
+    await restoreOrderAnchor(anchor, reply.rootId, () => isActiveDocRoot(reply.rootId));
+    showToast(action.done, 2000, 'success');
   } catch (error) {
     showError(error);
   }
@@ -2270,11 +2264,9 @@ const ctxMenuController = createMenu({
       return;
     }
     // 单节点子键排序覆盖（#41 / ADR-0024 修订 v1.1）：三项固定，不做勾选态（点击后 toast 反馈规则）
-    if (act === 'order-asc' || act === 'order-desc' || act === 'order-inherit') {
-      void setNodeOrder(
-        path,
-        act === 'order-asc' ? 'key-asc' : act === 'order-desc' ? 'key-desc' : null,
-      );
+    const orderAction = NODE_ORDER_ACTIONS[act];
+    if (orderAction) {
+      void setNodeOrder(path, orderAction);
       return;
     }
     if (act === 'edit') void openEditor(path);
@@ -2354,7 +2346,7 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
         ? '该对象成员少于 2 个'
         : '只能排序对象成员的子键';
   const orderHint = '仅影响该节点的直接子键；不影响复制/导出';
-  for (const act of ['order-asc', 'order-desc', 'order-inherit']) {
+  for (const act of Object.keys(NODE_ORDER_ACTIONS)) {
     setCtxItemDisabled(act, !canOrder, orderWhy, orderHint);
   }
   // 表达式结果只读（ADR-0018 §1）：结果根上的编辑入口一律禁用（复制四格式照常可用）
@@ -2383,6 +2375,13 @@ const COPY_ACT: Record<CopyFormat, string> = {
   path: 'copy-path',
   value: 'copy-value',
   key: 'copy-key',
+};
+
+/** v1.1 右键菜单「子键排序」三项：act → 协议 order + 成功 / no-op 文案（#41 / ADR-0024 修订）。 */
+const NODE_ORDER_ACTIONS: Record<string, { order: SortOrder | null; done: string; noop: string }> = {
+  'order-asc': { order: 'key-asc', done: '已按升序排列该节点的子键', noop: '子键已经是该顺序' },
+  'order-desc': { order: 'key-desc', done: '已按降序排列该节点的子键', noop: '子键已经是该顺序' },
+  'order-global': { order: null, done: '已恢复全局排序', noop: '该节点本来就用全局排序' },
 };
 
 function copyFormatOfAct(act: string): CopyFormat | null {

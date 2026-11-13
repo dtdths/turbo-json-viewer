@@ -154,16 +154,18 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
 - 首帧不加载 CM6/acorn；点「表达式」加载 `cm6-core + cm6-expr`，点「编辑节点」加载 `cm6-core + cm6-json`。
 - 表达式框 v1 **不带** `@codemirror/lang-javascript`（+45.0KB gz，ADR-0005 列为产品取舍）；子树编辑器带 `@codemirror/lang-json`（ADR-0006）。
 
-### 3.4 体积预算（gzip，`npm run size` 卡线）
+### 3.4 体积预算（gzip；`npm run size` = `node build.mjs --analyze` 只打印实测，**不卡线**——预算靠人 / ADR 守）
 
 | 产物 | 预算 | 依据 |
 |---|---|---|
-| 首屏 JS（`page.js`，不含 CM6/worker） | ≤45KB | ADR-0005：首屏 ≈37KB gz（acorn 33.7 + 自有 3.3）；本方案 acorn 下沉 worker，page 只剩 view/viewmodel/protocol/app，仍沿用 45KB 作硬上限（实际值以首次构建实测为准） |
-| Worker（`worker.js`） | ≤50KB | acorn 实测 33.7KB gz + core 自写 + protocol；与首帧并行，不进 DOM 关键路径 |
-| CM6 按需 chunk（单次进入编辑器合计） | ≤140KB | CM6 最小集实测 99.4KB gz（state 16.2 + view 49.1 + autocomplete 25.5 + commands 10.2）；`lang-json` 增量待实测（`lang-javascript` +45.0KB gz 为上界），留约 40KB |
-| 总（page + CM6，gz） | ≤190KB | 45 + 140 = 185，留 5KB；worker/SW 单独核算（不同上下文，不参与页面加载） |
+| 首屏 JS（`page.js`，不含 CM6/worker） | ≤51KB | 初始 45（ADR-0005）；逐 slice 经用户拍板 46 → 47 → 48 → 50（ADR-0009 / 0021）→ **51（2026-11-13，#41 / ADR-0024 修订，实测 50.3）**。当前实测以 `node build.mjs --analyze` 为准 |
+| Worker（`worker.js`） | **无硬预算** | ADR-0020 §9 起只记录、不卡线（当前 64.4KB gz；与首帧并行，不进 DOM 关键路径） |
+| CM6 按需 chunk（单次进入编辑器合计） | ≤146KB | CM6 最小集 99.4KB gz；`@codemirror/autocomplete` +13.2 后 2026-11-10 由用户拍板 140 → **146**（ADR-0018「预算修订」）；当前 145.6 |
+| 总（page + 懒加载，gz） | ≤197KB | 51 + 146（派生态，不单独留量）；worker/SW 单独核算（不同上下文，不参与页面加载） |
 
 构建耗时预期：多入口 **67ms**、watch 稳态 **~104ms**（ADR-0005 实测），所以不做 HMR。
+
+> 2026-11-13 同步：本表此前长期滞后（写 ≤45 / ≤50 / ≤140 / ≤190），现按 `build.mjs` + 架构 README §8/§11 的实测与拍板记录更新；预算演进以 ADR 为准。
 
 ### 3.5 命令与"不引 Vite + CRXJS"
 

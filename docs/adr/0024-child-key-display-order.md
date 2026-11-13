@@ -149,9 +149,9 @@
 1. **语义与范围**：只排**该节点的直接子键**（该容器一层），**不向下继承**（子树各层仍按各自规则 / 全局规则）。理由：`RowModel` 不持有父子指针，向下继承要额外维护祖先链；且「这个节点单独排」的直觉就是它的直接成员。
 2. **控制面**：树行右键菜单**三个固定项**——「子键升序 / 子键降序 / 恢复全局排序」（扁平菜单，无子菜单组件；HTML 在 `page.html`、不进 `page.js` 预算）。
 3. **与全局设置的关系**：覆盖**优先于**设置里的全局「子键排序」；之后再改全局规则**不清覆盖**（只影响未覆盖节点）。覆盖是**标签会话态**：不落盘、换文档 / 关标签丢弃（与展开集合同类）。「恢复全局排序」清除该节点覆盖。
-4. **编辑后的失效**：节点被「编辑此节点 JSON / undo / redo / reset」替换后，覆盖**自动失效、回到全局规则**（覆盖按容器对象存于 `WeakMap`；新对象天然无覆盖）——已知差距，不做按路径迁移。
+4. **编辑后的失效**：节点被「编辑此节点 JSON / undo / redo / reset」替换后，覆盖**自动失效、回到全局规则**——覆盖按容器对象存于 `WeakMap`，且「编辑替换 / undo / redo / reset」落地的 `releaseSubtreeForReplace` 会**显式清掉被替换子树的覆盖**（否则 undo 把旧对象换回来会复活旧覆盖）；纯视图收起（折叠 / 全部收起）**不丢**覆盖。已知差距：不做按路径迁移。
 5. **生效表面**：树 + **大纲**（worker 按容器算顺序，分页天然正确）；**表达式结果树也支持**（独立根、覆盖不跨根共享）；搜索结果**不重跑**（高亮按 path 匹配）、复制 / 导出 / 编辑 / 路径不变；折叠行摘要预览仍值图序。
-6. **可用性**：仅**对象容器且成员 ≥ 2** 可点（标量 / 空或单键对象 / **数组**禁用并给 title 原因；数组恒索引序）；**根允许**；三项常显、**不做勾选态**（无额外异步查询；点击后 toast 反馈规则）。
+6. **可用性**：仅**对象容器且成员 ≥ 2** 可点（标量 / 空或单键对象 / **数组**禁用并给 title 原因；数组恒索引序）；**根允许**；三项常显、**不做勾选态**（无额外异步查询；点击后 toast 反馈规则）。点击时若当前在原文视图，先切回树视图（与 `toggleSubtree` 等树动作一致）。
 7. **预算**：预计 `page.js` +0.2~0.4，可能越过 50 → **经用户批准 50 → 51**（若实测 ≤50 则不动预算），按 ADR-0022 §8 记账。
 8. **记录方式**：本 ADR 修订（不另开 ADR-0025，同概念族）+ 实现票 #41。
 
@@ -161,7 +161,7 @@
 - **`doc-service`**：新命令 `setNodeOrder { rootId, path, order: SortOrder | null }`，走既有 `mutateRoot`（intent = view，回包 = `EditReply`）；`outline` 改为按被查询容器取 `displayOrderAt(path)` 再分页。
 - **`protocol`**：`Command` 一条 + `CoreApi.setNodeOrder(req)`（回包复用 `EditReply`，**不新增回包类型**）。
 - **`view`**：`page.html` 右键菜单 +3 项（分隔组：展开/收起之后、编辑之前）；`showContextMenu` 加启用矩阵与 title 原因。
-- **`app`**：`onSelect` 接 `order-asc / order-desc / order-inherit` → `setNodeOrder()`：抓顶端可见行锚点 → `core.setNodeOrder` → `session.land(reply, { kind: 'order' })` → `applyLanding`（keep）→ `outlineState.refreshOrder()` → `core.rowOfPath` 按路径还原锚点（拿不到显式回顶部）；no-op 给中性 toast。
+- **`app`**：`onSelect` 接 `order-asc / order-desc / order-global` → `setNodeOrder()`：抓顶端可见行锚点 → `core.setNodeOrder` → `session.land(reply, { kind: 'order' })` → `applyLanding`（keep）→ `outlineState.refreshOrder()` → `core.rowOfPath` 按路径还原锚点（拿不到显式回顶部）；no-op 给中性 toast。
 - **`doc-session`**：`LandingIntent` 增加 `{ kind: 'order' }`（滚动策略 keep；锚点由 app 用路径换算，与全局切档同口径）。
 
 ### 被否决的替代
@@ -178,7 +178,7 @@
 ### 验收（2026-11-13 实现实测，#41）
 
 - **单测**：1138 → **1165（44 文件全绿；+27）**：`row-model-node-order.test` 13 / `doc-service-node-order.test` 10 / 契约 **+2**（1 用例 × InProcess/Worker 双适配器）/ `doc-session` +2（`{kind:'order'}` 意图：changed 反映 rowVersion、no-op 零状态变化、附加动作全关）。
-- **冒烟**：16 套串行全绿。`smoke-order` **20 → 33/33**：新增「菜单契约（三项顺序/文案/可用）」「禁用矩阵（数组 / 标量 / 单键对象禁用 + title 原因；可排对象可用）」「单节点升序 = 只改直接子键、根不变」「降序」「恢复全局」「根覆盖不向下继承」「全局切档不清覆盖」「清根覆盖后跟随全局」「大纲跟随单节点覆盖（`$.beta` 降序）」「表达式结果根可独立覆盖 / 清覆盖回全局」「视口稳定且子行重排（真实场景）」「覆盖为会话态、刷新后不复活」；`smoke-copy` 菜单契约 7 → **10 项**同步。
+- **冒烟**：16 套串行全绿。`smoke-order` **20 → 33/33**：新增「菜单契约（三项顺序/文案/可用）」「禁用矩阵（数组 / 标量 / 单键对象禁用 + title 原因；可排对象可用）」「单节点升序 = 只改直接子键、根不变」「降序」「恢复全局」「根覆盖不向下继承」「全局切档不清覆盖」「清根覆盖后跟随全局」「大纲跟随单节点覆盖（`$.beta` 降序）」「表达式结果根可独立覆盖 / 清覆盖回全局」「视口稳定且子行重排（真实场景）」「覆盖为会话态、刷新后不复活」；`smoke-copy` 菜单契约 8 → **11 项**同步（新增 13 条检查）。
 - **体积**：`page.js` 49.9 → **50.3KB gz**（**预算 50 → 51，经用户 2026-11-13 批准**；+0.4 = 右键菜单三项 DOM 之外的处理逻辑 + 启用矩阵 + `setNodeOrder` 接线）；`worker.js` 64.2 → **64.4**（+0.2 = 覆盖表 / `setNodeOrder` / `displayOrderAt` / 大纲按容器顺序；无硬预算）；`page.css` 8.2 / 懒加载 145.6 不变。
 - **截图**：`.spike/smoke/order-menu.png`（右键菜单三项）、`order-node.png`（单节点覆盖后的树）。
-- **文档**：本 ADR 修订、`CONTEXT.md`（子键排序词条补单节点覆盖）、`direction.md` 右键菜单 10 项 + 排序三项启用规则、`ADR-0010` 菜单契约指针、架构 README §11 **6.28** + 体积归因 + 预算记账。
+- **文档**：本 ADR 修订、`CONTEXT.md`（子键排序词条补单节点覆盖）、`direction.md` 右键菜单 11 项 + 排序三项启用规则、`ADR-0010` 菜单契约指针、架构 README §3 模块表 / §8 预算 51 / §11 **6.28** + 体积归因、`seams.md` 命令数 34 → 35 与 Command/Reply 表。

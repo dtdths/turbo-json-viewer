@@ -325,7 +325,7 @@ try {
   await runPhase(
     'menu-close',
     `(async () => {
-      await window.__tjv.ctxClick('order-inherit');
+      await window.__tjv.ctxClick('order-global');
       return {};
     })()`,
   );
@@ -377,7 +377,7 @@ try {
 
       // 恢复全局（beta 回 raw: c,a,b）
       h.ctxOpen('$.beta');
-      await h.ctxClick('order-inherit');
+      await h.ctxClick('order-global');
       await sleep(450);
       out.nodeInherit = { betaChildren: betaChildren(), toast: h.toastText() };
 
@@ -394,7 +394,7 @@ try {
 
       // 清根覆盖 → 跟随全局 desc
       h.ctxOpen('$');
-      await h.ctxClick('order-inherit');
+      await h.ctxClick('order-global');
       await sleep(450);
       out.rootInherit = { top: top() };
 
@@ -419,7 +419,7 @@ try {
       await sleep(500);
       out.exprOverride = { paths: window.__orderPaths(), toast: h.toastText() };
       h.ctxOpen('$');
-      await h.ctxClick('order-inherit');
+      await h.ctxClick('order-global');
       await sleep(450);
       out.exprInherit = { paths: window.__orderPaths() };
       h.expressionBack();
@@ -453,7 +453,7 @@ try {
       };
       // 收尾：清覆盖并把全局档留在 key-asc（reload 阶段的持久化期望）
       h.ctxOpen('$');
-      await h.ctxClick('order-inherit');
+      await h.ctxClick('order-global');
       await sleep(400);
       await h.setSetting('sortOrder', 'key-asc');
       await sleep(450);
@@ -610,7 +610,7 @@ const checks = {
       [
         ['order-asc', '子键升序', false],
         ['order-desc', '子键降序', false],
-        ['order-inherit', '恢复全局排序', false],
+        ['order-global', '恢复全局排序', false],
       ],
     ),
   'node:disabled-matrix':

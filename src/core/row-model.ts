@@ -344,8 +344,7 @@ export class RowModel {
    *   子树行数与顺序无关，祖先 Fenwick 不用动）。
    */
   setNodeOrder(path: Path, order: SortOrder | null): { row: number; changed: boolean; totalRows: number } {
-    const chain = this.locateChain(path);
-    const node = chain.length === 0 ? this.rootValue : (chain[chain.length - 1] as ChainEntry).node;
+    const node = this.valueAt(path); // 路径口径与 valueAt 单一来源（不另抄 locateChain）
     if (!isContainer(node) || Array.isArray(node)) {
       throw new CoreError({ code: 'BAD_COMMAND', message: `setNodeOrder: not an object container at ${path}` });
     }
@@ -369,8 +368,7 @@ export class RowModel {
    * 对象容器 = 覆盖 ?? 全局；数组 / 标量 = 全局（数组恒索引序）。路径不存在 → BAD_COMMAND。
    */
   displayOrderAt(path: Path): SortOrder {
-    const chain = this.locateChain(path);
-    const node = chain.length === 0 ? this.rootValue : (chain[chain.length - 1] as ChainEntry).node;
+    const node = this.valueAt(path);
     if (isContainer(node) && !Array.isArray(node)) return this.nodeOrders.get(node) ?? this.order;
     return this.order;
   }
@@ -639,7 +637,7 @@ export class RowModel {
   replaceNode(path: Path, value: unknown): ReplaceResult {
     if (path === ROOT_PATH) {
       // 编辑替换（含 undo/redo/reset 的落地路径）→ 被替换子树的单节点覆盖一并失效（回全局）
-      this.releaseSubtree(this.rootValue, true);
+      this.releaseSubtreeForReplace(this.rootValue);
       this.expanded.clear();
       this.indexes.clear();
       this.keysCache = new WeakMap();
@@ -678,7 +676,7 @@ export class RowModel {
     }
 
     // 释放旧子树的状态，再写回值图（编辑替换 → 旧子树的单节点覆盖失效，undo 恢复的值也回全局）
-    this.releaseSubtree(target.node, true);
+    this.releaseSubtreeForReplace(target.node);
     if (Array.isArray(target.container)) {
       target.container[target.slot] = value;
     } else {
@@ -958,15 +956,21 @@ export class RowModel {
     return chain;
   }
 
+  /** 视图收起：释放子树内的展开状态 / 索引 / 键缓存，**保留**显示排序覆盖（覆盖是会话态视图状态）。 */
+  private releaseSubtree(node: unknown): void {
+    this.releaseSubtreeState(node, false);
+  }
+
   /**
-   * 释放子树内所有展开状态与键缓存（编辑替换 / 收起前调用）。
-   *
-   * `clearNodeOrders=true` 时同时清掉子树内各容器的**单节点覆盖**（#41）：只有「编辑替换」会这么调
-   * （含 undo/redo/reset 的落地路径），保证替换后的值回全局规则、undo 恢复的旧值也不复活旧覆盖；
-   * `clear()` / `toggleSubtree(open=false)` 等纯视图收起调用**不传**该标志——覆盖是标签会话态，
-   * 折叠 / 全收起不该丢它。
+   * 编辑替换（replaceNode / undo / redo / reset 落地）：在视图收起之上**同时清掉被替换子树的
+   * 单节点显示顺序覆盖**（#41 / ADR-0024 修订）——替换后的值图是新对象，旧对象即使被 undo
+   * 换回也不应复活旧覆盖（覆盖回全局规则）。
    */
-  private releaseSubtree(node: unknown, clearNodeOrders = false): void {
+  private releaseSubtreeForReplace(node: unknown): void {
+    this.releaseSubtreeState(node, true);
+  }
+
+  private releaseSubtreeState(node: unknown, clearNodeOrders: boolean): void {
     if (!isContainer(node)) return;
     const stack: Container[] = [node];
     while (stack.length > 0) {

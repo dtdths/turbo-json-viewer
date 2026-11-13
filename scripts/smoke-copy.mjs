@@ -30,7 +30,7 @@ import { startStaticServer } from '../prototype/p1/lib/http.mjs';
 const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 await mkdir(SHOTS, { recursive: true });
 
-/** 固定菜单契约（ADR-0010 §1 / 修订 2026-11-09 #22 / #30 ADR-0019）：8 项、DOM 顺序即此顺序。 */
+/** 固定菜单契约（ADR-0010 §1 / 修订 2026-11-09 #22 / #30 ADR-0019 / #41 ADR-0024 修订）：11 项、DOM 顺序即此顺序。 */
 const MENU_ACTS = [
   'copy-subtree',
   'copy-path',
@@ -40,7 +40,7 @@ const MENU_ACTS = [
   'collapse-subtree',
   'order-asc',
   'order-desc',
-  'order-inherit',
+  'order-global',
   'edit',
   'locate-raw',
 ];
