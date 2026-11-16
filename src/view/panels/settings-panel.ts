@@ -380,14 +380,18 @@ export class SettingsPanel {
       buttons.push({ value: item.value, button });
     }
 
-    row.append(label, seg);
+    // 统一两段式（#46 布局收口）：第一行标签、第二行控件；单位跟控件同一行
+    const control = document.createElement('div');
+    control.className = 'settings-panel__control';
+    control.append(seg);
     if (spec.unit) {
       const unit = document.createElement('span');
       unit.className = 'settings-panel__unit';
       unit.textContent = spec.unit;
       unit.setAttribute('aria-hidden', 'true');
-      row.appendChild(unit);
+      control.appendChild(unit);
     }
+    row.append(label, control);
     if (spec.hint) appendRowHint(row, spec.key, spec.hint);
 
     this.segs.set(spec.key, buttons);
@@ -412,7 +416,10 @@ export class SettingsPanel {
     checkbox.setAttribute('aria-describedby', hintId);
     checkbox.addEventListener('change', () => this.handleCheckChange(spec.key, checkbox));
 
-    row.append(label, checkbox);
+    const control = document.createElement('div');
+    control.className = 'settings-panel__control';
+    control.append(checkbox);
+    row.append(label, control);
     appendRowHint(row, spec.key, spec.hint, hintId);
     this.checks.set(spec.key, checkbox);
     return row;

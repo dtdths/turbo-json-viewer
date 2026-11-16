@@ -59,8 +59,17 @@ function row(host: FakeElement, key: string): FakeElement {
   return found;
 }
 
+/** 控件行（#46 布局收口：每行统一「标签行 + 控件行」，控件都包在 .settings-panel__control 里）。 */
+function controlOf(rowEl: FakeElement): FakeElement {
+  const control = rowEl.children.find((child) => child.className.includes('settings-panel__control'));
+  if (!control) throw new Error('missing settings-panel__control');
+  return control;
+}
+
 function segButtons(rowEl: FakeElement): FakeElement[] {
-  const seg = rowEl.children.find((child) => child.className.includes('settings-panel__seg'));
+  const seg = controlOf(rowEl).children.find((child) =>
+    child.className.includes('settings-panel__seg'),
+  );
   if (!seg) throw new Error('missing segmented control');
   return seg.children;
 }
@@ -74,6 +83,30 @@ describe('SettingsPanel — 第 14 行「语言」DOM 契约', () => {
     const { host } = mountPanel();
     expect(rows(host).map((entry) => entry.dataset.setting)).toEqual(ROW_ORDER);
     expect(host.getAttribute('aria-label')).toBe('设置');
+  });
+
+  it('所有行统一两段式：标签在前、控件行在后（seg / 开关都在 control 内）', () => {
+    const { host } = mountPanel();
+    for (const rowEl of rows(host)) {
+      const [label, control] = rowEl.children as FakeElement[];
+      expect(label?.className, `${rowEl.dataset.setting} 首子节点应为标签`).toContain(
+        'settings-panel__label',
+      );
+      expect(control?.className, `${rowEl.dataset.setting} 第二子节点应为控件行`).toContain(
+        'settings-panel__control',
+      );
+      const hasSeg = control.children.some((child) =>
+        child.className.includes('settings-panel__seg'),
+      );
+      const hasSwitch = control.children.some((child) =>
+        child.className.includes('settings-panel__checkbox'),
+      );
+      expect(hasSeg || hasSwitch, `${rowEl.dataset.setting} 控件行缺少控件`).toBe(true);
+      // 控件行之后只允许 hint（说明文案）
+      for (const rest of rowEl.children.slice(2)) {
+        expect(rest.className).toContain('settings-panel__hint');
+      }
+    }
   });
 
   it('locale 行：标签 + hint + auto / en-US / zh-CN 三个选项', () => {
@@ -120,8 +153,8 @@ describe('SettingsPanel — 第 14 行「语言」DOM 契约', () => {
     panel.render(model);
     expect(activeValue(row(host, 'theme'))).toBe('light');
     expect(activeValue(row(host, 'locale'))).toBe('zh-CN');
-    const checkbox = row(host, 'escapeUnicode').children.find(
-      (child) => child.className.includes('settings-panel__checkbox'),
+    const checkbox = controlOf(row(host, 'escapeUnicode')).children.find((child) =>
+      child.className.includes('settings-panel__checkbox'),
     );
     expect(checkbox?.checked).toBe(true);
     expect(changes).toEqual([]);
@@ -155,8 +188,8 @@ describe('SettingsPanel — relabel()（运行时切换语言）', () => {
     // 回填最近 model：active / checked 不丢
     expect(activeValue(row(host, 'theme'))).toBe('light');
     expect(activeValue(row(host, 'locale'))).toBe('zh-CN');
-    const checkbox = row(host, 'escapeUnicode').children.find(
-      (child) => child.className.includes('settings-panel__checkbox'),
+    const checkbox = controlOf(row(host, 'escapeUnicode')).children.find((child) =>
+      child.className.includes('settings-panel__checkbox'),
     );
     expect(checkbox?.checked).toBe(true);
     // 重建 DOM 不代表用户交互
