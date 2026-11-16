@@ -162,6 +162,9 @@ export async function launchChrome(opts = {}) {
     '--disable-sync',
     '--disable-features=Translate,MediaRouter,OptimizationHints',
     '--metrics-recording-only',
+    // #45 / ADR-0026 §7：冒烟固定 zh-CN（16 套既有断言是中文；?lang= 是测试/调试覆盖口）
+    '--lang=zh-CN',
+    '--accept-lang=zh-CN',
     '--mute-audio',
     '--hide-scrollbars',
     '--force-device-scale-factor=1',

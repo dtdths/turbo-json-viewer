@@ -61,6 +61,8 @@ const DEFAULT_KEYS = [
   'adaptiveExpand',
   'advBudget',
   'escapeUnicode',
+  // 第 14 项（#45 / ADR-0026 §3）：界面语言
+  'locale',
 ];
 
 /** 页面内只读助手（DOM 契约：行 `.row[data-path]`、大纲行 `.outline-row[data-path]`） */
@@ -538,8 +540,8 @@ const checks = {
     (report.raw?.copyBeta ?? '') === INDENT_2 &&
     (report.raw?.exportText ?? '').indexOf('"zeta"') < (report.raw?.exportText ?? '').indexOf('"Alpha"'),
 
-  // 2) 设置面板第 13 行 + 升序
-  'settings:13-rows-with-sort': eq(report.settingsRows, DEFAULT_KEYS),
+  // 2) 设置面板第 14 行（含界面语言，ADR-0026）+ 升序
+  'settings:14-rows-with-sort': eq(report.settingsRows, DEFAULT_KEYS),
   'asc:natural-order':
     report.asc?.order === 'key-asc' &&
     eq(report.asc?.top, ROOT_ASC) &&

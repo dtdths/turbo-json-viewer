@@ -269,7 +269,17 @@ try {
   );
   check(
     'complete:element-detail',
-    (phase3.element || []).some((i) => i.label === 'name' && /采样 \d+\/\d+/.test(String(i.detail))),
+    // #45 / ADR-0026 §4：detail 是结构化数据（页面按 locale 格式化），断言语义而非拼好的中文
+    (phase3.element || []).some((i) => {
+      const detail = i.detail;
+      return (
+        i.label === 'name' &&
+        detail?.scope === 'sampled-field' &&
+        detail.kind === 'string' &&
+        Number.isInteger(detail.freq) &&
+        Number.isInteger(detail.samples)
+      );
+    }),
     { detail: (phase3.element || []).find((i) => i.label === 'name')?.detail },
   );
   check(
