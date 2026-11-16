@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Turbo JSON Viewer",
+  "default_locale": "en",
+  "name": "__MSG_extName__",
   "version": "0.1.0",
-  "description": "本地只读 JSON 查看器：文档常驻 Worker、固定行高虚拟化、搜索与临时编辑。",
+  "description": "__MSG_extDesc__",
   "minimum_chrome_version": "120",
-  "action": { "default_title": "Turbo JSON Viewer" },
+  "action": { "default_title": "__MSG_extName__" },
   "background": { "service_worker": "sw.js", "type": "module" },
   "permissions": ["storage"]
 }

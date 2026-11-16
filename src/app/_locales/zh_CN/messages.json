@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Turbo JSON Viewer",
+    "description": "扩展名（品牌名，按 ADR-0026 §5 不翻译）。"
+  },
+  "extDesc": {
+    "message": "本地只读 JSON 查看器：文档常驻 Worker、固定行高虚拟化、搜索与临时编辑。",
+    "description": "扩展描述（Chrome 应用商店 / 扩展页显示）。"
+  }
+}

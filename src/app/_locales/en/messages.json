@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Turbo JSON Viewer",
+    "description": "Extension name (brand name, not translated per ADR-0026 §5)."
+  },
+  "extDesc": {
+    "message": "Local read-only JSON viewer: worker-resident documents, fixed-height row virtualization, search and temporary edits.",
+    "description": "Extension description shown in the Chrome Web Store / extensions page."
+  }
+}

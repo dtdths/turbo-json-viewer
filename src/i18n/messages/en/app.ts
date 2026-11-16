@@ -1,0 +1,257 @@
+/**
+ * en/app — 应用外壳文案（`src/app/main.ts` + `src/app/page.html`）。
+ *
+ * 约定：
+ *   - `{n}` 是唯一会被 locale 化的参数（千分位 + 复数选形）；其余参数原样字符串化。
+ *   - 复数用 `{ one, other }`；zh 只有 `other`。
+ *   - 本文件是**真相源**（`MessageKey = keyof typeof en`）；任何 key 新增都要同步 `zh-CN/app.ts`。
+ */
+export const app = {
+  /* ---------------- 活动栏 / 面板骨架 ---------------- */
+  'app.activity.label': 'Activity bar',
+  'app.panel.doc': 'Documents',
+  'app.panel.doc.title': 'Document tree',
+  'app.panel.search': 'Search',
+  'app.panel.search.title': 'Search ⌘K',
+  'app.panel.outline': 'Outline',
+  'app.panel.outline.title': 'Outline',
+  'app.panel.expression': 'Expression',
+  'app.panel.expression.title': 'Expression',
+  'app.panel.settings': 'Settings',
+  'app.panel.settings.title': 'Settings',
+  'app.panel.close': 'Close panel',
+  'app.side.left.label': 'Left panel',
+  'app.theme.toggle': 'Toggle theme',
+  'app.theme.toggleLabel': 'Toggle dark / light theme',
+
+  /* ---------------- 工具栏 ---------------- */
+  'app.toolbar.import': 'Import',
+  'app.toolbar.export': 'Export',
+  'app.toolbar.exportGroup': 'Export',
+  'app.toolbar.exportFile': 'Export JSON file',
+  'app.toolbar.exportMode': 'Choose export method',
+  'app.toolbar.viewGroup': 'View switcher',
+  'app.toolbar.viewTree': 'Tree',
+  'app.toolbar.viewTreeTitle': 'Tree view (default)',
+  'app.toolbar.viewRaw': 'Raw',
+  'app.toolbar.viewRawTitle': 'Raw text view (read-only source)',
+  'app.toolbar.expandAll': 'Expand all',
+  'app.toolbar.collapseAll': 'Collapse all',
+  'app.rail.toggle': 'Right workspace',
+  'app.rail.collapse': 'Collapse right workspace',
+  'app.edit.badge': {
+    one: '{n} edit',
+    other: '{n} edits',
+  },
+  'app.edit.badgeTitle': 'Temporarily edited; click to reset all',
+
+  /* ---------------- 标签条 ---------------- */
+  'app.tabstrip.label': 'Document tabs',
+  'app.tabstrip.add': 'New tab (⌘⇧O)',
+  'app.tabstrip.addLabel': 'New tab',
+
+  /* ---------------- 常驻提示条 ---------------- */
+  'app.repair.summary': 'Details',
+  'app.repair.close': 'Close repair notice',
+  'app.docWarn.close': 'Close size notice',
+  'app.fidelity.prev': 'Previous difference',
+  'app.fidelity.next': 'Next difference',
+  'app.fidelity.jump': 'View source',
+  'app.fidelity.close': 'Close fidelity notice',
+  'app.exprbar.rerun': 'Run again',
+  'app.exprbar.back': 'Back to document tree',
+  'app.exprbar.close': 'Close result bar',
+
+  /* ---------------- 原文视图 ---------------- */
+  'app.raw.copy': 'Copy source',
+  'app.raw.copyTitle': 'Copy the full source text to the clipboard',
+  'app.raw.mode': 'Raw',
+
+  /* ---------------- 右栏 ---------------- */
+  'app.rail.title': 'Workspace',
+  'app.rail.selection.title': 'Selected node',
+  'app.rail.selection.meta': 'Read-only',
+  'app.rail.map.title': 'JSON map',
+  'app.rail.map.placeholder': 'Wired up in a later slice per #17 / ADR-0007',
+  'app.rail.profile.title': 'Document profile',
+  'app.rail.profile.meta': 'Sampled',
+  'app.rail.profile.empty': 'No document open',
+
+  /* ---------------- 状态栏 ---------------- */
+  'app.status.rows.none': 'No document open',
+  'app.status.readonly': 'Read-only · source unchanged',
+  'app.status.theme.dark': 'Dark',
+  'app.status.theme.light': 'Light',
+  'app.status.locating': 'Locating…',
+  'app.status.raw': '{n} lines · raw · {rendered} rendered',
+  'app.status.tree': '{n} lines · {rendered} rendered',
+  'app.status.expr': 'Expression result {rootId} · read-only · source unchanged',
+  'app.status.repaired': 'Truncation repaired · ',
+  'app.status.edited': {
+    one: '{n} temporary edit · source unchanged',
+    other: '{n} temporary edits · source unchanged',
+  },
+
+  /* ---------------- 空态 / 入口层 ---------------- */
+  'app.empty.title.initial': 'Drop in JSON and start viewing in milliseconds',
+  'app.empty.title.replace': 'Open a new document',
+  'app.empty.title.newTab': 'Open in a new tab',
+  'app.empty.sub.initial': 'Local and read-only · no network · 50 MB documents stay resident in a Worker',
+  'app.empty.sub.replace': 'Local and read-only · no network · the source file is untouched',
+  'app.empty.sub.newTab': 'Local and read-only · the new tab sits next to the current document',
+  'app.empty.warn.before': 'This will replace the current document ',
+  'app.empty.warn.after': '; the source file is untouched.',
+  'app.empty.warnCurrent': 'Current document',
+  'app.empty.pending.before': 'Dropped ',
+  'app.empty.pending.after': '. Replace the current document?',
+  'app.empty.pendingReplace': 'Replace current document',
+  'app.empty.busy': 'Parsing…',
+  'app.empty.dropzone': 'Drop a JSON file here',
+  'app.empty.or': 'or',
+  'app.empty.pick': 'choose a file',
+  'app.empty.pasteHint': 'to paste from the clipboard',
+  'app.empty.close': 'Cancel import',
+  'app.empty.modeToggle.newTab': 'Open in a new tab',
+  'app.empty.modeToggle.replace': 'Replace current document',
+
+  /* ---------------- 编辑弹层 ---------------- */
+  'app.edit.title': 'Edit node JSON',
+  'app.edit.close': 'Close editor dialog',
+  'app.edit.note': 'Temporary edit only; the source file is not written',
+  'app.edit.restore': 'Restore current value',
+  'app.edit.cancel': 'Cancel',
+  'app.edit.apply': 'Apply',
+
+  /* ---------------- 右键菜单 ---------------- */
+  'app.menu.row': 'Row actions',
+  'app.menu.rawRow': 'Raw line actions',
+  'app.menu.export': 'Export method',
+  'app.menu.copySubtree': 'Copy subtree JSON',
+  'app.menu.copyPath': 'Copy path',
+  'app.menu.copyValue': 'Copy raw value',
+  'app.menu.copyKey': 'Copy key',
+  'app.menu.expandSubtree': 'Expand entire subtree',
+  'app.menu.collapseSubtree': 'Collapse entire subtree',
+  'app.menu.orderAsc': 'Sort keys ascending',
+  'app.menu.orderDesc': 'Sort keys descending',
+  'app.menu.orderGlobal': 'Restore global order',
+  'app.menu.edit': 'Edit this node JSON',
+  'app.menu.locateRaw': 'Locate in source',
+  'app.menu.locateTree': 'Locate in tree view',
+  'app.menu.exportFile': 'Export JSON file',
+  'app.menu.exportClipboard': 'Copy JSON to clipboard',
+
+  /* ---------------- 选中节点提示 ---------------- */
+  'app.sel.hint.expr': 'Click a row to jump back to the source document',
+  'app.sel.hint.edit': 'F2 / double-click to edit',
+
+  /* ---------------- 确认 / toast（main.ts） ---------------- */
+  'app.confirm.closeTab': '“{name}” has temporary edits that are not exported; closing will discard them. Close anyway?',
+  'app.toast.workspaceMemory': {
+    one: '{n} tab open: memory grows linearly with documents (50 MB ≈ 73 MB Worker heap per document). Close unused tabs to free it.',
+    other: '{n} tabs open: memory grows linearly with documents (50 MB ≈ 73 MB Worker heap per document). Close unused tabs to free it.',
+  },
+  'app.toast.orderFailed': 'Failed to switch key order: {detail}',
+  'app.toast.needDocument': 'Import a document first, then run the expression',
+  'app.tabs.limit': 'At most {n} tabs; close one first',
+  'app.tabs.limitNoOpen': 'At most {n} tabs; no document was opened',
+  'app.clipboardFile': 'Clipboard.json',
+  'app.toast.subtreeExpanded': 'The entire subtree is already expanded',
+  'app.toast.subtreeCollapsed': 'The entire subtree is already collapsed',
+  'app.toast.allExpanded': 'Everything is already expanded',
+  'app.toast.allCollapsed': 'Everything is already collapsed',
+  'app.confirm.discardEdits': {
+    one: '{n} temporary edit is not exported; continuing will lose it. Continue?',
+    other: '{n} temporary edits are not exported; continuing will lose them. Continue?',
+  },
+  'app.confirm.resetEdits': {
+    one: 'Reset the {n} temporary edit? The source file is untouched.',
+    other: 'Reset all {n} temporary edits? The source file is untouched.',
+  },
+  'app.toast.subtreeTooLargeEdit': 'Subtree too large ({size}), over 5 MB. Pick a smaller subtree.',
+  'app.toast.docSwitched': 'The document changed; this edit was cancelled',
+  'app.toast.copyDone': 'Copied: {what}',
+  'app.toast.copyFailedExport': 'Copy failed: use “Export JSON file” instead',
+  'app.toast.copyFailedManual': 'Copy failed: select the text and press ⌘C',
+  'app.toast.lineToTree': 'Line {line} → tree view',
+  'app.toast.reasonContainerValue': 'Containers have no raw value; use “Copy subtree JSON”',
+  'app.toast.reasonRootKey': 'The root has no key',
+  'app.toast.reasonRootExpand': 'Use the toolbar’s “Expand all / Collapse all” for the root',
+  'app.toast.reasonEmptyContainer': 'This container has no children',
+  'app.toast.reasonScalar': 'Only containers can be expanded',
+  'app.title.subtreeHint': 'Includes this node; excludes ancestors',
+  'app.title.arrayOrder': 'Arrays keep index order and cannot be sorted',
+  'app.title.orderMinTwo': 'This object has fewer than 2 members',
+  'app.title.orderObjectOnly': 'Only object members can be sorted',
+  'app.title.nodeOrderHint': 'Affects only this node’s direct children; copy/export are unchanged',
+  'app.toast.exprReadonly': 'Expression results are read-only',
+  'app.toast.exprNoSource': 'Expression results have no source position',
+  'app.toast.rawPlainMode': 'The source was truncation-repaired, so nodes cannot be located',
+  'app.toast.orderAscDone': 'Sorted this node’s keys ascending',
+  'app.toast.orderAscSame': 'The keys are already in that order',
+  'app.toast.orderDescDone': 'Sorted this node’s keys descending',
+  'app.toast.orderDescSame': 'The keys are already in that order',
+  'app.toast.orderGlobalDone': 'Restored global ordering',
+  'app.toast.orderGlobalSame': 'This node already uses global ordering',
+  'app.toast.copyTooLarge': 'Subtree too large ({size}), over 5 MB. Use “Export”.',
+  'app.toast.formatUnsupported': 'This node does not support the current copy format; change it in settings',
+  'app.copy.format.subtree': 'subtree JSON',
+  'app.copy.format.path': 'path',
+  'app.copy.format.value': 'raw value',
+  'app.copy.format.key': 'key',
+  'app.export.edited': '(includes temporary edits)',
+  'app.export.truncated': '(result truncated)',
+  'app.export.mode.file': 'Export JSON file',
+  'app.export.mode.clipboard': 'Copy JSON to clipboard',
+
+  /* ---------------- 修复 / 体积 / 保真提示 ---------------- */
+  'app.repair.fallbackSummary': 'Repaired (syntax closed only; no existing values changed)',
+  'app.repair.jumpTitle': 'Jump to the matching source line',
+  'app.docWarn.text':
+    'Document {size}: the source text is kept in memory (UTF-16, up to about {max}) for the raw view; the value graph is extra. Close this notice if you do not need the raw view.',
+  'app.fidelity.summary': {
+    one: '{n} difference detected: {parts}{tail}{detail}',
+    other: '{n} differences detected: {parts}{tail}{detail}',
+  },
+  'app.fidelity.overflow': {
+    one: '{n} numeric overflow',
+    other: '{n} numeric overflows',
+  },
+  'app.fidelity.underflow': {
+    one: '{n} numeric underflow',
+    other: '{n} numeric underflows',
+  },
+  'app.fidelity.keyOrder': {
+    one: '{n} integer-key order change',
+    other: '{n} integer-key order changes',
+  },
+  'app.fidelity.tail': '(showing the first {n})',
+  'app.fidelity.detail': ' · #{i}/{n}: {desc}',
+  'app.fidelity.descKeyOrder': 'integer-style key order was reordered',
+  'app.fidelity.descOverflow': 'source {literal} → Infinity (numeric overflow)',
+  'app.fidelity.descUnderflow': 'source {literal} → 0 (numeric underflow)',
+  'app.fidelity.descParsed': 'source {literal} → actually {parsed}',
+  'app.fidelity.status': 'Fidelity: {desc}',
+
+  /* ---------------- 原文视图文案 ---------------- */
+  'app.raw.mode.source': 'Raw · source lines',
+  'app.raw.mode.pretty': 'Raw · canonical layout',
+  'app.raw.mode.plain': 'Raw · plain text',
+  'app.raw.notice.plain': 'The source was truncated (and repaired); the original bytes are shown here',
+  'app.raw.notice.pretty': 'The source is a single line (minified); shown in canonical layout, line contents come from the source',
+  'app.raw.notice.clean': 'Original file text; excludes temporary edits',
+  'app.raw.lines': '{n} lines',
+  'app.raw.indexing': 'Building the raw index…',
+  'app.raw.copied': 'Copied: source text',
+  'app.raw.copyFailed': 'Copy failed: select the text and press ⌘C',
+  'app.raw.copyTooLarge': 'Source too large ({size}), over {max}. Cannot copy to the clipboard.',
+
+  /* ---------------- 定位 / 错误 ---------------- */
+  'app.toast.locateEdited': 'This node comes from a temporary edit; the source has no matching position',
+  'app.toast.locateNoNode': 'This line has no corresponding tree node',
+  'app.toast.locateNoTree': 'The matching node was not found in the tree',
+  'app.toast.locateEditedAncestor': 'That position was edited; located the nearest ancestor',
+  'app.error.lineSuffix': ' (line {line})',
+} as const;
+
+export type AppMessages = typeof app;

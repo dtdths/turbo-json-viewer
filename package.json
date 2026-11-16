@@ -23,7 +23,8 @@
     "smoke:outline": "node scripts/smoke-outline.mjs",
     "smoke:order": "node scripts/smoke-order.mjs",
     "smoke:expression": "node scripts/smoke-expression.mjs",
-    "smoke:workspace": "node scripts/smoke-workspace.mjs"
+    "smoke:workspace": "node scripts/smoke-workspace.mjs",
+    "smoke:i18n": "node scripts/smoke-i18n.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
