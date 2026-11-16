@@ -9,7 +9,7 @@
 
 只放 5 个，标准是「≥2 个真实 adapter，或一条不可绕过的进程/宿主边界」：线程（S1）、渲染宿主（S3）、样式宿主（S4）、存储/编辑器宿主（S5），外加行窗口来源（S2，真实 transport vs 脚本回放）。行模型、协议形状、状态机**不做可替换接口**——它们变一次要同时改三层，包成 seam 只是给复杂度改名。
 
-**依赖方向**：`app → view → viewmodel → protocol`，`core → protocol`，`shared` 零依赖被所有层引用；`view` 不 import `core`，`core` 不碰 DOM，`app` 是唯一装配点。
+**依赖方向**：`app → view → viewmodel → protocol`，`core → protocol`，`i18n` 是叶子（自身只依赖 `protocol` 的类型；`app` / `view` 依赖它的 `t()`），`shared` 零依赖被所有层引用；`view` 不 import `core`，`core` 不碰 DOM、**不 import `i18n`**（诊断只回结构化 code+params，见 ADR-0026 §4），`app` 是唯一装配点。
 
 | # | seam | interface | v1 adapter | 测试 adapter | 接口背后藏什么（depth） |
 |---|---|---|---|---|---|
