@@ -70,12 +70,13 @@ turbo-json-viewer/
 
 | 层 | 可以 import | 禁止 |
 |---|---|---|
-| `app` | `view`、`viewmodel`、`protocol`、`shared`；**仅 `worker.ts`** import `core` | 反向依赖；在 `main.ts` 里 import `core` |
-| `view` | `viewmodel`、`protocol`、`shared` | `core`、`app`、直接 `postMessage` |
-| `viewmodel` | `protocol`、`shared` | `view`、`core`、`document`/`window` |
+| `app` | `view`、`viewmodel`、`protocol`、`shared`、`i18n`；**仅 `worker.ts`** import `core` | 反向依赖；在 `main.ts` 里 import `core` |
+| `view` | `viewmodel`、`protocol`、`shared`、`i18n` | `core`、`app`、直接 `postMessage` |
+| `viewmodel` | `protocol`、`shared` | `view`、`core`、`i18n`（需要本地化文案的 helper 放 view）、`document`/`window` |
 | `protocol` | 无（零依赖） | 任何层 |
 | `core` | `protocol`、`shared` | DOM/window、`view`、`viewmodel`、`app` |
-| `shared` | 无（零依赖） | 任何层 |
+| `shared` | 无（零依赖） | 任何层（**含 i18n**——需要本地化的 helper 放 view） |
+| `i18n` | `protocol`（零依赖常量/类型） | `view`/`viewmodel`/`core`/`shared`/`app`（叶子） |
 
 `prototype/` 保留作真机基线与视觉定稿，但**不进入 `dist/`、不发布**；构建只读 `src/`。
 
@@ -158,7 +159,7 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
 
 | 产物 | 预算 | 依据 |
 |---|---|---|
-| 首屏 JS（`page.js`，不含 CM6/worker/语言包） | ≤52KB | 初始 45（ADR-0005）；逐 slice 经用户拍板 46 → 47 → 48 → 50 → 51（ADR-0009 / 0021 / 0024 修订）→ **52（2026-11-13，#43 / ADR-0025，实测 51.2）**；**6.31 i18n 后 51.2（未涨：词条全部移出到语言包，ADR-0026 §6）**。当前实测以 `node build.mjs --analyze` 为准 |
+| 首屏 JS（`page.js`，不含 CM6/worker/语言包） | ≤52KB | 初始 45（ADR-0005）；逐 slice 经用户拍板 46 → 47 → 48 → 50 → 51（ADR-0009 / 0021 / 0024 修订）→ **52（2026-11-13，#43 / ADR-0025，实测 51.2）**；**6.31 i18n 后 51.3（未涨：词条全部移出到语言包，ADR-0026 §6）**。当前实测以 `node build.mjs --analyze` 为准 |
 | 语言包（每种语言一个动态 import chunk） | ≤7KB | **6.31 / ADR-0026 §6 新增单列**：`languages.ts` 里每语言一个 `messages/<tag>/pack.ts`，首帧前只加载当前语言；实测 **en 6.0 / zh-CN 6.8**。首屏诚实口径 = `page.js + 当前语言包` ≈ **57–58**（单列记录，不与 52 混算） |
 | Worker（`worker.js`） | **无硬预算** | ADR-0020 §9 起只记录、不卡线（当前 65.5KB gz；6.31 诊断结构化 -0.7；与首帧并行，不进 DOM 关键路径） |
 | CM6 按需 chunk（单次进入编辑器合计） | ≤146KB | CM6 最小集 99.4KB gz；`@codemirror/autocomplete` +13.2 后 2026-11-10 由用户拍板 140 → **146**（ADR-0018「预算修订」）；当前 145.7（**不含语言包**，语言包单列） |
