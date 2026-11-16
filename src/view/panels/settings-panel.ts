@@ -23,7 +23,8 @@ import {
   type SettingsKey,
 } from '../../viewmodel/settings-state';
 import type { SortOrder } from '../../protocol/types';
-import { EXPORT_MODES, EXPORT_MODE_LABELS } from '../../viewmodel/export-state';
+import { EXPORT_MODES } from '../../viewmodel/export-state';
+import { EXPORT_MODE_LABELS } from '../export-labels';
 import { languageChoices, t, type MessageKey } from '../../i18n/index';
 
 export interface SettingsPanelOptions {

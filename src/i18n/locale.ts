@@ -10,10 +10,11 @@
  * 归一规则：`zh` / `zh-*`（含 zh-TW / zh-HK，暂统一到简体）→ `zh-CN`；`en` / `en-*` → `en-US`。
  * 未知语言返回 null（由调用方决定兜底）。
  */
-import type { LanguageTag, LocalePref } from './types';
+import { LANGUAGE_TAGS, type LanguageTag } from '../protocol/versions';
+import type { LocalePref } from './types';
 
-/** 支持的语言标签（与 `types.LanguageTag` 保持同步）。 */
-export const SUPPORTED_TAGS: readonly LanguageTag[] = ['en-US', 'zh-CN'];
+/** 支持的语言标签（派生自 `types.LANGUAGE_TAGS`，不另写字面量）。 */
+export const SUPPORTED_TAGS: readonly LanguageTag[] = LANGUAGE_TAGS;
 
 /** 原始标签归一：`zh-TW` → `zh-CN`、`en-GB` → `en-US`；不支持 → null。 */
 export function normalizeLocaleTag(raw: string | undefined | null): LanguageTag | null {

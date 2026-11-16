@@ -20,7 +20,8 @@
  * 重绘时若焦点原本在条内，归还给活动标签（避免 render 丢焦点）。
  */
 import { TAB_STRIP_HEIGHT } from '../protocol/versions';
-import { DOC_NAME_MAX, displayTitle } from '../shared/doc-name';
+import { DOC_NAME_MAX } from '../shared/doc-name';
+import { displayTitle } from './doc-title';
 import { t } from '../i18n/index';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -172,6 +173,8 @@ export class TabStrip {
    * 幂等、不改标签数据与激活态；未渲染过时无操作。
    */
   relabel(): void {
+    // 就地改名中不重绘（否则 input 会被 render 丢掉）；提交/取消后下一轮 render 即新语言
+    if (this.editing) return;
     if (!this.mounted || !this.view) return;
     this.render(this.view);
   }

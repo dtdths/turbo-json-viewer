@@ -69,6 +69,7 @@ try {
         exportText: text('exportBtn'),
         statusRows: text('statusRows'),
         statusState: text('statusState'),
+        statusTheme: text('statusTheme'),
         emptyTitle: text('emptyTitle'),
         bodyCjk: cjk(document.body.innerText),
       };
@@ -276,6 +277,8 @@ try {
             ' ' +
             [...document.querySelectorAll('#repairOps .repairbar__op span')].map((n) => n.textContent).join(' '),
         ),
+        statusTheme: text('statusTheme'),
+        selMeta: text('selMeta'),
         settingsLabel: document.querySelector('#settingsPanel [data-setting="locale"] .settings__label')?.textContent ?? '',
         languageValues: [...document.querySelectorAll('#settingsPanel [data-setting="locale"] [data-value]')].map((n) => n.dataset.value ?? ''),
       };
@@ -351,6 +354,7 @@ const checks = {
     report.enShell?.statusState === 'Read-only · source unchanged' &&
     /Drop in JSON/.test(report.enShell?.emptyTitle ?? ''),
   'en:no-cjk-shell': report.enShell?.bodyCjk === 0,
+  'en:status-theme': report.enShell?.statusTheme === 'Dark',
   // ---- en 设置面板：14 行 + 语言行 ----
   'en:settings-14-rows': report.enSettings?.rowCount === 14,
   'en:settings-has-language':
@@ -385,6 +389,7 @@ const checks = {
     report.switchZh?.panelTitle === '设置' &&
     (report.switchZh?.statusState ?? '').includes('只读 · 原文件不变') &&
     report.switchZh?.settingsLabel === '语言',
+  'zh:status-theme': report.switchZh?.statusTheme === '深色',
   'zh:worker-diagnostic-rerendered':
     /^已修复/.test(report.switchZh?.repairSummary ?? '') && report.switchZh?.repairCjk >= 2,
   // ---- 持久化 + 覆盖 ----

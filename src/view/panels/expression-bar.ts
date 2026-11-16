@@ -8,7 +8,7 @@
  *   #exprBar / #exprBarText / #exprBarBack / #exprBarRerun / #exprBarClose
  *   #exprBar[data-stale="1"] / #exprBar[data-truncated="1"]
  */
-import { EXPR_COPY } from '../../shared/expression-copy';
+import { EXPR_COPY } from '../expression-copy';
 
 export interface ExpressionBarView {
   rootId: string;

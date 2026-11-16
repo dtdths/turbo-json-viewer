@@ -79,7 +79,7 @@ async function reportSize(metafile) {
   // 预算演进：45（slice 6.19 前）→ 46 → 47 → 48（2026-11-11 晚）→ 50（2026-11-12，#29 / ADR-0021，用户拍板）→ 51（2026-11-13，#41 / ADR-0024 修订 v1.1，用户拍板，实测 50.3）→ 52（2026-11-13，#43 / ADR-0025，用户拍板，实测 51.2）
   if (page) console.log(`\nfirst paint (page.js) gzip: ${page.gz} KB  (budget 52 KB)`);
   if (packs.length > 0) {
-    // 语言包预算：单个 ≤6KB gz（ADR-0026 §6）；首屏诚实口径 = page.js + 当前语言包
+    // 语言包预算：单个 ≤7KB gz（ADR-0026 §6）；首屏诚实口径 = page.js + 当前语言包
     const parts = packs.map((p) => `${p.file} ${p.gz} KB`).join(' / ');
     console.log(`locale packs (budget 7 KB each): ${parts}`);
   }

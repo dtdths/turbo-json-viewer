@@ -121,9 +121,20 @@ describe('page.html 静态标记', () => {
     }
   });
 
-  it('默认文案是英文（en 内联真相源，语言包未加载时也不出现中文）', () => {
-    // 注释去掉后，HTML 里不应再有 CJK（中文默认值必须走 data-i18n）
+  it('默认文案是英文（语言包异步加载期间不空白；中文默认值必须走 data-i18n）', () => {
+    // 注释去掉后，HTML 里不应再有 CJK
     expect([...html.matchAll(/[\u4e00-\u9fff]/g)]).toHaveLength(0);
+    // 简单文本节点（`data-i18n="key">TEXT<`）的默认文案必须逐字等于 en 词条
+    let checked = 0;
+    for (const match of html.matchAll(/data-i18n="([^"]+)">([^<]*)</g)) {
+      const key = match[1];
+      const text = match[2];
+      const enMessage = en[key as keyof typeof en];
+      if (typeof enMessage !== 'string') continue; // 复数形 / 分裂节点跳过
+      expect(text, `<${key}> 默认文案与 en 词条不一致`).toBe(enMessage);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(20);
   });
 });
 

@@ -8,7 +8,7 @@
  */
 import type { LocalePref } from '../i18n/types';
 import type { CopyFormat, ExprBudgetLevel, SortOrder } from '../protocol/types';
-import { SORT_ORDER_OPTIONS } from '../protocol/versions';
+import { SORT_ORDER_OPTIONS, isLanguageTag } from '../protocol/versions';
 import { normalizeExportMode, type ExportMode } from './export-state';
 
 export type SettingsKey =
@@ -115,10 +115,10 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-/** 语言偏好白名单：`auto` 或已支持语言；未知值回落 `auto`（#45 / ADR-0026 §3）。 */
+/** 语言偏好白名单：`auto` 或已支持语言（派生自 `LANGUAGE_TAGS`）；未知值回落 `auto`。 */
 function normalizeLocalePref(value: unknown): LocalePref {
   if (value === 'auto') return 'auto';
-  if (value === 'en-US' || value === 'zh-CN') return value;
+  if (isLanguageTag(value)) return value;
   return DEFAULT_SETTINGS.locale;
 }
 

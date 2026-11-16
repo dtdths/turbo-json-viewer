@@ -35,13 +35,13 @@ import {
 } from '../protocol/versions';
 import { parentPath, ROOT_PATH } from '../shared/path';
 import {
-  displayTitle,
   exportFileName,
   exprExportFileName,
   renameFromExport,
   sanitizeDocName,
   type ExportNameFlags,
 } from '../shared/doc-name';
+import { displayTitle } from '../view/doc-title';
 import type {
   CopyFormat,
   DocumentMeta,
@@ -80,11 +80,12 @@ import {
   normalizeExportMode,
   type ExportMode,
 } from '../viewmodel/export-state';
+import { EXPORT_MODE_LABELS } from '../view/export-labels';
 import { SettingsPanel } from '../view/panels/settings-panel';
 import { NoticeBar } from '../view/panels/notice-bar';
 import { ExpressionPanel } from '../view/panels/expression-panel';
 import { ExpressionBar } from '../view/panels/expression-bar';
-import { EXPR_COPY, exprErrorText } from '../shared/expression-copy';
+import { EXPR_COPY, exprErrorText } from '../view/expression-copy';
 import { createMenu } from '../view/menu';
 import { createViewStateStore } from './storage';
 import { currentLocale, formatNumber, initI18n, setLocalePref, t, type MessageKey } from '../i18n';
@@ -1463,7 +1464,12 @@ function importLayerMode(): ImportMode {
   return 'initial';
 }
 
-function setImportError(message: string | null): void {
+/** 最近一次入口层错误（结构化；切语言时重新格式化，ADR-0026 §3）。 */
+let importErrorState: CoreError | null = null;
+
+function setImportError(error: CoreError | null): void {
+  importErrorState = error;
+  const message = error ? formatCoreError(error) : null;
   emptyError.textContent = message ?? '';
   emptyError.hidden = !message;
 }
@@ -1474,6 +1480,20 @@ function setImportBusy(busy: boolean): void {
   emptyPendingReplace.disabled = busy;
   pickBtn.disabled = busy;
   emptyModeToggle.disabled = busy;
+}
+
+/** 拖入暂存文件名文案（加粗文件名 + 前后缀词条；locale 切换时重放，ADR-0026 §3）。 */
+function renderPendingText(): void {
+  const file = pendingFile;
+  if (!file) {
+    emptyPendingText.replaceChildren();
+    return;
+  }
+  emptyPendingText.replaceChildren(
+    document.createTextNode(t('app.empty.pending.before')),
+    strongText(`${file.name || 'document.json'}（${formatBytes(file.size)}）`),
+    document.createTextNode(t('app.empty.pending.after')),
+  );
 }
 
 function clearPendingFile(): void {
@@ -1640,7 +1660,7 @@ async function importBuffer(
     if (loadId !== loadSeq) return;
     if (CoreError.from(error).code === 'CANCELLED') return;
     if (inLayer) {
-      setImportError(formatCoreError(error));
+      setImportError(CoreError.from(error));
       setImportBusy(false);
     } else {
       showError(error);
@@ -1809,12 +1829,7 @@ window.addEventListener('drop', (event: DragEvent) => {
   // 文档视图内拖放：打开替换层并暂存文件，等用户确认（Q6-A）
   if (!openImportLayer()) return;
   pendingFile = file;
-  // 同 emptyWarn：文件名加粗（<b>），前后缀走词条
-  emptyPendingText.replaceChildren(
-    document.createTextNode(t('app.empty.pending.before')),
-    strongText(`${file.name || 'document.json'}（${formatBytes(file.size)}）`),
-    document.createTextNode(t('app.empty.pending.after')),
-  );
+  renderPendingText();
   emptyPending.hidden = false;
   emptyPendingReplace.focus();
 });
@@ -2393,9 +2408,13 @@ async function copyDocJson(): Promise<void> {
   try {
     const reply = await core.exportDoc(session.rootId, settings.get('jsonIndent'), settings.get('escapeUnicode'));
     const refusal = clipboardRefusal(reply.bytes);
-    if (refusal) {
+    if (refusal !== null) {
       exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied: false };
-      showToast(refusal, 4000, 'error');
+      showToast(
+        t('view.export.clipboardRefusal', { mb: (refusal / (1024 * 1024)).toFixed(1) }),
+        4000,
+        'error',
+      );
       return;
     }
     const copied = await writeClipboard(reply.text);
@@ -3491,6 +3510,9 @@ function rerenderChrome(): void {
   tabStrip.relabel();
   tree.relabel();
   rawView.relabel();
+  // 选中节点提示 / 状态栏主题文案也随语言（setTheme 同时写 dataset.theme，幂等）
+  setTheme(settings.get('theme'));
+  setSelection(selected);
   // 有文档：工具栏/文件 chip/三条提示条/原文头/状态栏；无文档：空态 + 状态栏
   renderTabChrome();
   renderEditBadge();
@@ -3504,6 +3526,9 @@ function rerenderChrome(): void {
   if (importLayerOpen()) {
     const mode = importLayerMode();
     if (mode === 'replace' || mode === 'new-tab') applyImportLayerMode(mode);
+    // 暂存文件名与错误行也按新语言重画（结构化 error 现格式化）
+    if (pendingFile) renderPendingText();
+    setImportError(importErrorState);
   }
 }
 

@@ -14,8 +14,13 @@ export type MessageTable = Record<string, Message>;
 /** 词条插值参数（`n` 参与复数与千分位格式）。 */
 export type Params = Record<string, string | number>;
 
-/** 支持的语言（新增语言时同步 `languages.ts` 注册表与这里）。 */
-export type LanguageTag = 'en-US' | 'zh-CN';
+/**
+ * 语言标签的单一来源在 `protocol/versions`（零依赖层）：i18n / settings 都从那里派生，
+ * 避免 `viewmodel` 为了白名单 value-import i18n。这里 re-export 方便 i18n 内部与测试引用。
+ */
+export { LANGUAGE_TAGS, isLanguageTag } from '../protocol/versions';
+export type { LanguageTag } from '../protocol/versions';
+import type { LanguageTag } from '../protocol/versions';
 
 /** 设置里的语言偏好：`auto` = 跟随系统。 */
 export type LocalePref = 'auto' | LanguageTag;
@@ -25,6 +30,6 @@ export interface Language {
   tag: LanguageTag;
   /** 语言自称（设置面板直接显示，不翻译） */
   nativeName: string;
-  /** 语言包 loader（动态 import 的分块；每种语言都有） */
-  load?: () => Promise<MessageTable>;
+  /** 语言包 loader（动态 import 的分块；每种语言都有——没有内联语言包） */
+  load: () => Promise<MessageTable>;
 }

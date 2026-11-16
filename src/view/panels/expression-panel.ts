@@ -18,7 +18,7 @@
  *   - Escape 清行内错误。
  */
 import { mountExpressionEditor, type ExpressionEditor } from './expression-editor';
-import { EXPR_COPY } from '../../shared/expression-copy';
+import { EXPR_COPY } from '../expression-copy';
 import { EXPR_HISTORY_MAX } from '../../protocol/versions';
 import type { ExprCompletion } from '../../protocol/types';
 import { t } from '../../i18n/index';

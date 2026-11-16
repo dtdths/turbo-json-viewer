@@ -4,6 +4,8 @@
  * 生命周期：
  *   - 启动：`await initI18n(settings.get('locale'))` —— 解析 locale → 按需 await 语言包 → 换表。
  *   - 切换：`await setLocalePref(pref)` —— 同上 + 通知订阅者（app 做全量重渲染）。
+ *   - 并发：`initI18n` / `setLocalePref` 用单调 `loadSeq` 丢弃过期的语言包加载结果，
+ *     快速连点时不会出现「文案是新语言、activeTag 是旧语言」的错位。
  * 红线：worker 不 import 本模块（诊断文案在 worker 侧只产生结构化数据，见 ADR-0026 §4）。
  */
 import type { LanguageTag, LocalePref, Message, MessageTable, Params } from './types';
@@ -19,7 +21,8 @@ let activePref: LocalePref = 'auto';
 let activeTable: MessageTable = EMPTY_TABLE;
 
 const listeners = new Set<(tag: LanguageTag) => void>();
-/** 已加载的语言包（en 常驻；其他语言按需加载后缓存，切换不重复请求）。 */
+/** 已加载的语言包缓存（含 en；切换不重复请求）。 */
+let loadSeq = 0;
 const packs = new Map<LanguageTag, MessageTable>();
 const pluralRules = new Map<LanguageTag, Intl.PluralRules>();
 const numberFormats = new Map<LanguageTag, Intl.NumberFormat>();
@@ -121,16 +124,15 @@ async function loadPack(tag: LanguageTag): Promise<MessageTable> {
   const cached = packs.get(tag);
   if (cached) return cached;
   const language = findLanguage(tag);
-  if (!language?.load) {
+  if (!language) {
     packs.set(tag, EMPTY_TABLE);
     return EMPTY_TABLE;
   }
   try {
+    // 语言包必须完整（单测守护 key 集/占位符）；不做「部分包 + en 兜底」运行时合并
     const table = await language.load();
-    // 语言包允许部分覆盖：未翻译的 key 落到 en
-    const merged: MessageTable = { ...EMPTY_TABLE, ...table };
-    packs.set(tag, merged);
-    return merged;
+    packs.set(tag, table);
+    return table;
   } catch (error) {
     // 加载失败不阻塞启动：先回退 en 包，再退空表（= 显示 key 本身），并记一次 warn
     console.warn(`[i18n] failed to load locale pack "${tag}", falling back to en-US`, error);
@@ -154,18 +156,26 @@ async function loadPack(tag: LanguageTag): Promise<MessageTable> {
  */
 export async function initI18n(pref: LocalePref): Promise<LanguageTag> {
   const tag = resolveLocale(pref, readNavigatorLanguage(), readLangOverride());
+  const seq = ++loadSeq;
+  const table = await loadPack(tag);
+  // 过期加载（更晚的 init/set 已发起）→ 不覆盖当前状态
+  if (seq !== loadSeq) return activeTag;
   activeTag = tag;
   activePref = pref;
-  activeTable = await loadPack(tag);
+  activeTable = table;
   return tag;
 }
 
 /** 运行时切换语言（设置面板）；通知订阅者做全量重渲染。 */
 export async function setLocalePref(pref: LocalePref): Promise<LanguageTag> {
   const tag = resolveLocale(pref, readNavigatorLanguage(), readLangOverride());
+  const seq = ++loadSeq;
+  const table = await loadPack(tag);
+  // 快速连点（zh→en→zh）时只让最后一次落地，避免词条表与 activeTag 错位
+  if (seq !== loadSeq) return activeTag;
   activeTag = tag;
   activePref = pref;
-  activeTable = await loadPack(tag);
+  activeTable = table;
   for (const fn of listeners) fn(tag);
   return tag;
 }

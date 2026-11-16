@@ -4,8 +4,8 @@
  * 一个名字覆盖三处：标签条标题 / 文件 chip / 导出文件基名（`meta.name` 仍是导入时的
  * **原名**，只读保留，用于「原名」提示）。纯函数、可脱 DOM 单测。
  *
- * i18n（ADR-0026 §1）：悬停提示的「原名」文案走 `view.doc-name.originalTitle` 词条；
- * 文件名清洗 / 导出名拼接与语言无关（纯标识符与后缀）。
+ * i18n（ADR-0026 §1）：本文件只留**与语言无关**的纯函数；需要本地化的「原名」悬停文案
+ * 在 `view/doc-title`（shared 层不 import i18n，见 seams.md §1）。
  *
  * 规则（用户 2026-11-12 拍板）：
  *   - 统一清洗：trim → 去控制字符 → 文件系统非法字符 `/ \ : * ? " < > |` 换成 `-` →
@@ -16,8 +16,6 @@
  *   - 反向：从系统「另存为」返回的最终文件名里剥掉 `.json` 与「本次导出确实加过」的后缀，
  *     得到新的显示名；最终名与预填名相同 = 用户没改名，返回 null。
  */
-import { t } from '../i18n/index';
-
 export const DOC_NAME_MAX = 120;
 
 const JSON_SUFFIX = /\.json$/i;
@@ -91,11 +89,6 @@ export function baseNameFromExport(fileName: string, flags: ExportNameFlags = {}
     stem = stem.slice(0, -REPAIRED_SUFFIX.length);
   }
   return sanitizeDocName(stem);
-}
-
-/** 悬停提示：改过名的文档追加「原名：…」便于追溯（原名 = 导入时的文件名，只读）。 */
-export function displayTitle(name: string, originalName: string): string {
-  return name === originalName ? name : t('view.doc-name.originalTitle', { name, originalName });
 }
 
 /**

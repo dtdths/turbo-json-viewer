@@ -8,7 +8,7 @@
  * 保留的 DOM 读取只有**视觉/布局断言**（computed style、CSS 变量、元素文本）——那是浏览器
  * harness 的分工（ADR-0008 §6）。
  *
- * 兼容性：成员名 / 参数 / 返回形状与历史 `window.__tjv` 逐字一致（13 套冒烟零改动）。
+ * 兼容性：成员名 / 参数 / 返回形状与历史 `window.__tjv` 逐字一致（既有冒烟套件零改动；#45 新增 `localeState`，共 84 个成员）。
  */
 import { currentLocale, currentLocalePref, isPackLoaded, messageCount } from '../i18n';
 import { repairSummaryText } from '../i18n/format';

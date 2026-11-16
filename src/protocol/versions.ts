@@ -111,6 +111,22 @@ export const RAW_PATH_CACHE_SIZE = 512;
 
 /* --------------------- 大纲面板（ADR-0013） --------------------- */
 
+/* ---------------- 界面语言（#45 / ADR-0026） ---------------- */
+
+/**
+ * 支持的语言标签**单一来源**（新增语言只改这里 + `i18n/languages.ts` 注册表 + 词条文件；
+ * 设置白名单 / locale 解析 / 测试都从这里派生，不另写字面量）。
+ * 放在零依赖的 protocol 层，避免 viewmodel 为了一个白名单去 value-import i18n。
+ */
+export const LANGUAGE_TAGS = ['en-US', 'zh-CN'] as const;
+
+export type LanguageTag = (typeof LANGUAGE_TAGS)[number];
+
+/** 运行时守卫：是不是支持的语言标签（设置值白名单回落用）。 */
+export function isLanguageTag(value: unknown): value is LanguageTag {
+  return typeof value === 'string' && (LANGUAGE_TAGS as readonly string[]).includes(value);
+}
+
 /** 大纲分页：默认每页子项数（「加载更多」每次取一页） */
 export const OUTLINE_PAGE = 200;
 /** 大纲分页：单次 `outline` 请求允许的最大 count（超出由 core 夹取） */

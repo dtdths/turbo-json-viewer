@@ -9,6 +9,8 @@ import {
   resolveLocale,
   SUPPORTED_TAGS,
 } from '../../../src/i18n/locale';
+import { LANGUAGES } from '../../../src/i18n/languages';
+import { LANGUAGE_TAGS } from '../../../src/i18n/types';
 
 describe('normalizeLocaleTag', () => {
   it('zh / zh-* → zh-CN（zh-TW/HK 暂统一简体）', () => {
@@ -79,8 +81,12 @@ describe('resolveLocale（优先级：?lang > 设置 > navigator > en-US）', ()
   });
 });
 
-describe('SUPPORTED_TAGS', () => {
-  it('注册表与语言包一致（en-US 内联 + zh-CN 懒加载）', () => {
-    expect([...SUPPORTED_TAGS]).toEqual(['en-US', 'zh-CN']);
+describe('语言单一来源', () => {
+  it('SUPPORTED_TAGS 派生自 LANGUAGE_TAGS', () => {
+    expect([...SUPPORTED_TAGS]).toEqual([...LANGUAGE_TAGS]);
+  });
+
+  it('语言注册表覆盖全部 LANGUAGE_TAGS（新增语言不能只改一处）', () => {
+    expect(LANGUAGES.map((language) => language.tag).sort()).toEqual([...LANGUAGE_TAGS].sort());
   });
 });

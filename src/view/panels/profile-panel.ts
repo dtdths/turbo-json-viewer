@@ -6,7 +6,7 @@
  *
  * i18n（ADR-0026 §3）：所有文案在渲染时按当前 locale 取词条（没有模块级文案常量）；
  * 语言切换后由 app 用同一份 `ProfilePanelState` 再调一次 `renderProfilePanel` 即可
- * （`relabelProfilePanel` 是同一操作的语义化别名）。
+ * （本模块是无状态渲染函数：文案在 render 时取词条，切语言后重画即新语言）。
  *
  * DOM 契约：`#profilePanel`（page.html 提供）内部由本模块 `replaceChildren` 重建；
  * class 供冒烟断言，不要改名。全部文本走 textContent / createElement，**禁 innerHTML**。
@@ -124,7 +124,3 @@ export function renderProfilePanel(container: HTMLElement, state: ProfilePanelSt
   container.append(list);
 }
 
-/** 语言切换：用同一份快照按当前词条重画（幂等；不改状态、不触发任何回调）。 */
-export function relabelProfilePanel(container: HTMLElement, state: ProfilePanelState): void {
-  renderProfilePanel(container, state);
-}

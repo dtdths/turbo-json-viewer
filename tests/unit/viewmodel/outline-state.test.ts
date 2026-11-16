@@ -240,7 +240,8 @@ describe('OutlineState — open 首屏', () => {
       more: true,
       kind: null,
       remaining: 37,
-      key: '加载更多（还有 37 项）',
+      // 文案由面板按 remaining 现取词条（viewmodel 不 import i18n）
+      key: '',
     });
     expect(view.loadedChildren).toBe(OUTLINE_PAGE);
   });

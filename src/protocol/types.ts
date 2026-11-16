@@ -133,7 +133,7 @@ export type ExprBudgetLevel = 'loose' | 'standard' | 'strict';
 
 /**
  * 表达式引擎错误码（ADR-0018 §2 / §5）。**引擎只给 code + params**，文案在外层
- * （`app/expression-copy.ts`），中英对照表见 #12 spec §7。
+ * （`view/expression-copy.ts`），中英对照表见 #12 spec §7。
  */
 export type ExprErrorCode =
   | 'PARSE_ERR_SYNTAX'

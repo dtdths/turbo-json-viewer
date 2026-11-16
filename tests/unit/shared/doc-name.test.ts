@@ -3,7 +3,6 @@ import { initI18n } from '../../../src/i18n/index';
 import {
   DOC_NAME_MAX,
   baseNameFromExport,
-  displayTitle,
   exportFileName,
   exprExportFileName,
   renameFromExport,
@@ -114,15 +113,6 @@ describe('shared/doc-name', () => {
     });
   });
 
-  describe('displayTitle', () => {
-    it('keeps the plain name when it was never renamed', () => {
-      expect(displayTitle('sample.json', 'sample.json')).toBe('sample.json');
-    });
-
-    it('appends the original filename after a rename', () => {
-      expect(displayTitle('订单', 'sample.json')).toBe('订单（原名：sample.json）');
-    });
-  });
 
   describe('renameFromExport', () => {
     it('returns null when the final name equals the prefill (no rename)', () => {

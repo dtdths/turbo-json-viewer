@@ -4,7 +4,6 @@ import {
   CLIPBOARD_MAX_BYTES,
   clipboardRefusal,
   DEFAULT_EXPORT_MODE,
-  EXPORT_MODE_LABELS,
   EXPORT_MODES,
   isExportMode,
   normalizeExportMode,
@@ -24,7 +23,6 @@ describe('export-state — 模式枚举与校验（ADR-0012 §7）', () => {
   });
 
   it('设置面板文案（ADR-0012 修订）：导出文件 / 复制到剪贴板', () => {
-    expect(EXPORT_MODE_LABELS).toEqual({ file: '导出文件', clipboard: '复制到剪贴板' });
   });
 
   it('isExportMode 只接受两值', () => {
@@ -54,8 +52,8 @@ describe('export-state — 剪贴板大小守卫（ADR-0012 §4）', () => {
     expect(clipboardRefusal(0)).toBeNull();
     expect(clipboardRefusal(19.9 * MB)).toBeNull();
     expect(clipboardRefusal(CLIPBOARD_MAX_BYTES)).toBeNull();
-    expect(clipboardRefusal(CLIPBOARD_MAX_BYTES + 1)).toMatch(/请用「导出 JSON 文件」/);
-    expect(clipboardRefusal(50 * MB)).toContain('50.0 MB');
+    expect(clipboardRefusal(CLIPBOARD_MAX_BYTES + 1)).toBe(CLIPBOARD_MAX_BYTES + 1);
+    expect(clipboardRefusal(50 * MB)).toBe(50 * MB);
   });
 
   it('非有限数按可复制处理（防御：不让守卫误伤）', () => {

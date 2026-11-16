@@ -26,7 +26,7 @@ beforeEach(async () => {
 });
 
 describe('t() 基础', () => {
-  it('英文内联 + 中文语言包都可用', async () => {
+  it('英文语言包 + 中文语言包都可用', async () => {
     expect(t('app.toolbar.import')).toBe('Import');
     await initI18n('zh-CN');
     expect(t('app.toolbar.import')).toBe('导入');

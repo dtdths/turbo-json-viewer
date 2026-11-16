@@ -17,7 +17,6 @@
  */
 import type { JsonKind, OutlineChild, OutlineReply, Path, RootId } from '../protocol/types';
 import { OUTLINE_PAGE } from '../protocol/versions';
-import { t } from '../i18n/index';
 import { ROOT_PATH } from '../shared/path';
 import { computeVirtualWindow } from '../shared/window';
 
@@ -509,7 +508,7 @@ export class OutlineState {
       rows.push({
         path: containerPath,
         depth,
-        key: t('view.outline.loadMore', { n: remaining }),
+        key: '',
         idx: false,
         kind: null,
         count: 0,
