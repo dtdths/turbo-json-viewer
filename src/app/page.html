@@ -176,7 +176,10 @@
             <code class="sel__path" id="selPath">—</code>
             <div class="sel__meta" id="selMeta"></div>
           </section>
-          <section class="module">
+          <!-- JSON 地图占位（#17 / ADR-0007，v1.1）：
+               用户 2026-11-16 决定地图形态尚未定稿（#42 待设计），页面里先隐藏占位；
+               恢复时去掉 hidden 即可（DOM / 词条 / 样式保持原样，worker 侧 getTrail 仍是骨架）。 -->
+          <section class="module" id="mapModule" hidden>
             <header class="module__head"><span class="module__title" data-i18n="app.rail.map.title">JSON map</span><span class="module__meta">v1.1</span></header>
             <div class="placeholder" data-i18n="app.rail.map.placeholder">Wired up in a later slice per #17 / ADR-0007</div>
           </section>
