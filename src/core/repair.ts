@@ -13,7 +13,7 @@
  * `status: 'none'` 只在原文本本来可解析时返回（调用方只需在 parse 失败时调用本模块）。
  * `ops[].at` 一律指向**原文本**偏移：delete 的 `text` = 原文切片，insert 的 `at` = 原文长度。
  */
-import type { RepairCounts, RepairOp } from '../protocol/types';
+import type { RepairCounts, RepairNote, RepairOp } from '../protocol/types';
 import { parseLossless } from './lossless-json';
 
 export interface RepairAttempt {
@@ -23,7 +23,6 @@ export interface RepairAttempt {
   truncatedAt?: number;
   counts?: RepairCounts;
   ops?: RepairOp[];
-  summaryText?: string;
   unrepairableReason?: 'not-eof' | 'still-invalid';
 }
 
@@ -404,10 +403,10 @@ export function repairTruncatedJson(source: string): RepairAttempt {
 
   // ── 编辑列表：全部记录**原文本**偏移，最后统一右到左应用 ──
   const ops: RepairOp[] = [];
-  const insert = (at: number, text: string, scope: RepairOp['scope'], note: string): void => {
+  const insert = (at: number, text: string, scope: RepairOp['scope'], note: RepairNote): void => {
     ops.push({ at, op: 'insert', text, scope, note });
   };
-  const remove = (at: number, end: number, scope: RepairOp['scope'], note: string): void => {
+  const remove = (at: number, end: number, scope: RepairOp['scope'], note: RepairNote): void => {
     if (end > at) ops.push({ at, op: 'delete', text: source.slice(at, end), scope, note });
   };
   /** 保留内容在原文本中的结束偏移（被删 token 的起点） */
@@ -418,7 +417,7 @@ export function repairTruncatedJson(source: string): RepairAttempt {
     let e = before;
     while (e > 0 && isWs(source.charCodeAt(e - 1))) e--;
     if (e > 0 && source.charCodeAt(e - 1) === CH_COMMA) {
-      remove(e - 1, e, 'comma', '尾随逗号 → 删除');
+      remove(e - 1, e, 'comma', { code: 'trailing-comma' });
       return e - 1;
     }
     return before;
@@ -428,16 +427,16 @@ export function repairTruncatedJson(source: string): RepairAttempt {
   if (inString) {
     if (stringIsKey) {
       // 键名没写完 → 这个成员没有值可保留：删整个成员（不补引号、不猜键名）
-      remove(stringStart, n, 'member', '键名未写完且没有值可保留 → 丢弃整个成员（不补引号）');
+      remove(stringStart, n, 'member', { code: 'member-no-value' });
       cutEnd = dropTrailingComma(stringStart);
       slot = 'commaOrEnd';
     } else {
       // 值字符串：先丢掉末尾半个转义（不猜测被截掉的字符），再补结束引号
       if (escapeAt >= 0) {
-        remove(escapeAt, n, 'string', '末尾是不完整转义 → 丢弃（不猜测字符）');
+        remove(escapeAt, n, 'string', { code: 'escape-half' });
         cutEnd = escapeAt;
       }
-      insert(n, '"', 'string', '字符串未闭合 → 补结束引号');
+      insert(n, '"', 'string', { code: 'string-unclosed' });
       slot = 'commaOrEnd';
     }
   }
@@ -447,23 +446,22 @@ export function repairTruncatedJson(source: string): RepairAttempt {
     const lit = source.slice(last.at, last.end);
     if (last.type === 'literal' && !LITERALS.has(lit)) {
       if (!isPartialLiteral(lit)) return { status: 'unrepairable', unrepairableReason: 'not-eof' };
-      remove(last.at, last.end, 'token', `不完整字面量 \`${lit}\` → 丢弃（不猜测 true/false/null）`);
+      remove(last.at, last.end, 'token', { code: 'literal-partial', literal: lit });
       cutEnd = last.at;
       slot = 'value'; // 值槽空了 → 规则 4 接着删掉悬空成员
     } else if (last.type === 'number' && !isCompleteNumber(lit)) {
       if (!isPartialNumber(lit)) return { status: 'unrepairable', unrepairableReason: 'not-eof' };
       const keep = longestValidNumberPrefix(lit);
       if (keep === '') {
-        remove(last.at, last.end, 'token', `不完整数字 \`${lit}\` → 整段丢弃（没有合法前缀可保留）`);
+        remove(last.at, last.end, 'token', { code: 'number-dropped', literal: lit });
         cutEnd = last.at;
         slot = 'value';
       } else {
-        remove(
-          last.at + keep.length,
-          last.end,
-          'token',
-          `不完整数字 \`${lit}\` → 只保留合法前缀 \`${keep}\`（不补数字）`,
-        );
+        remove(last.at + keep.length, last.end, 'token', {
+          code: 'number-prefix',
+          literal: lit,
+          keep,
+        });
         cutEnd = last.at + keep.length;
         slot = 'commaOrEnd';
       }
@@ -472,7 +470,7 @@ export function repairTruncatedJson(source: string): RepairAttempt {
 
   // ── 规则 3：逗号不可能出现在闭合符前 → 尾逗号删掉 ──
   if (!inString && last !== null && last.type === 'comma' && last.end === tEnd) {
-    remove(last.at, last.end, 'comma', '尾随逗号 → 删除');
+    remove(last.at, last.end, 'comma', { code: 'trailing-comma' });
     cutEnd = last.at;
     slot = 'commaOrEnd';
   }
@@ -482,7 +480,7 @@ export function repairTruncatedJson(source: string): RepairAttempt {
     const top = stack.length > 0 ? stack[stack.length - 1] : null;
     if (slot === 'colon' && top !== null && top.ch === CH_LBRACE && last !== null && last.type === 'string' && last.isKey) {
       // 键已闭合但既没冒号也没值：删掉这个键（不补值）
-      remove(last.at, last.end, 'member', '键已闭合但后面没有值 → 删除该键（不补值、不猜冒号）');
+      remove(last.at, last.end, 'member', { code: 'key-no-value' });
       cutEnd = dropTrailingComma(last.at);
       slot = 'commaOrEnd';
     } else if (slot === 'value') {
@@ -508,7 +506,7 @@ export function repairTruncatedJson(source: string): RepairAttempt {
           }
           // 找不到键起点说明结构对不上（理论上不会发生）→ 保守拒绝
           if (ks < 0) return { status: 'unrepairable', unrepairableReason: 'not-eof' };
-          remove(ks, e, 'member', '悬空的键（后面没有值）→ 连同冒号删除');
+          remove(ks, e, 'member', { code: 'dangling-key' });
           cutEnd = dropTrailingComma(ks);
           slot = 'commaOrEnd';
         } else {
@@ -537,7 +535,12 @@ export function repairTruncatedJson(source: string): RepairAttempt {
       .reverse()
       .join('');
     const where = stack.map((f) => (f.ch === CH_LBRACE ? '{' : '[') + '@' + f.at).join(', ');
-    insert(n, closers, 'container', `补 ${closers.length} 个闭合符 \`${closers}\`（对应未闭合的 ${where}）`);
+    insert(n, closers, 'container', {
+      code: 'closers',
+      count: closers.length,
+      closers,
+      where,
+    });
   }
 
   // ── 自校验：应用编辑后必须真的可解析 ──
@@ -548,7 +551,7 @@ export function repairTruncatedJson(source: string): RepairAttempt {
   // 对外按「离 EOF 近的在前」排（§6.3 的 ops 示例形态），便于摘要列表逐条展示；
   // 应用顺序与应用无关（applyOps 自己按偏移切片），同偏移的插入由 scope 定序。
   const ordered = ops.slice().sort((a, b) => b.at - a.at);
-  return { status: 'repaired', text, truncatedAt: n, counts, ops: ordered, summaryText: summarize(counts) };
+  return { status: 'repaired', text, truncatedAt: n, counts, ops: ordered };
 }
 
 /** 插入文本在同一偏移上的先后：先补结束引号（string），再补闭合符（container） */
@@ -623,16 +626,4 @@ function countOps(ops: readonly RepairOp[]): RepairCounts {
     }
   }
   return counts;
-}
-
-/** 一行中文摘要；零计数项省略，固定以「仅语法闭合，未修改任何已有值」收尾 */
-function summarize(counts: RepairCounts): string {
-  const bits: string[] = [];
-  if (counts.deletedChars > 0) bits.push(`删除 ${counts.deletedChars} 个字符`);
-  const closes: string[] = [];
-  if (counts.brackets > 0) closes.push(`${counts.brackets} 个闭合符`);
-  if (counts.quotes > 0) closes.push(`${counts.quotes} 个结束引号`);
-  if (closes.length > 0) bits.push('补 ' + closes.join('、'));
-  if (bits.length === 0) return '已修复（仅语法闭合，未修改任何已有值）';
-  return `已修复：${bits.join('、')}（仅语法闭合，未修改任何已有值）`;
 }

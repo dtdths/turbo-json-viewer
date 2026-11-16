@@ -17,7 +17,9 @@
  *
  * 正则模式（ADR-0014 §2.2–§2.4）：`opts.regex === true` 时 query 按 ECMAScript RegExp
  * 解释，`caseSensitive` 只决定 `i` flag；语法错误 / 超长 / 被灾难性回溯静态筛查拒绝
- * 一律抛 `CoreError({ code: 'BAD_PATTERN' })`，不产出命中。匹配目标 = 键名 + 值显示文本
+ * 一律抛 `CoreError({ code: 'BAD_PATTERN' })`，不产出命中。细分原因走结构化
+ * `patternIssue`（`syntax` / `too-long` / `backtracking`）+ `patternLimit`，文案由页面本地化
+ * （#45 / ADR-0026 §4）。匹配目标 = 键名 + 值显示文本
  * （字符串 / 数字 / 布尔 / null）+ 路径模式下的整条规范路径。
  */
 import { CoreError } from '../protocol/errors';
@@ -50,8 +52,8 @@ function searchableValueText(node: unknown, kind: ReturnType<typeof jsonKind>): 
   return null;
 }
 
-/** 灾难性回溯静态筛查的拒绝原因（ADR-0014 §2.4；core 只给规则、文案由 app 映射）。 */
-const CATASTROPHIC_BACKTRACK_MESSAGE = '该正则可能触发灾难性回溯';
+/** 灾难性回溯静态筛查的诊断串（英文；页面按 `patternIssue` 选词条本地化，ADR-0026 §4）。 */
+const CATASTROPHIC_BACKTRACK_MESSAGE = 'catastrophic backtracking';
 
 interface Frame {
   node: unknown;
@@ -109,7 +111,7 @@ function repeatsGroup(src: string, i: number): boolean {
  * 已知差距（显式接受）：这是启发式而非完备 ReDoS 判定，`(a|a)+` 这类「重叠分支 + 量词」
  * 不拦（会误杀 `(foo|bar)+` 等常见合法写法）；漏网病态正则的兜底是命令超时。
  *
- * @returns 拒绝原因（可直接作为 `BAD_PATTERN` 的 message）；安全返回 null。
+ * @returns 拒绝原因（作为 `BAD_PATTERN` 的 message，不是用户可见文案）；安全返回 null。
  */
 export function regexSafetyError(src: string): string | null {
   /** 每层分组的内容里是否出现过量词 */
@@ -191,7 +193,9 @@ export function compileRegexMatcher(query: string, caseSensitive: boolean): (tex
   if (query.length > SEARCH_PATTERN_MAX) {
     throw new CoreError({
       code: 'BAD_PATTERN',
-      message: `正则过长（上限 ${SEARCH_PATTERN_MAX} 字符）`,
+      message: 'pattern too long',
+      patternIssue: 'too-long',
+      patternLimit: SEARCH_PATTERN_MAX,
     });
   }
 
@@ -200,11 +204,14 @@ export function compileRegexMatcher(query: string, caseSensitive: boolean): (tex
     regex = new RegExp(query, caseSensitive ? '' : 'i');
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new CoreError({ code: 'BAD_PATTERN', message: `正则语法错误：${reason}` });
+    // 引擎原文（英文 reason）留在 message；本地化前缀由页面按 patternIssue 加（ADR-0026 §4）
+    throw new CoreError({ code: 'BAD_PATTERN', message: reason, patternIssue: 'syntax' });
   }
 
   const unsafe = regexSafetyError(query);
-  if (unsafe !== null) throw new CoreError({ code: 'BAD_PATTERN', message: unsafe });
+  if (unsafe !== null) {
+    throw new CoreError({ code: 'BAD_PATTERN', message: unsafe, patternIssue: 'backtracking' });
+  }
 
   return (text: string): boolean => regex.test(text);
 }

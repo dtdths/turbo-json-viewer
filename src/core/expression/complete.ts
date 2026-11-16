@@ -6,7 +6,7 @@
  * - `X.` / `X?.` → 接收者解析：
  *   - **纯键链**（仅 `$` / 标识符 / `.` / `?.`，任意深：`items`、`data.items`、`$.data.items`）→
  *     去 `$` 后在 profile 的 `paths` 里精确匹配；命中给该路径的 `members`
- *     （`detail` = `` `${kind} · 采样 ${freq}/${samples}` ``，`kind === 'mixed'` 用「混合」）；
+ *     （`detail` = `{ scope: 'sampled-field', kind, freq, samples }`，多类型 `kind = 'mixed'`）；
  *     未命中 / profile 未就绪 → 退化为 `ARRAY_METHODS ∪ STRING_METHODS ∪ ['length']`；
  *   - 内建对象：`Math` → `MATH_MEMBERS`；`Array` → `isArray`；`JSON` → `parse/stringify`；
  *     `Number/String/Boolean` → 无成员；
@@ -15,11 +15,14 @@
  * - **不做前缀过滤**（CM6 会按前缀 filter），只把「前缀完全相同」的候选排到最前；
  * - 顺序：命中路径的字段按 profile 的 `members` 序（freq 降序、同频首次出现序）；根字段在前、全局在后。
  *
- * detail 的**固定格式**（Lead 定稿，main.ts 靠「根字段 · <kind>」生成动态示例，勿改）：
- * `根字段 · <kind>`（根字段）/ `${kind} · 采样 ${freq}/${samples}`（路径样本成员）/
- * `array 方法` / `string 方法` / `Math 方法` / `JSON 方法` / `属性` / `全局`。
+ * detail 是**结构化形状**（`CompletionDetail`，ADR-0026 §4）：worker 不拼语言，只给语义；
+ * 页面按界面语言格式化成 CM6 的 `detail` 字符串（`i18n/format.ts`）。语义与旧中文串一一对应：
+ * 根字段 `{scope:'root-field',kind}` / 无类型根字段 `{scope:'root-field-plain'}` /
+ * 路径样本成员 `{scope:'sampled-field',kind,freq,samples}` / `{scope:'global'}` /
+ * `{scope:'math-method'}` / `{scope:'array-method'}` / `{scope:'string-method'}` /
+ * `{scope:'json-method'}` / `{scope:'property'}`。
  */
-import type { ExprCompletion, FieldStat, PathSample } from '../../protocol/types';
+import type { CompletionDetail, ExprCompletion, FieldStat, PathSample } from '../../protocol/types';
 import type { CompletionContext } from './types';
 import {
   ARRAY_METHODS,
@@ -39,14 +42,18 @@ const KEY_CHAIN = /^(\$|[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*\??\.\s*[A-Za-z_$][A-Za-z
 /** 键链分隔（`.key` / `?.key`，允许空白）。 */
 const CHAIN_SEPARATOR = /\s*\??\.\s*/;
 
-/** detail 的 kind 文案：`mixed` → 「混合」。 */
-function kindLabel(kind: FieldStat['kind']): string {
-  return kind === 'mixed' ? '混合' : kind;
+/** 路径样本成员的 detail（`kind = 'mixed'` = 多类型；页面格式化为「<kind> · 采样 freq/samples」）。 */
+function sampledFieldDetail(member: FieldStat, samples: number): CompletionDetail {
+  return { scope: 'sampled-field', kind: member.kind, freq: member.freq, samples };
 }
 
-/** 路径样本成员的 detail（固定格式，ADR-0025 §6）。 */
-function sampleDetail(member: FieldStat, samples: number): string {
-  return `${kindLabel(member.kind)} · 采样 ${member.freq}/${samples}`;
+/**
+ * 根字段 detail。根对象样本恒为单实例（`samples = 1`）→ 成员类型不可能是 `'mixed'`
+ * （mixed 只在多实例采样时出现，profile 侧有单测守护）；`root-field` 只收 `JsonKind`，
+ * 因此 mixed 保守落到无类型的「根字段」兜底（不可达分支，仅表达类型不变量）。
+ */
+function rootFieldDetail(kind: FieldStat['kind']): CompletionDetail {
+  return kind === 'mixed' ? { scope: 'root-field-plain' } : { scope: 'root-field', kind };
 }
 
 /**
@@ -78,12 +85,12 @@ function rootCompletions(ctx: CompletionContext): ExprCompletion[] {
   const rootSample = ctx.paths?.[0];
 
   if (rootSample !== undefined) {
-    // 根为数组 → 元素字段样本（detail 用采样格式）；根为对象 → 保持「根字段 · <kind>」
+    // 根为数组 → 元素字段样本（sampled-field）；根为对象 → root-field（带 kind）
     for (const member of rootSample.members) {
       if (seen.has(member.name)) continue;
       seen.add(member.name);
       const detail =
-        rootSample.kind === 'array' ? sampleDetail(member, rootSample.samples) : `根字段 · ${kindLabel(member.kind)}`;
+        rootSample.kind === 'array' ? sampledFieldDetail(member, rootSample.samples) : rootFieldDetail(member.kind);
       items.push({ label: member.name, kind: 'field', detail });
     }
     // 根数组同样追加数组/字符串方法并集 + length（ADR-0025 §6 修订）：标量根数组 members 为空时
@@ -101,14 +108,18 @@ function rootCompletions(ctx: CompletionContext): ExprCompletion[] {
       if (typeof key !== 'string' || seen.has(key)) continue;
       seen.add(key);
       const kind = ctx.rootKinds?.[key];
-      items.push({ label: key, kind: 'field', detail: kind ? `根字段 · ${kind}` : '根字段' });
+      items.push({
+        label: key,
+        kind: 'field',
+        detail: kind ? { scope: 'root-field', kind } : { scope: 'root-field-plain' },
+      });
     }
   }
 
   for (const name of GLOBAL_NAMES) {
     if (seen.has(name)) continue;
     seen.add(name);
-    items.push({ label: name, kind: 'global', detail: '全局' });
+    items.push({ label: name, kind: 'global', detail: { scope: 'global' } });
   }
   return items;
 }
@@ -116,15 +127,17 @@ function rootCompletions(ctx: CompletionContext): ExprCompletion[] {
 /** 内建对象 / 原始类型的成员（单段接收者专用；`null` = 不是内建接收者）。 */
 function builtinReceiverCompletions(receiver: string): ExprCompletion[] | null {
   if (receiver === 'Math') {
-    return MATH_MEMBERS.map((name) => ({ label: name, kind: 'method' as const, detail: 'Math 方法' }));
+    return MATH_MEMBERS.map(
+      (name): ExprCompletion => ({ label: name, kind: 'method', detail: { scope: 'math-method' } }),
+    );
   }
   if (receiver === 'Array') {
-    return [{ label: 'isArray', kind: 'method', detail: 'array 方法' }];
+    return [{ label: 'isArray', kind: 'method', detail: { scope: 'array-method' } }];
   }
   if (receiver === 'JSON') {
     return [
-      { label: 'parse', kind: 'method', detail: 'JSON 方法' },
-      { label: 'stringify', kind: 'method', detail: 'JSON 方法' },
+      { label: 'parse', kind: 'method', detail: { scope: 'json-method' } },
+      { label: 'stringify', kind: 'method', detail: { scope: 'json-method' } },
     ];
   }
   if (receiver === 'Number' || receiver === 'String' || receiver === 'Boolean') return [];
@@ -138,19 +151,19 @@ function methodCompletions(): ExprCompletion[] {
   for (const name of ARRAY_METHODS) {
     if (seen.has(name)) continue;
     seen.add(name);
-    items.push({ label: name, kind: 'method', detail: 'array 方法' });
+    items.push({ label: name, kind: 'method', detail: { scope: 'array-method' } });
   }
   for (const name of STRING_METHODS) {
     if (seen.has(name)) continue;
     seen.add(name);
-    items.push({ label: name, kind: 'method', detail: 'string 方法' });
+    items.push({ label: name, kind: 'method', detail: { scope: 'string-method' } });
   }
-  if (!seen.has(LENGTH_PROP)) items.push({ label: LENGTH_PROP, kind: 'field', detail: '属性' });
+  if (!seen.has(LENGTH_PROP)) items.push({ label: LENGTH_PROP, kind: 'field', detail: { scope: 'property' } });
   return items;
 }
 
 /**
- * 命中 profile 路径样本 → 该路径的 members（detail 固定为采样格式）。
+ * 命中 profile 路径样本 → 该路径的 members（detail = sampled-field）。
  *
  * 数组路径额外追加数组/字符串方法并集 + `length`（ADR-0025 §6）：这些方法对数组元素字段
  * 补全同样有效，且保证既有能力不回归（`$.big.` 这类标量数组命中时 members 为空，若不追加
@@ -173,7 +186,7 @@ function memberFieldCompletions(sample: PathSample): ExprCompletion[] {
   return sample.members.map((member) => ({
     label: member.name,
     kind: 'field' as const,
-    detail: sampleDetail(member, sample.samples),
+    detail: sampledFieldDetail(member, sample.samples),
   }));
 }
 

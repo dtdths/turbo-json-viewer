@@ -57,18 +57,18 @@ describe('core/expression/complete — 根级 / 全局', () => {
     expect(globals).toEqual([...GLOBAL_NAMES]);
   });
 
-  it('根字段 kind=field + detail「根字段 · <kind>」；未知类型回退「根字段」', () => {
+  it('根字段 kind=field + detail {scope:root-field,kind}；未知类型回退 root-field-plain', () => {
     const items = getCompletions('', 0, CTX);
-    expect(find(items, 'data')).toMatchObject({ kind: 'field', detail: '根字段 · object' });
-    expect(find(items, 'items')).toMatchObject({ kind: 'field', detail: '根字段 · array' });
-    expect(find(items, 'num')).toMatchObject({ kind: 'field', detail: '根字段 · number' });
-    expect(find(items, 'a b')).toMatchObject({ kind: 'field', detail: '根字段' });
+    expect(find(items, 'data')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'object' } });
+    expect(find(items, 'items')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'array' } });
+    expect(find(items, 'num')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'number' } });
+    expect(find(items, 'a b')).toMatchObject({ kind: 'field', detail: { scope: 'root-field-plain' } });
   });
 
-  it('全局名 kind=global + detail「全局」（含 undefined）', () => {
+  it('全局名 kind=global + detail {scope:global}（含 undefined）', () => {
     const items = getCompletions('', 0, CTX);
     for (const name of GLOBAL_NAMES) {
-      expect(find(items, name)).toMatchObject({ kind: 'global', detail: '全局' });
+      expect(find(items, name)).toMatchObject({ kind: 'global', detail: { scope: 'global' } });
     }
     expect(find(items, 'undefined')).toBeDefined();
   });
@@ -97,7 +97,7 @@ describe('core/expression/complete — 根级 / 全局', () => {
   it('根字段与全局重名时去重（根字段在前）', () => {
     const items = getCompletions('', 0, { rootKeys: ['Math', 'x'], rootKinds: { Math: 'object' } });
     expect(labels(items)[0]).toBe('Math');
-    expect(find(items, 'Math')).toMatchObject({ kind: 'field', detail: '根字段 · object' });
+    expect(find(items, 'Math')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'object' } });
     expect(labels(items).filter((label) => label === 'Math')).toHaveLength(1);
     expect(labels(items)).toContain('Array');
     expect(labels(items)).toContain('x');
@@ -115,7 +115,7 @@ describe('core/expression/complete — 成员访问（X. / X?.）', () => {
   it('Math. → MATH_MEMBERS（顺序 = 白名单顺序）', () => {
     const items = getCompletions('Math.', 5, CTX);
     expect(labels(items)).toEqual([...MATH_MEMBERS]);
-    expect(items.every((item) => item.detail === 'Math 方法')).toBe(true);
+    expect(items.map((item) => item.detail)).toEqual(MATH_MEMBERS.map(() => ({ scope: 'math-method' })));
   });
 
   it('Math. 带前缀：不过滤；前缀完全相同优先', () => {
@@ -128,7 +128,7 @@ describe('core/expression/complete — 成员访问（X. / X?.）', () => {
   it('Array. → isArray', () => {
     const items = getCompletions('Array.', 6, CTX);
     expect(labels(items)).toEqual(['isArray']);
-    expect(items[0]).toMatchObject({ kind: 'method', detail: 'array 方法' });
+    expect(items[0]).toMatchObject({ kind: 'method', detail: { scope: 'array-method' } });
   });
 
   it('JSON. → parse / stringify', () => {
@@ -146,10 +146,10 @@ describe('core/expression/complete — 成员访问（X. / X?.）', () => {
     const expected = [...ARRAY_METHODS, ...STRING_METHODS.filter((name) => !ARRAY_METHODS.includes(name)), 'length'];
     expect(labels(items)).toEqual(expected);
     expect(new Set(labels(items)).size).toBe(labels(items).length);
-    expect(find(items, 'map')).toMatchObject({ kind: 'method', detail: 'array 方法' });
-    expect(find(items, 'trim')).toMatchObject({ kind: 'method', detail: 'string 方法' });
-    expect(find(items, 'includes')).toMatchObject({ kind: 'method', detail: 'array 方法' });
-    expect(find(items, 'length')).toMatchObject({ kind: 'field', detail: '属性' });
+    expect(find(items, 'map')).toMatchObject({ kind: 'method', detail: { scope: 'array-method' } });
+    expect(find(items, 'trim')).toMatchObject({ kind: 'method', detail: { scope: 'string-method' } });
+    expect(find(items, 'includes')).toMatchObject({ kind: 'method', detail: { scope: 'array-method' } });
+    expect(find(items, 'length')).toMatchObject({ kind: 'field', detail: { scope: 'property' } });
   });
 
   it('可选链 a?. 与 a. 同类（其它接收者）', () => {
@@ -270,11 +270,11 @@ const FALLBACK_LABELS = [
 ];
 
 describe('core/expression/complete — 类型感知补全（链解析 / detail / 退化）', () => {
-  it('单段键链 `items.` 命中 paths → 元素字段 + 方法并集（detail = `<kind> · 采样 <freq>/<samples>`）', () => {
+  it('单段键链 `items.` 命中 paths → 元素字段 + 方法并集（detail = sampled-field: kind/freq/samples）', () => {
     const items = getCompletions('items.', 6, PROFILE_CTX);
     expect(labels(items)).toEqual(['name', 'price', ...FALLBACK_LABELS]);
-    expect(items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 2/2' });
-    expect(items[1]).toMatchObject({ kind: 'field', detail: 'number · 采样 1/2' });
+    expect(items[0]).toMatchObject({ kind: 'field', detail: { scope: 'sampled-field', kind: 'string', freq: 2, samples: 2 } });
+    expect(items[1]).toMatchObject({ kind: 'field', detail: { scope: 'sampled-field', kind: 'number', freq: 1, samples: 2 } });
     // 数组路径命中后仍保留方法并集（ADR-0025 §6：既有能力不回归）
     expect(labels(items)).toContain('map');
   });
@@ -291,14 +291,14 @@ describe('core/expression/complete — 类型感知补全（链解析 / detail /
     expect(labels(getCompletions('$.a.b.', 7, PROFILE_CTX))).toEqual(['c']);
     expect(find(getCompletions('$.a.b.', 7, PROFILE_CTX), 'c')).toMatchObject({
       kind: 'field',
-      detail: 'number · 采样 1/1',
+      detail: { scope: 'sampled-field', kind: 'number', freq: 1, samples: 1 },
     });
   });
 
-  it('mixed → detail 用「混合」', () => {
+  it('mixed → detail {scope:sampled-field,kind:mixed}（页面格式化「混合」）', () => {
     const tags = getCompletions('tags.', 5, PROFILE_CTX);
-    expect(tags[0]).toMatchObject({ label: 'mixedField', kind: 'field', detail: '混合 · 采样 2/3' });
-    expect(tags[1]).toMatchObject({ label: 'label', detail: 'string · 采样 1/3' });
+    expect(tags[0]).toMatchObject({ label: 'mixedField', kind: 'field', detail: { scope: 'sampled-field', kind: 'mixed', freq: 2, samples: 3 } });
+    expect(tags[1]).toMatchObject({ label: 'label', detail: { scope: 'sampled-field', kind: 'string', freq: 1, samples: 3 } });
   });
 
   it('未命中（`nope.` / `missing.deep.`）→ 退化方法并集', () => {
@@ -316,20 +316,20 @@ describe('core/expression/complete — 类型感知补全（链解析 / detail /
     expect(labels(getCompletions('$[0].', 5, PROFILE_CTX))).toEqual(roots);
   });
 
-  it('根字段 detail 保持「根字段 · <kind>」（main.ts 动态示例依赖）', () => {
+  it('根字段 detail 保持 {scope:root-field,kind}（main.ts 动态示例依赖）', () => {
     const items = getCompletions('', 0, PROFILE_CTX);
-    expect(find(items, 'data')).toMatchObject({ kind: 'field', detail: '根字段 · object' });
-    expect(find(items, 'items')).toMatchObject({ kind: 'field', detail: '根字段 · array' });
-    expect(find(items, 'num')).toMatchObject({ kind: 'field', detail: '根字段 · number' });
+    expect(find(items, 'data')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'object' } });
+    expect(find(items, 'items')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'array' } });
+    expect(find(items, 'num')).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'number' } });
   });
 
-  it('根为数组：`$.` 给元素字段样本（采样 detail）+ 数组方法并集 + 全局名', () => {
+  it('根为数组：`$.` 给元素字段样本（sampled-field detail）+ 数组方法并集 + 全局名', () => {
     const items = getCompletions('$.', 2, ARRAY_ROOT_CTX);
     expect(labels(items)).toEqual(['name', 'price', ...FALLBACK_LABELS, ...GLOBAL_NAMES]);
-    expect(items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 3/3' });
-    expect(items[1]).toMatchObject({ kind: 'field', detail: 'number · 采样 2/3' });
+    expect(items[0]).toMatchObject({ kind: 'field', detail: { scope: 'sampled-field', kind: 'string', freq: 3, samples: 3 } });
+    expect(items[1]).toMatchObject({ kind: 'field', detail: { scope: 'sampled-field', kind: 'number', freq: 2, samples: 3 } });
     expect(find(getCompletions('', 0, ARRAY_ROOT_CTX), 'name')).toMatchObject({
-      detail: 'string · 采样 3/3',
+      detail: { scope: 'sampled-field', kind: 'string', freq: 3, samples: 3 },
     });
   });
 
@@ -365,7 +365,7 @@ describe('core/expression/complete — 回调参数绑定（ADR-0025 修订 2026
   it('items.map(item => item. → 元素字段（作用域级，不只紧跟 =>）', () => {
     const items = at('items.map(item => item.');
     expect(labels(items)).toEqual(['name', 'price']);
-    expect(items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 2/2' });
+    expect(items[0]).toMatchObject({ kind: 'field', detail: { scope: 'sampled-field', kind: 'string', freq: 2, samples: 2 } });
     expect(labels(items)).not.toContain('map');
   });
 

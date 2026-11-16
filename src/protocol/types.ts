@@ -189,14 +189,29 @@ export interface EvalSuccess {
 /** 求值回包（`eval`）。引擎级失败是正常回包；根不存在等协议错误仍抛 CoreError。 */
 export type EvalReply = EvalSuccess | { ok: false; error: ExprError };
 
+/**
+ * 补全项右侧说明的**结构化形状**（#45 / ADR-0026 §4）：worker 不拼语言，只给语义。
+ * 页面按当前界面语言格式化成 CM6 的 `detail` 字符串（`i18n/format.ts`）。
+ */
+export type CompletionDetail =
+  | { scope: 'root-field'; kind: JsonKind }
+  | { scope: 'root-field-plain' }
+  | { scope: 'sampled-field'; kind: JsonKind | 'mixed'; freq: number; samples: number }
+  | { scope: 'global' }
+  | { scope: 'math-method' }
+  | { scope: 'array-method' }
+  | { scope: 'string-method' }
+  | { scope: 'json-method' }
+  | { scope: 'property' };
+
 /** 静态补全项（CM6 `@codemirror/autocomplete` 形态；数据源在 worker）。 */
 export interface ExprCompletion {
   label: string;
   kind: 'field' | 'method' | 'global' | 'keyword';
   /** 插入文本；缺省 = label */
   insertText?: string;
-  /** 右侧说明（如「根字段 · array」/「array 方法」） */
-  detail?: string;
+  /** 右侧说明（结构化，由页面本地化） */
+  detail?: CompletionDetail;
 }
 
 /** 补全回包（`complete`）。 */
@@ -227,14 +242,30 @@ export interface RepairCounts {
   deletedChars: number;
 }
 
+/**
+ * 一条修复说明的**结构化形状**（#45 / ADR-0026 §4）：worker 只给语义，页面按界面语言格式化。
+ * 与旧中文 note 逐条一一对应（见 `core/repair.ts` 的 note 生成点）。
+ */
+export type RepairNote =
+  | { code: 'trailing-comma' }
+  | { code: 'member-no-value' }
+  | { code: 'escape-half' }
+  | { code: 'string-unclosed' }
+  | { code: 'literal-partial'; literal: string }
+  | { code: 'number-dropped'; literal: string }
+  | { code: 'number-prefix'; literal: string; keep: string }
+  | { code: 'key-no-value' }
+  | { code: 'dangling-key' }
+  | { code: 'closers'; count: number; closers: string; where: string };
+
 /** 一条修复操作；`at` 指向**原文本**偏移（insert 的 at = 原文本长度） */
 export interface RepairOp {
   at: number;
   op: 'insert' | 'delete';
   text: string;
   scope: 'container' | 'string' | 'token' | 'member' | 'comma';
-  /** 摘要列表逐条展示的中文说明 */
-  note: string;
+  /** 摘要列表逐条展示的说明（结构化，由页面本地化） */
+  note: RepairNote;
 }
 
 /** 修复 provenance（ADR-0004 §6.3）：挂在 DocumentMeta 上，不随视图切换丢失 */
@@ -244,8 +275,6 @@ export interface RepairProvenance {
   truncatedAt?: number;
   /** 原 JSON.parse 错误信息 */
   parseError?: string;
-  /** 一行中文摘要（UI 直接展示） */
-  summaryText?: string;
   counts?: RepairCounts;
   ops?: RepairOp[];
   /** unrepairable 的原因：not-eof=错误不在末尾 / still-invalid=修复后仍不可解析 */

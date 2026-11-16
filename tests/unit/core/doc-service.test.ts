@@ -1016,8 +1016,13 @@ describe('DocService — 截断修复（#8 / ADR-0004 修订）', () => {
     const reply = await load(svc, '{"a":1,"b":"hello wor');
     expect(reply.meta.repair).toMatchObject({ status: 'repaired', truncatedAt: 21 });
     expect(reply.meta.repair?.parseError).toBeTruthy();
-    expect(reply.meta.repair?.summaryText).toContain('仅语法闭合');
-    expect(reply.meta.repair?.ops?.length ?? 0).toBeGreaterThan(0);
+    // 摘要字段已删（页面由 counts 拼文案，ADR-0026 §4）：core 只给结构化 counts + 结构化 note
+    expect(reply.meta.repair).not.toHaveProperty('summaryText');
+    expect(reply.meta.repair?.counts).toEqual({ brackets: 1, quotes: 1, commas: 0, deletedChars: 0 });
+    expect(reply.meta.repair?.ops?.map((op) => op.note)).toEqual([
+      { code: 'string-unclosed' },
+      { code: 'closers', count: 1, closers: '}', where: '{@0' },
+    ]);
 
     const repairEvents = events.filter((event) => event.t === 'repair');
     expect(repairEvents).toHaveLength(1);

@@ -118,7 +118,6 @@ export function loadDocument(input: LoadDocumentInput): LoadDocumentResult {
       status: 'repaired',
       truncatedAt: attempt.truncatedAt ?? text.length,
       parseError: message,
-      summaryText: attempt.summaryText,
       counts: attempt.counts,
       ops: attempt.ops,
     };

@@ -142,15 +142,15 @@ const MATRIX_DOC = {
   'h.tel': 'dot is literal in substring',
 };
 
-/** 断言抛 BAD_PATTERN 并返回 message（避开 try/catch 重复）。 */
-function badPatternMessage(query: string, opts: { caseSensitive?: boolean; regex?: boolean } = {}): string {
+/** 断言抛 BAD_PATTERN 并返回 CoreError（结构化断言 code / patternIssue / patternLimit / message）。 */
+function badPattern(query: string, opts: { caseSensitive?: boolean; regex?: boolean } = {}): CoreError {
   try {
     searchDocument({ s: 'aaa' }, query, opts);
   } catch (error) {
     expect(error).toBeInstanceOf(CoreError);
     const coreError = error as CoreError;
     expect(coreError.code).toBe('BAD_PATTERN');
-    return coreError.message;
+    return coreError;
   }
   throw new Error(`expected BAD_PATTERN for ${query}`);
 }
@@ -212,17 +212,20 @@ describe('searchDocument — 正则模式：键优先 / 只匹配键名 + 字符
 });
 
 describe('searchDocument — 正则模式：BAD_PATTERN（语法 / 超长 / 安全筛查）', () => {
-  it('无效正则 → BAD_PATTERN，message 带原生原因', () => {
-    const message = badPatternMessage('(', { regex: true });
-    expect(message.startsWith('正则语法错误：')).toBe(true);
-    expect(message.length).toBeGreaterThan('正则语法错误：'.length);
+  it('无效正则 → BAD_PATTERN + patternIssue=syntax，message 保留引擎原文', () => {
+    const error = badPattern('(', { regex: true });
+    expect(error.patternIssue).toBe('syntax');
+    // 本地化前缀由页面按 patternIssue 加（ADR-0026 §4）；core 只透传引擎 reason
+    expect(error.message).toContain('Invalid regular expression');
     expect(() => searchDocument(DOC, '[', { regex: true })).toThrowError(CoreError);
   });
 
-  it(`超过 SEARCH_PATTERN_MAX（${SEARCH_PATTERN_MAX}）→ BAD_PATTERN「正则过长」`, () => {
+  it(`超过 SEARCH_PATTERN_MAX（${SEARCH_PATTERN_MAX}）→ BAD_PATTERN + patternIssue=too-long + patternLimit`, () => {
     const tooLong = 'a'.repeat(SEARCH_PATTERN_MAX + 1);
-    const message = badPatternMessage(tooLong, { regex: true });
-    expect(message).toBe(`正则过长（上限 ${SEARCH_PATTERN_MAX} 字符）`);
+    const error = badPattern(tooLong, { regex: true });
+    expect(error.patternIssue).toBe('too-long');
+    expect(error.patternLimit).toBe(SEARCH_PATTERN_MAX);
+    expect(error.message).toBe('pattern too long');
   });
 
   it('恰好 SEARCH_PATTERN_MAX 字符仍可编译（边界不误杀）', () => {
@@ -233,7 +236,9 @@ describe('searchDocument — 正则模式：BAD_PATTERN（语法 / 超长 / 安�
 
   it('量词作用于含量词的分组 → 拒绝（(a+)+ / (a*)+ / (a+)* / (?:a{1,})+ / ((a+))+）', () => {
     for (const unsafe of ['(a+)+', '(a*)+', '(a+)*', '(?:a{1,})+', '((a+))+']) {
-      expect(badPatternMessage(unsafe, { regex: true })).toBe('该正则可能触发灾难性回溯');
+      const error = badPattern(unsafe, { regex: true });
+      expect(error.patternIssue).toBe('backtracking');
+      expect(error.message).toBe('catastrophic backtracking');
     }
   });
 
@@ -268,7 +273,7 @@ describe('regexSafetyError — 静态筛查纯函数', () => {
 
   it('嵌套量词返回拒绝原因', () => {
     for (const unsafe of ['(a+)+', '(a?)+', '((a+))+', '(a+){2}', '(a+){2,}', '(?:a{1,})+']) {
-      expect(regexSafetyError(unsafe)).toBe('该正则可能触发灾难性回溯');
+      expect(regexSafetyError(unsafe)).toBe('catastrophic backtracking');
     }
   });
 

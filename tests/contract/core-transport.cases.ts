@@ -729,7 +729,11 @@ export function runCoreContract(label: string, create: HarnessFactory): void {
       const completed = await h.api.complete({ rootId: loaded.rootId, text: 'items.', pos: 6 });
       expect(completed.items.map((item) => item.label).slice(0, 2)).toEqual(['name', 'price']);
       expect(completed.items.map((item) => item.label)).toContain('map');
-      expect(completed.items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 2/2' });
+      // #45 / ADR-0026 §4：detail 是结构化数据（页面按 locale 格式化）
+      expect(completed.items[0]).toMatchObject({
+        kind: 'field',
+        detail: { scope: 'sampled-field', kind: 'string', freq: 2, samples: 2 },
+      });
 
       // 表达式根不做 profile（与 complete 同口径）→ BAD_COMMAND
       const evaluated = await h.api.eval({

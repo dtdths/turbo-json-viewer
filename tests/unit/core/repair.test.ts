@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { repairTruncatedJson } from '../../../src/core/repair';
-import type { RepairCounts } from '../../../src/protocol/types';
+import type { RepairCounts, RepairNote } from '../../../src/protocol/types';
 
 /** §6.1 的 16 个截断 fixture：源文本 → 修复后应逐字等于的文本 */
 const TRUNCATED: [string, string][] = [
@@ -86,7 +86,8 @@ describe('repairTruncatedJson — 16 个截断 fixture 逐字修复（§6.1）',
       expect(r.truncatedAt).toBe(source.length);
       expect(r.unrepairableReason).toBeUndefined();
       expect(r.counts).toBeDefined();
-      expect(r.summaryText).toBeDefined();
+      // 每条编辑都带结构化 note（页面按语言格式化；worker 不拼文案）
+      for (const op of r.ops ?? []) expect(typeof op.note.code).toBe('string');
       // 修完即合法 → 再修一次应判定 none（幂等）
       expect(repairTruncatedJson(r.text as string)).toEqual({ status: 'none' });
     });
@@ -104,7 +105,7 @@ describe('repairTruncatedJson — 非 EOF 形态拒绝修复', () => {
       expect(r.text).toBeUndefined();
       expect(r.ops).toBeUndefined();
       expect(r.counts).toBeUndefined();
-      expect(r.summaryText).toBeUndefined();
+      expect(r).not.toHaveProperty('summaryText');
       expect(r.truncatedAt).toBeUndefined();
     });
   }
@@ -171,33 +172,128 @@ describe('repairTruncatedJson — counts（§6.3 形状）', () => {
   });
 });
 
-describe('repairTruncatedJson — summaryText（中文一行、零计数省略）', () => {
-  it('只补闭合符 + 结束引号', () => {
-    const r = repairTruncatedJson('{"a":{"b":[{"c":[1,{"d":"x');
-    expect(r.summaryText).toBe('已修复：补 6 个闭合符、1 个结束引号（仅语法闭合，未修改任何已有值）');
-  });
+describe('repairTruncatedJson — note 结构化（RepairNote 判别联合，ADR-0026 §4）', () => {
+  /** 每条 note 与旧中文串一一对应（页面按语言格式化；worker 只给 code + 参数）。 */
+  const NOTES: [string, RepairNote[]][] = [
+    // 尾逗号 / 补闭合符
+    [
+      '{"a":1,',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'trailing-comma' },
+      ],
+    ],
+    // 半个键名 → 丢整个成员（+ 前导逗号）
+    [
+      '{"a":1,"bb',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'member-no-value' },
+        { code: 'trailing-comma' },
+      ],
+    ],
+    // 半个转义 + 未闭合字符串
+    [
+      '{"s":"ab\\',
+      [
+        { code: 'string-unclosed' },
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'escape-half' },
+      ],
+    ],
+    // 半个字面量 → 连同键/冒号删掉（literal 参数 = 原文切片）
+    [
+      '{"t":tru',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'literal-partial', literal: 'tru' },
+        { code: 'dangling-key' },
+      ],
+    ],
+    // 数字没有合法前缀 → 整段丢弃
+    [
+      '{"n":-',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'number-dropped', literal: '-' },
+        { code: 'dangling-key' },
+      ],
+    ],
+    // 数字保留最长合法前缀（literal = 原文，keep = 保留的前缀）
+    [
+      '{"n":1.2e',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'number-prefix', literal: '1.2e', keep: '1.2' },
+      ],
+    ],
+    // 键已闭合但没有值 → 删键
+    [
+      '{"a"',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'key-no-value' },
+      ],
+    ],
+    // 悬空键（键 + 冒号）→ 连同冒号删掉
+    [
+      '{"a":',
+      [
+        { code: 'closers', count: 1, closers: '}', where: '{@0' },
+        { code: 'dangling-key' },
+      ],
+    ],
+    // 多条闭合符合成一条 note（count / closers / where 均来自容器栈）
+    [
+      '{"a":{"b":[{"c":[1,{"d":"x',
+      [
+        { code: 'string-unclosed' },
+        {
+          code: 'closers',
+          count: 6,
+          closers: '}]}]}}',
+          where: '{@0, {@5, [@10, {@11, [@16, {@19',
+        },
+      ],
+    ],
+    // 数组：闭合符 + 尾逗号
+    [
+      '{"a":[1,2,',
+      [
+        { code: 'closers', count: 2, closers: ']}', where: '{@0, [@5' },
+        { code: 'trailing-comma' },
+      ],
+    ],
+  ];
 
-  it('有删除时「删除 N 个字符」在前', () => {
-    const r = repairTruncatedJson('{"a":1,"bb');
-    expect(r.summaryText).toBe('已修复：删除 4 个字符、补 1 个闭合符（仅语法闭合，未修改任何已有值）');
-  });
+  for (const [source, notes] of NOTES) {
+    it(`${JSON.stringify(source)} → ${JSON.stringify(notes)}`, () => {
+      const r = repairTruncatedJson(source);
+      expect(r.ops?.map((op) => op.note)).toEqual(notes);
+    });
+  }
 
-  it('只有闭合符（无结束引号）时不出现「结束引号」', () => {
-    const r = repairTruncatedJson('{"items":[1,2,3');
-    expect(r.summaryText).toBe('已修复：补 2 个闭合符（仅语法闭合，未修改任何已有值）');
-  });
-
-  it('所有已修复 fixture 的摘要都以固定后缀收尾且不含零计数项', () => {
+  it('所有已修复 fixture 的 note 都是合法 code / 参数形状（无文案字段）', () => {
+    const CODES = new Set([
+      'trailing-comma',
+      'member-no-value',
+      'escape-half',
+      'string-unclosed',
+      'literal-partial',
+      'number-dropped',
+      'number-prefix',
+      'key-no-value',
+      'dangling-key',
+      'closers',
+    ]);
     for (const [source] of TRUNCATED) {
       const r = repairTruncatedJson(source);
-      const summary = r.summaryText as string;
-      expect(summary.startsWith('已修复：')).toBe(true);
-      expect(summary.endsWith('（仅语法闭合，未修改任何已有值）')).toBe(true);
-      expect(summary).toContain('仅语法闭合');
-      const counts = r.counts as RepairCounts;
-      if (counts.deletedChars === 0) expect(summary).not.toContain('删除');
-      if (counts.quotes === 0) expect(summary).not.toContain('结束引号');
-      if (counts.brackets === 0) expect(summary).not.toContain('闭合符');
+      for (const op of r.ops ?? []) {
+        expect(CODES.has(op.note.code)).toBe(true);
+        // 结构里只有 code 与参数，绝不夹带预格式化文案
+        expect(Object.keys(op.note).sort()).not.toContain('text');
+        expect(Object.keys(op.note).sort()).not.toContain('message');
+      }
     }
   });
 });
@@ -215,8 +311,8 @@ describe('repairTruncatedJson — ops（偏移指向原文本）', () => {
         expect(op.at).toBeGreaterThanOrEqual(0);
         expect(op.at).toBeLessThanOrEqual(source.length);
         expect(['container', 'string', 'token', 'member', 'comma']).toContain(op.scope);
-        expect(typeof op.note).toBe('string');
-        expect(op.note.length).toBeGreaterThan(0);
+        expect(typeof op.note.code).toBe('string');
+        expect(op.note.code.length).toBeGreaterThan(0);
         expect(['insert', 'delete']).toContain(op.op);
 
         if (op.op === 'insert') {
@@ -236,11 +332,8 @@ describe('repairTruncatedJson — ops（偏移指向原文本）', () => {
     expect(closers).toHaveLength(1);
     expect(closers[0].text).toBe(']}');
     expect(closers[0].at).toBe('{"items":[1,2,3'.length);
-    // note 交代「补几个」与对应未闭合容器的原文偏移
-    expect(closers[0].note).toContain('补 2 个闭合符');
-    expect(closers[0].note).toContain(']}');
-    expect(closers[0].note).toContain('{@0');
-    expect(closers[0].note).toContain('[@9');
+    // note 交代「补几个」与对应未闭合容器的原文偏移（结构化参数）
+    expect(closers[0].note).toEqual({ code: 'closers', count: 2, closers: ']}', where: '{@0, [@9' });
   });
 
   it('不完整转义的 note 明说不猜测字符', () => {
@@ -249,17 +342,19 @@ describe('repairTruncatedJson — ops（偏移指向原文本）', () => {
     expect(del?.scope).toBe('string');
     expect(del?.text).toBe('\\');
     expect(del?.at).toBe('{"s":"ab'.length);
-    expect(del?.note).toContain('不完整转义');
-    expect(del?.note).toContain('不猜测');
+    expect(del?.note).toEqual({ code: 'escape-half' });
   });
 
   it('深层嵌套：闭合符按容器栈逆序补齐并给出全部未闭合容器偏移', () => {
     const r = repairTruncatedJson('{"a":{"b":[{"c":[1,{"d":"x');
     const closer = (r.ops ?? []).find((op) => op.op === 'insert' && op.scope === 'container');
     expect(closer?.text).toBe('}]}]}}');
-    expect(closer?.note).toContain('补 6 个闭合符');
-    expect(closer?.note).toContain('{@0');
-    expect(closer?.note).toContain('{@19');
+    expect(closer?.note).toEqual({
+      code: 'closers',
+      count: 6,
+      closers: '}]}]}}',
+      where: '{@0, {@5, [@10, {@11, [@16, {@19',
+    });
   });
 
   it('修复后文本 = 应用 ops 后的结果（右到左不串位）', () => {

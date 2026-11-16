@@ -18,6 +18,12 @@ export type CoreErrorCode =
   | 'BAD_PATTERN'
   | 'NO_HISTORY';
 
+/**
+ * 正则不可用的细分原因（#45 / ADR-0026 §4）：`BAD_PATTERN` 的本地化由页面按 issue 选词条。
+ * `message` 仍保留引擎原文（通常是英文 `Invalid regular expression: …`），附在本地化前缀后。
+ */
+export type PatternIssue = 'syntax' | 'too-long' | 'backtracking';
+
 export interface CoreErrorShape {
   code: CoreErrorCode;
   message: string;
@@ -25,6 +31,10 @@ export interface CoreErrorShape {
   column?: number;
   bytes?: number;
   totalRows?: number;
+  /** 仅 `BAD_PATTERN`：不可用的细分原因（页面据此选词条） */
+  patternIssue?: PatternIssue;
+  /** 仅 `BAD_PATTERN` + `patternIssue='too-long'`：实际上限（页面文案用） */
+  patternLimit?: number;
 }
 
 /** 可跨线程序列化的错误；transport 负责摊平/还原。 */
@@ -34,6 +44,8 @@ export class CoreError extends Error {
   readonly column?: number;
   readonly bytes?: number;
   readonly totalRows?: number;
+  readonly patternIssue?: PatternIssue;
+  readonly patternLimit?: number;
 
   constructor(shape: CoreErrorShape) {
     super(shape.message);
@@ -43,6 +55,8 @@ export class CoreError extends Error {
     this.column = shape.column;
     this.bytes = shape.bytes;
     this.totalRows = shape.totalRows;
+    this.patternIssue = shape.patternIssue;
+    this.patternLimit = shape.patternLimit;
   }
 
   toShape(): CoreErrorShape {
@@ -51,6 +65,8 @@ export class CoreError extends Error {
     if (this.column !== undefined) out.column = this.column;
     if (this.bytes !== undefined) out.bytes = this.bytes;
     if (this.totalRows !== undefined) out.totalRows = this.totalRows;
+    if (this.patternIssue !== undefined) out.patternIssue = this.patternIssue;
+    if (this.patternLimit !== undefined) out.patternLimit = this.patternLimit;
     return out;
   }
 

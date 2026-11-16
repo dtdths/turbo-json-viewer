@@ -201,7 +201,7 @@ describe('DocService.complete — 从缓存 profile 拼补全上下文（ADR-002
     expect(labels).not.toContain('name');
   });
 
-  it('profile 就绪 → items. 给真实元素字段（detail = `<kind> · 采样 <freq>/<samples>`）', async () => {
+  it('profile 就绪 → items. 给真实元素字段（detail = sampled-field: kind/freq/samples）', async () => {
     const svc = new DocService();
     const loaded = await load(svc);
     await profileOf(svc, loaded.rootId);
@@ -210,23 +210,32 @@ describe('DocService.complete — 从缓存 profile 拼补全上下文（ADR-002
     // 数组路径：元素字段在前，随后追加数组方法并集（ADR-0025 §6 修订：既有能力不回归）
     expect(items.items.map((item) => item.label).slice(0, 2)).toEqual(['name', 'price']);
     expect(items.items.map((item) => item.label)).toContain('map');
-    expect(items.items[0]).toMatchObject({ kind: 'field', detail: 'string · 采样 2/2' });
-    expect(items.items[1]).toMatchObject({ kind: 'field', detail: 'number · 采样 2/2' });
+    expect(items.items[0]).toMatchObject({
+      kind: 'field',
+      detail: { scope: 'sampled-field', kind: 'string', freq: 2, samples: 2 },
+    });
+    expect(items.items[1]).toMatchObject({
+      kind: 'field',
+      detail: { scope: 'sampled-field', kind: 'number', freq: 2, samples: 2 },
+    });
 
     // 任意深纯键链：$.meta.
     const meta = await completeOf(svc, loaded.rootId, '$.meta.');
     expect(meta.items.map((item) => item.label)).toEqual(['v']);
-    expect(meta.items[0]).toMatchObject({ kind: 'field', detail: 'number · 采样 1/1' });
+    expect(meta.items[0]).toMatchObject({
+      kind: 'field',
+      detail: { scope: 'sampled-field', kind: 'number', freq: 1, samples: 1 },
+    });
   });
 
-  it('根级补全保持「根字段 · <kind>」detail（main.ts 动态示例依赖）', async () => {
+  it('根级补全保持 {scope:root-field,kind} detail（main.ts 动态示例依赖）', async () => {
     const svc = new DocService();
     const loaded = await load(svc);
     await profileOf(svc, loaded.rootId);
     const reply = await completeOf(svc, loaded.rootId, '');
     const items = reply.items.find((item) => item.label === 'items');
     const meta = reply.items.find((item) => item.label === 'meta');
-    expect(items).toMatchObject({ kind: 'field', detail: '根字段 · array' });
-    expect(meta).toMatchObject({ kind: 'field', detail: '根字段 · object' });
+    expect(items).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'array' } });
+    expect(meta).toMatchObject({ kind: 'field', detail: { scope: 'root-field', kind: 'object' } });
   });
 });
