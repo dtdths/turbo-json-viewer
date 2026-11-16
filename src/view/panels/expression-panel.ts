@@ -21,6 +21,7 @@ import { mountExpressionEditor, type ExpressionEditor } from './expression-edito
 import { EXPR_COPY } from '../../shared/expression-copy';
 import { EXPR_HISTORY_MAX } from '../../protocol/versions';
 import type { ExprCompletion } from '../../protocol/types';
+import { t } from '../../i18n/index';
 
 export interface ExpressionPanelOptions {
   onRun: (text: string, strict: boolean) => void;
@@ -57,12 +58,12 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-/** `（第 L 行第 C 列）` 后缀；message 里已含行列时不再重复拼（app 可能传 exprErrorText 结果）。 */
+/** 位置后缀；message 里已含行列时不再重复拼（app 可能传 exprErrorText 结果）。 */
 function formatErrorLocation(error: ExpressionError): string {
   if (error.line === undefined) return '';
-  if (/（第 \d+ 行/.test(error.message)) return '';
-  if (error.column === undefined) return `（第 ${error.line} 行）`;
-  return `（第 ${error.line} 行第 ${error.column} 列）`;
+  if (error.message.includes(t('view.location.marker'))) return '';
+  if (error.column === undefined) return t('view.location.line', { line: error.line });
+  return t('view.location.lineColumn', { line: error.line, column: error.column });
 }
 
 export class ExpressionPanel {
@@ -88,8 +89,12 @@ export class ExpressionPanel {
   private historyDraft: string | null = null;
 
   private editorHost: HTMLElement | null = null;
+  private placeholderEl: HTMLElement | null = null;
+  /** 上一次编辑器懒加载是否失败（失败占位不能被 relabel 改回「加载中」） */
+  private editorFailed = false;
   private runBtn: HTMLButtonElement | null = null;
   private strictInput: HTMLInputElement | null = null;
+  private strictTextEl: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private errorEl: HTMLElement | null = null;
   private examplesEl: HTMLElement | null = null;
@@ -137,12 +142,36 @@ export class ExpressionPanel {
     this.editorHost?.removeEventListener(HISTORY_EVENT, this.handleHistoryEvent);
     this.host.replaceChildren();
     this.editorHost = null;
+    this.placeholderEl = null;
+    this.editorFailed = false;
     this.runBtn = null;
     this.strictInput = null;
+    this.strictTextEl = null;
     this.statusEl = null;
     this.errorEl = null;
     this.examplesEl = null;
     this.historyEl = null;
+  }
+
+  /**
+   * 语言切换：回填面板持有的静态文案（aria / 占位 / 执行按钮 / 严格模式标签 / 示例与历史标题 /
+   * 运行中状态行），并让编辑器重配 aria-label。幂等、不触发 onRun/onStrictChange、不改输入文本。
+   */
+  relabel(): void {
+    if (!this.mounted) return;
+    this.host.setAttribute('aria-label', t('view.expr.panelLabel'));
+    if (!this.editor && !this.editorFailed && this.placeholderEl) {
+      this.placeholderEl.textContent = t('view.expr.editorLoading');
+    }
+    if (this.runBtn) {
+      this.runBtn.textContent = this.running ? EXPR_COPY.running : EXPR_COPY.run;
+      this.runBtn.title = t('view.expr.runTitle');
+    }
+    if (this.strictTextEl) this.strictTextEl.textContent = EXPR_COPY.strict;
+    this.renderExamples();
+    this.renderHistory();
+    if (this.running) this.setStatus(EXPR_COPY.running);
+    this.editor?.relabel();
   }
 
   /* ------------------------------------------------------------------ */
@@ -240,15 +269,16 @@ export class ExpressionPanel {
   private buildUi(): void {
     this.mounted = true;
     this.host.classList.add('panel', 'panel--expression');
-    if (!this.host.hasAttribute('aria-label')) this.host.setAttribute('aria-label', '表达式面板');
+    this.host.setAttribute('aria-label', t('view.expr.panelLabel'));
 
     /* ---- 输入区：CM6 懒加载；加载前显示占位 ---- */
     const editorHost = el('div', 'expr__editor');
     editorHost.id = 'exprEditor';
     const placeholder = el('div', 'expr__placeholder');
-    placeholder.textContent = '编辑器加载中…';
+    placeholder.textContent = t('view.expr.editorLoading');
     editorHost.appendChild(placeholder);
     this.editorHost = editorHost;
+    this.placeholderEl = placeholder;
 
     /* ---- 操作行：执行 / 严格模式 / 状态 ---- */
     const ops = el('div', 'expr__ops');
@@ -257,7 +287,7 @@ export class ExpressionPanel {
     runBtn.id = 'exprRun';
     runBtn.type = 'button';
     runBtn.textContent = EXPR_COPY.run;
-    runBtn.title = '执行表达式（Enter）';
+    runBtn.title = t('view.expr.runTitle');
     runBtn.addEventListener('click', () => this.opts.onRun(this.getText(), this.strict));
     this.runBtn = runBtn;
 
@@ -273,6 +303,7 @@ export class ExpressionPanel {
     this.strictInput = strictInput;
     const strictText = el('span');
     strictText.textContent = EXPR_COPY.strict;
+    this.strictTextEl = strictText;
     strictLabel.append(strictInput, strictText);
 
     const statusEl = el('span', 'expr__status');
@@ -393,10 +424,12 @@ export class ExpressionPanel {
     } catch {
       // CM6 加载失败不该让面板抛未处理 rejection：占位改成可读文案，下次 mount 再重试。
       this.editorPromise = null;
+      this.editorFailed = true;
       host.replaceChildren();
       const failed = el('div', 'expr__placeholder');
-      failed.textContent = '编辑器加载失败，请重试';
+      failed.textContent = t('view.expr.editorFailed');
       host.appendChild(failed);
+      this.placeholderEl = failed;
       return;
     }
 
@@ -406,6 +439,8 @@ export class ExpressionPanel {
     }
 
     this.editor = editor;
+    this.editorFailed = false;
+    this.placeholderEl = null;
     editor.setText(this.text);
     if (this.errorState) editor.setError(this.errorState);
     if (this.focusPending) {

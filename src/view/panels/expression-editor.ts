@@ -33,6 +33,8 @@ import type {
 } from '@codemirror/autocomplete';
 import type { Diagnostic as CmDiagnostic } from '@codemirror/lint';
 import type { ExprCompletion } from '../../protocol/types';
+import { completionDetailText } from '../../i18n/format';
+import { t } from '../../i18n/index';
 
 export interface ExpressionEditorOptions {
   /** Enter / Mod-Enter */
@@ -54,6 +56,8 @@ export interface ExpressionEditor {
   getText(): string;
   setError(error: ExpressionEditorError | null): void;
   focus(): void;
+  /** 语言切换：重配编辑器容器的 aria-label（静态文案，其余内容都是用户输入）。 */
+  relabel(): void;
   destroy(): void;
 }
 
@@ -376,12 +380,35 @@ const COMPLETION_TYPE: Record<ExprCompletion['kind'], string> = {
   keyword: 'keyword',
 };
 
+/** CM6 `Completion` 里本适配器用到的字段（纯数据形态，便于单测，不依赖 CM6 运行时）。 */
+export interface CompletionOptionData {
+  label: string;
+  detail?: string;
+  type: string;
+  apply: string;
+}
+
+/**
+ * 补全项 → CM6 `Completion` 数据（ADR-0026 §4）：`detail` 是 worker 产出的**结构化**
+ * `CompletionDetail`（可能缺省），这里用 `completionDetailText` 按当前 locale 格式化成
+ * CM6 需要的字符串；切语言后下一次补全即新语言（旧回包也能重渲染）。
+ */
+export function completionOptionData(item: ExprCompletion): CompletionOptionData {
+  const option: CompletionOptionData = {
+    label: item.label,
+    type: COMPLETION_TYPE[item.kind],
+    apply: item.insertText ?? item.label,
+  };
+  if (item.detail !== undefined) option.detail = completionDetailText(item.detail);
+  return option;
+}
+
 export async function mountExpressionEditor(
   host: HTMLElement,
   opts: ExpressionEditorOptions,
 ): Promise<ExpressionEditor> {
   const cm = await loadCm6();
-  const { EditorState } = cm.state;
+  const { EditorState, Compartment } = cm.state;
   const { EditorView, keymap, drawSelection } = cm.view;
   const { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } = cm.commands;
   const { bracketMatching } = cm.language;
@@ -417,12 +444,7 @@ export async function mountExpressionEditor(
     }
     if (destroyed || items.length === 0) return null;
 
-    const options: Completion[] = items.map((item) => ({
-      label: item.label,
-      detail: item.detail,
-      type: COMPLETION_TYPE[item.kind],
-      apply: item.insertText ?? item.label,
-    }));
+    const options: Completion[] = items.map(completionOptionData);
 
     return { from: word ? word.from : pos, options, validFor: /^[\w$]*$/ };
   };
@@ -466,6 +488,16 @@ export async function mountExpressionEditor(
 
   /* ---------------- state / view ---------------- */
 
+  /** 编辑器容器的 aria-label 走 Compartment：语言切换时 relabel() 重配，无需重建编辑器。 */
+  const contentAttributes = new Compartment();
+  const editorContentAttributes = (): ReturnType<typeof EditorView.contentAttributes.of> =>
+    EditorView.contentAttributes.of({
+      'aria-label': t('view.expr.editorLabel'),
+      spellcheck: 'false',
+      autocapitalize: 'off',
+      autocorrect: 'off',
+    });
+
   const state = EditorState.create({
     doc: '',
     extensions: [
@@ -479,12 +511,7 @@ export async function mountExpressionEditor(
       // lint 的「容器」：真正要显示的错误由 setError() 用 setDiagnostics 外部写入；
       // 这里用超长 delay 的空 source 保证 lintPlugin 存在且不会把外部诊断清掉。
       linter(() => [], { delay: 2_000_000_000 }),
-      EditorView.contentAttributes.of({
-        'aria-label': '表达式输入',
-        spellcheck: 'false',
-        autocapitalize: 'off',
-        autocorrect: 'off',
-      }),
+      contentAttributes.of(editorContentAttributes()),
       keymap.of([
         { key: 'Enter', run: runEditor },
         { key: 'Mod-Enter', run: runEditor },
@@ -523,6 +550,10 @@ export async function mountExpressionEditor(
     },
     focus(): void {
       if (!destroyed) view.focus();
+    },
+    relabel(): void {
+      if (destroyed) return;
+      view.dispatch({ effects: contentAttributes.reconfigure(editorContentAttributes()) });
     },
     destroy(): void {
       if (destroyed) return;

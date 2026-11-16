@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { initI18n } from '../../../src/i18n/index';
 import {
   CLIPBOARD_MAX_BYTES,
   clipboardRefusal,
@@ -10,6 +11,11 @@ import {
 } from '../../../src/viewmodel/export-state';
 
 const MB = 1024 * 1024;
+
+// 导出方式文案已走词条（getter 读当前 locale）：中文断言显式钉 zh-CN。
+beforeAll(async () => {
+  await initI18n('zh-CN');
+});
 
 describe('export-state — 模式枚举与校验（ADR-0012 §7）', () => {
   it('两种方式、默认文件导出', () => {

@@ -21,6 +21,7 @@
  */
 import { TAB_STRIP_HEIGHT } from '../protocol/versions';
 import { DOC_NAME_MAX, displayTitle } from '../shared/doc-name';
+import { t } from '../i18n/index';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const TAB_SELECTOR = '.tabstrip__tab';
@@ -106,7 +107,7 @@ export class TabStrip {
     const items = host.querySelector<HTMLElement>('#tabStripItems');
     const addBtn = host.querySelector<HTMLButtonElement>('#tabAdd');
     if (!items || !addBtn) {
-      throw new Error('tab-strip: 缺少 #tabStripItems / #tabAdd（page.html DOM 契约不符）');
+      throw new Error('tab-strip: missing #tabStripItems / #tabAdd (page.html DOM contract mismatch)');
     }
     this.host = host;
     this.items = items;
@@ -155,9 +156,24 @@ export class TabStrip {
     this.items.replaceChildren(frag);
 
     this.addBtn.disabled = !view.canAdd;
-    this.addBtn.title = view.canAdd ? '新标签（⌘⇧O）' : `最多 ${view.max} 个标签`;
+    this.addBtn.title = view.canAdd
+      ? t('view.tabstrip.add')
+      : t('view.tabstrip.limit', { n: view.max });
+    this.addBtn.setAttribute(
+      'aria-label',
+      view.canAdd ? t('view.tabstrip.addLabel') : t('view.tabstrip.limit', { n: view.max }),
+    );
 
     if (hadFocus) this.focusTab(view.activeId ?? view.tabs[0]?.id ?? null);
+  }
+
+  /**
+   * 语言切换：按最近一次视图重绘（标签悬停原名 / 关闭 aria / `＋` 的 title+aria 都现取词条）。
+   * 幂等、不改标签数据与激活态；未渲染过时无操作。
+   */
+  relabel(): void {
+    if (!this.mounted || !this.view) return;
+    this.render(this.view);
   }
 
   /** 解绑事件并清空条内 DOM（app 拆除时调用；之后可重新 mount）。 */
@@ -207,7 +223,7 @@ export class TabStrip {
     close.tabIndex = -1;
     close.dataset.tabClose = tab.id;
     // 不带 ✕ 文案，读屏靠 aria-label；× 图标 visual 隐藏
-    close.setAttribute('aria-label', `关闭 ${tab.name}`);
+    close.setAttribute('aria-label', t('view.tabstrip.close', { name: tab.name }));
     // 从关闭按钮上拖不起标签（避免误拖）
     close.draggable = false;
     close.appendChild(createCloseIcon());
@@ -262,7 +278,7 @@ export class TabStrip {
     input.value = title.textContent ?? '';
     input.maxLength = DOC_NAME_MAX;
     input.spellcheck = false;
-    input.setAttribute('aria-label', '标签名（Enter 保存，Esc 取消）');
+    input.setAttribute('aria-label', t('view.tabstrip.renameLabel'));
     // 编辑框自己吃掉键盘/点击，别让 roving tabindex 的宿主处理器把焦点抢走（抢走 = 立即失焦提交）
     input.addEventListener('keydown', (event) => {
       event.stopPropagation();

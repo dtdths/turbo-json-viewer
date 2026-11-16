@@ -24,6 +24,7 @@ import {
 } from '../../viewmodel/search-state';
 import { SEARCH_LIMIT } from '../../protocol/versions';
 import type { Hit } from '../../protocol/types';
+import { formatNumber, t } from '../../i18n/index';
 
 export interface SearchPanelOptions {
   rowHeight?: number;
@@ -42,33 +43,37 @@ export interface SearchPanelOptions {
   onOptionsChange?(opts: { caseSensitive: boolean; regex: boolean }): void;
 }
 
-/* ---------------- 常量文案 ---------------- */
+/* ---------------- 常量文案（全部在渲染时按当前 locale 取词条） ---------------- */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** core.search 的命中上限（契约 §3.1：truncated 时总数显示 `50,000+`）；单一来源 = protocol/versions。 */
-const SEARCH_LIMIT_LABEL = SEARCH_LIMIT.toLocaleString('en-US');
-const TRUNCATED_COUNT_TEXT = `${SEARCH_LIMIT_LABEL}+`;
-const TRUNCATED_HINT = `已截断（上限 ${SEARCH_LIMIT_LABEL}）`;
+function truncatedCountText(): string {
+  return `${formatNumber(SEARCH_LIMIT)}+`;
+}
 
-const EMPTY_IDLE_TEXT = '输入关键词搜索键名、值或路径';
-const EMPTY_SEARCHING_TEXT = '搜索中…';
-const EMPTY_STALE_TEXT = '文档已修改，请重新搜索';
+function truncatedHint(): string {
+  return t('view.search.truncated', { n: SEARCH_LIMIT });
+}
 
-const FILTER_ITEMS: ReadonlyArray<{ value: SearchFilter; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'key', label: '键名' },
-  { value: 'value', label: '值' },
-  // ADR-0023：路径命中档常驻（普通查询下计数为 0，不 disable）
-  { value: 'path', label: '路径' },
-];
+/** 过滤四档（ADR-0023：路径档常驻，普通查询下计数为 0，不 disable）。 */
+const FILTER_VALUES: readonly SearchFilter[] = ['all', 'key', 'value', 'path'];
+
+const FILTER_LABEL_KEYS = {
+  all: 'view.search.filter.all',
+  key: 'view.search.filter.key',
+  value: 'view.search.filter.value',
+  path: 'view.search.filter.path',
+} as const;
+
+function filterLabel(filter: SearchFilter): string {
+  return t(FILTER_LABEL_KEYS[filter]);
+}
 
 /** 结果行「匹配说明」列的文案：Hit.field → 展示文本（ADR-0023 加 path）。 */
-const FIELD_LABELS: Readonly<Record<Hit['field'], string>> = {
-  key: '键名',
-  value: '值',
-  path: '路径',
-};
+function fieldLabel(field: Hit['field']): string {
+  return t(FILTER_LABEL_KEYS[field]);
+}
 
 // ---------------------------------------------------------------- helpers
 
@@ -87,10 +92,10 @@ function clamp(value: number, min: number, max: number): number {
   return value;
 }
 
-/** 千分位固定 en-US（`37,189`），与契约示例、smoke 断言一致。 */
+/** 千分位跟随当前 locale（`37,189`；zh / en 观感一致）。 */
 function formatCount(value: number): string {
   const n = Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
-  return n.toLocaleString('en-US');
+  return formatNumber(n);
 }
 
 function createSvg(viewBox: string): SVGSVGElement {
@@ -182,6 +187,8 @@ export class SearchPanel {
     SearchFilter,
     { button: HTMLButtonElement; count: HTMLSpanElement }
   >();
+  /** 过滤按钮的标签文本节点（relabel 时改文本，保持 childNodes[0] 契约） */
+  private readonly filterLabelNodes = new Map<SearchFilter, Text>();
   private scroller!: HTMLElement;
   private spacer!: HTMLElement;
   private windowEl!: HTMLElement;
@@ -190,6 +197,8 @@ export class SearchPanel {
   private footRendered!: HTMLElement;
   private footTotal!: HTMLElement;
   private footTruncated!: HTMLElement;
+  /** 底栏前缀文本节点（`虚拟滚动 · 已渲染 `），relabel 时改文本 */
+  private footPrefixNode: Text | null = null;
 
   private readonly slots: ResultSlot[] = [];
   private resizeObserver: ResizeObserver | null = null;
@@ -224,30 +233,30 @@ export class SearchPanel {
     this.input.type = 'text';
     this.input.spellcheck = false;
     this.input.autocomplete = 'off';
-    this.input.placeholder = '搜索键名、值或路径…';
-    this.input.setAttribute('aria-label', '搜索键名、值或路径…');
+    this.input.placeholder = t('view.search.placeholder');
+    this.input.setAttribute('aria-label', t('view.search.placeholder'));
     box.appendChild(this.input);
 
     /* 查询行右侧：Aa（区分大小写）/ .*（正则）——真实按钮，Tab 顺序在查询框之后 */
     this.optsEl = el('div', 'csearch__opts');
     this.optsEl.setAttribute('role', 'group');
-    this.optsEl.setAttribute('aria-label', '搜索选项');
+    this.optsEl.setAttribute('aria-label', t('view.search.options.label'));
 
     this.caseBtn = el('button', 'csearch__toggle');
     this.caseBtn.id = 'searchCase';
     this.caseBtn.type = 'button';
     this.caseBtn.textContent = 'Aa';
-    this.caseBtn.setAttribute('aria-label', '区分大小写');
+    this.caseBtn.setAttribute('aria-label', t('view.search.case.label'));
     this.caseBtn.setAttribute('aria-pressed', 'false');
-    this.caseBtn.title = '区分大小写（Aa）';
+    this.caseBtn.title = t('view.search.case.title');
 
     this.regexBtn = el('button', 'csearch__toggle');
     this.regexBtn.id = 'searchRegex';
     this.regexBtn.type = 'button';
     this.regexBtn.textContent = '.*';
-    this.regexBtn.setAttribute('aria-label', '使用正则表达式');
+    this.regexBtn.setAttribute('aria-label', t('view.search.regex.label'));
     this.regexBtn.setAttribute('aria-pressed', 'false');
-    this.regexBtn.title = '使用正则表达式（.*）';
+    this.regexBtn.title = t('view.search.regex.title');
 
     this.optsEl.append(this.caseBtn, this.regexBtn);
     box.appendChild(this.optsEl);
@@ -264,16 +273,16 @@ export class SearchPanel {
     this.prevBtn.id = 'searchPrev';
     this.prevBtn.type = 'button';
     this.prevBtn.disabled = true;
-    this.prevBtn.setAttribute('aria-label', '上一个命中');
-    this.prevBtn.title = '上一个命中（⇧⌘G / ⇧F3）';
+    this.prevBtn.setAttribute('aria-label', t('view.search.prev.label'));
+    this.prevBtn.title = t('view.search.prev.title');
     this.prevBtn.appendChild(createChevronIcon(true));
 
     this.nextBtn = el('button', 'iconbtn');
     this.nextBtn.id = 'searchNext';
     this.nextBtn.type = 'button';
     this.nextBtn.disabled = true;
-    this.nextBtn.setAttribute('aria-label', '下一个命中');
-    this.nextBtn.title = '下一个命中（⌘G / F3）';
+    this.nextBtn.setAttribute('aria-label', t('view.search.next.label'));
+    this.nextBtn.title = t('view.search.next.title');
     this.nextBtn.appendChild(createChevronIcon(false));
 
     this.posEl = el('span', 'csearch__pos');
@@ -293,19 +302,22 @@ export class SearchPanel {
     /* ---- .results__filters：全部 / 键名 / 值 / 路径 + counts ---- */
     this.filtersEl = el('div', 'results__filters');
     this.filtersEl.setAttribute('role', 'group');
-    this.filtersEl.setAttribute('aria-label', '结果过滤');
-    for (const item of FILTER_ITEMS) {
+    this.filtersEl.setAttribute('aria-label', t('view.search.filters.label'));
+    for (const filter of FILTER_VALUES) {
       const button = el('button', 'filter');
       button.type = 'button';
-      button.dataset.filter = item.value;
+      button.dataset.filter = filter;
       button.setAttribute('aria-pressed', 'false');
-      button.textContent = item.label;
+      // childNodes[0] 是标签文本节点（smoke 按此取 label；relabel 直接改它）
+      const label = document.createTextNode(filterLabel(filter));
+      button.appendChild(label);
       const count = el('span', 'filter__count');
       count.textContent = '0';
       button.appendChild(document.createTextNode(' '));
       button.appendChild(count);
       this.filtersEl.appendChild(button);
-      this.filterButtons.set(item.value, { button, count });
+      this.filterButtons.set(filter, { button, count });
+      this.filterLabelNodes.set(filter, label);
     }
 
     /* ---- .results__scroll#resultsScroll：虚拟列表 ---- */
@@ -313,13 +325,13 @@ export class SearchPanel {
     this.scroller.id = 'resultsScroll';
     this.scroller.setAttribute('role', 'listbox');
     this.scroller.setAttribute('tabindex', '0');
-    this.scroller.setAttribute('aria-label', '搜索结果，虚拟滚动列表');
+    this.scroller.setAttribute('aria-label', t('view.search.list.label'));
     this.spacer = el('div', 'results__spacer');
     this.spacer.style.height = '0px';
     this.windowEl = el('div', 'results__window');
     this.spacer.appendChild(this.windowEl);
     this.emptyEl = el('div', 'results__empty');
-    this.emptyEl.textContent = EMPTY_IDLE_TEXT;
+    this.emptyEl.textContent = t('view.search.empty.idle');
     this.scroller.append(this.spacer, this.emptyEl);
 
     /* ---- .results__foot#resultsFoot ---- */
@@ -335,8 +347,9 @@ export class SearchPanel {
     this.footTruncated = el('span', 'results__truncated');
     this.footTruncated.textContent = '';
     this.footTruncated.hidden = true;
+    this.footPrefixNode = document.createTextNode(t('view.search.foot.prefix'));
     this.footEl.append(
-      document.createTextNode('虚拟滚动 · 已渲染 '),
+      this.footPrefixNode,
       this.footRendered,
       document.createTextNode(' / '),
       this.footTotal,
@@ -365,6 +378,30 @@ export class SearchPanel {
 
     this.resizeObserver = new ResizeObserver(() => this.drawWindow());
     this.resizeObserver.observe(this.scroller);
+  }
+
+  /**
+   * 语言切换：回填本面板持有的全部静态标签（placeholder / aria / title / 过滤档 / 底栏前缀），
+   * 再按当前快照重画一帧（空态与已渲染文案随词条更新）。幂等、不动查询/结果状态。
+   */
+  relabel(): void {
+    if (!this.mounted) return;
+    this.input.placeholder = t('view.search.placeholder');
+    this.input.setAttribute('aria-label', t('view.search.placeholder'));
+    this.optsEl.setAttribute('aria-label', t('view.search.options.label'));
+    this.caseBtn.setAttribute('aria-label', t('view.search.case.label'));
+    this.caseBtn.title = t('view.search.case.title');
+    this.regexBtn.setAttribute('aria-label', t('view.search.regex.label'));
+    this.regexBtn.title = t('view.search.regex.title');
+    this.prevBtn.setAttribute('aria-label', t('view.search.prev.label'));
+    this.prevBtn.title = t('view.search.prev.title');
+    this.nextBtn.setAttribute('aria-label', t('view.search.next.label'));
+    this.nextBtn.title = t('view.search.next.title');
+    this.filtersEl.setAttribute('aria-label', t('view.search.filters.label'));
+    this.scroller.setAttribute('aria-label', t('view.search.list.label'));
+    for (const [filter, node] of this.filterLabelNodes) node.textContent = filterLabel(filter);
+    if (this.footPrefixNode) this.footPrefixNode.textContent = t('view.search.foot.prefix');
+    if (this.view) this.render(this.view);
   }
 
   /** 渲染一帧只读快照。`view.hits` 引用变化 → 列表回顶；同一命中集保持滚动位置。 */
@@ -481,6 +518,8 @@ export class SearchPanel {
     this.resizeObserver = null;
     this.slots.length = 0;
     this.filterButtons.clear();
+    this.filterLabelNodes.clear();
+    this.footPrefixNode = null;
     this.host.replaceChildren();
     this.view = null;
     this.rendered = 0;
@@ -523,9 +562,7 @@ export class SearchPanel {
   }
 
   private updateHeader(view: SearchPanelView): void {
-    this.countValue.textContent = view.truncated
-      ? TRUNCATED_COUNT_TEXT
-      : formatCount(view.total);
+    this.countValue.textContent = view.truncated ? truncatedCountText() : formatCount(view.total);
 
     const pos = view.current >= 0 ? formatCount(view.current + 1) : '0';
     this.posEl.textContent = `${pos} / ${formatCount(view.size)}`;
@@ -546,10 +583,12 @@ export class SearchPanel {
 
   private updateEmptyState(view: SearchPanelView): void {
     let text: string | null = null;
-    if (view.phase === 'idle') text = EMPTY_IDLE_TEXT;
-    else if (view.phase === 'searching') text = EMPTY_SEARCHING_TEXT;
-    else if (view.phase === 'stale') text = EMPTY_STALE_TEXT;
-    else if (view.phase === 'ready' && view.size === 0) text = `没有命中「${view.query}」`;
+    if (view.phase === 'idle') text = t('view.search.empty.idle');
+    else if (view.phase === 'searching') text = t('view.search.empty.searching');
+    else if (view.phase === 'stale') text = t('view.search.empty.stale');
+    else if (view.phase === 'ready' && view.size === 0) {
+      text = t('view.search.empty.noHits', { query: view.query });
+    }
 
     if (text === null) {
       // 隐藏时清空文本：读 .results__empty 永远不会看到过期态文案
@@ -575,7 +614,7 @@ export class SearchPanel {
     this.footTotal.textContent = formatCount(view.size);
     this.footTruncated.hidden = !view.truncated;
     // 带前导空格直接写进 truncate span，保证未截断时 foot.textContent 以数字结尾（无尾随空格）
-    this.footTruncated.textContent = view.truncated ? ` ${TRUNCATED_HINT}` : '';
+    this.footTruncated.textContent = view.truncated ? ` ${truncatedHint()}` : '';
   }
 
   /** 只重画可见窗口：spacer 撑出总高度，窗口内行节点池复用。 */
@@ -619,7 +658,7 @@ export class SearchPanel {
 
       writeHighlighted(slot.pathEl, hit.path, term);
       writeHighlighted(slot.valueEl, hit.preview, term);
-      slot.fieldEl.textContent = FIELD_LABELS[hit.field];
+      slot.fieldEl.textContent = fieldLabel(hit.field);
       slot.kindEl.textContent = hit.kind;
       used++;
     }

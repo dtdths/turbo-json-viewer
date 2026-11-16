@@ -7,7 +7,8 @@
  *
  * 纯 viewmodel 单测：无 DOM、无定时器；数据源用 fake `OutlineSource`（手动 resolve）。
  */
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { initI18n } from '../../../src/i18n/index';
 import {
   computeOutlineWindow,
   OutlineState,
@@ -20,6 +21,11 @@ import { OUTLINE_PAGE } from '../../../src/protocol/versions';
 import type { JsonKind, OutlineChild, OutlineReply } from '../../../src/protocol/types';
 
 type Req = { rootId: string; path: string; start: number; count: number };
+
+// 哨兵行文案走 `view.outline.loadMore` 词条：中文断言显式钉 zh-CN（node 默认 en-US）。
+beforeAll(async () => {
+  await initI18n('zh-CN');
+});
 
 /** 手动应答的 fake source：记录请求，测试自行 resolve / reject。 */
 class FakeSource implements OutlineSource {
@@ -233,6 +239,7 @@ describe('OutlineState — open 首屏', () => {
       depth: 1,
       more: true,
       kind: null,
+      remaining: 37,
       key: '加载更多（还有 37 项）',
     });
     expect(view.loadedChildren).toBe(OUTLINE_PAGE);

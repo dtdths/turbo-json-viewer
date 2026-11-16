@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { initI18n } from '../../../src/i18n/index';
 import {
   DOC_NAME_MAX,
   baseNameFromExport,
@@ -8,6 +9,11 @@ import {
   renameFromExport,
   sanitizeDocName,
 } from '../../../src/shared/doc-name';
+
+// displayTitle 的「原名」提示已走 `view.doc-name.originalTitle` 词条：中文断言显式钉 zh-CN。
+beforeAll(async () => {
+  await initI18n('zh-CN');
+});
 
 describe('shared/doc-name', () => {
   describe('sanitizeDocName', () => {

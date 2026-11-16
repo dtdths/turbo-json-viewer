@@ -9,6 +9,7 @@
  * 取消：Esc / 取消按钮 / × / 点遮罩 → onClose()。
  */
 import { mountCodeEditor, type CodeEditor, type CodeEditorDiagnostic } from './code-editor';
+import { t } from '../../i18n/index';
 
 export interface SubtreeEditorRequest {
   path: string;
@@ -43,7 +44,12 @@ function formatBytes(bytes: number): string {
 }
 
 function formatDiagnostic(d: CodeEditorDiagnostic): string {
-  const at = d.line ? `（第 ${d.line} 行${d.column ? ` 第 ${d.column} 列` : ''}）` : '';
+  const at =
+    d.line === undefined
+      ? ''
+      : d.column
+        ? t('view.location.lineColumn', { line: d.line, column: d.column })
+        : t('view.location.line', { line: d.line });
   return `${d.message}${at}`;
 }
 
@@ -121,13 +127,13 @@ export class SubtreeEditor {
     this.hasLintError = false;
     this.serverError = null;
     this.lintMessage = null;
-    this.limitHint = req.readOnly ? '该子树超过 5 MB，已只读；请选择更小的子树' : null;
+    this.limitHint = req.readOnly ? t('view.edit.limitHint') : null;
 
     this.editPath.textContent = req.path || '$';
     this.editPath.title = req.path || '$';
     this.editKind.textContent = req.kind || '—';
     this.editSize.textContent = formatBytes(req.bytes);
-    this.editTitle.textContent = '编辑节点 JSON';
+    this.editTitle.textContent = t('view.edit.title');
 
     if (this.modal.hidden) {
       this.previousFocus =
@@ -160,7 +166,7 @@ export class SubtreeEditor {
     if (this.modal.hidden) return;
     this.openSeq += 1;
     this.busy = false;
-    this.editApply.textContent = 'Apply';
+    this.editApply.textContent = t('view.edit.apply');
     this.modal.hidden = true;
     this.editor?.setDiagnostic(null);
     const previous = this.previousFocus;
@@ -180,7 +186,7 @@ export class SubtreeEditor {
 
   setBusy(busy: boolean): void {
     this.busy = busy;
-    this.editApply.textContent = busy ? 'Applying…' : 'Apply';
+    this.editApply.textContent = busy ? t('view.edit.applying') : t('view.edit.apply');
     this.applyGating();
   }
 

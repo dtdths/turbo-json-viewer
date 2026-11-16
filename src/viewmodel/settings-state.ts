@@ -6,6 +6,7 @@
  *
  * 红线：只存本地（chrome.storage.local / localStorage 兜底），永不存文档内容。
  */
+import type { LocalePref } from '../i18n/types';
 import type { CopyFormat, ExprBudgetLevel, SortOrder } from '../protocol/types';
 import { SORT_ORDER_OPTIONS } from '../protocol/versions';
 import { normalizeExportMode, type ExportMode } from './export-state';
@@ -23,7 +24,8 @@ export type SettingsKey =
   | 'repairTruncated'
   | 'adaptiveExpand'
   | 'advBudget'
-  | 'escapeUnicode';
+  | 'escapeUnicode'
+  | 'locale';
 
 export interface Settings {
   theme: 'dark' | 'light';
@@ -51,6 +53,8 @@ export interface Settings {
   advBudget: ExprBudgetLevel;
   /** 导出时把非 ASCII 转义为 `\uXXXX`（第 12 项；ADR-0022 §2，默认关） */
   escapeUnicode: boolean;
+  /** 界面语言（第 14 项；#45 / ADR-0026 §3）：`auto` = 跟随系统，其余 = 显式 LanguageTag */
+  locale: LocalePref;
 }
 
 /** 布局态（主题之外的工作区 UI 状态，ADR-0011 §2） */
@@ -88,6 +92,7 @@ export const DEFAULT_SETTINGS: Settings = {
   adaptiveExpand: true,
   advBudget: 'standard',
   escapeUnicode: false,
+  locale: 'auto',
 };
 
 export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, viewMode: 'tree' };
@@ -108,6 +113,13 @@ function pickNumber(value: unknown, allowed: readonly number[], fallback: number
 
 function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+/** 语言偏好白名单：`auto` 或已支持语言；未知值回落 `auto`（#45 / ADR-0026 §3）。 */
+function normalizeLocalePref(value: unknown): LocalePref {
+  if (value === 'auto') return 'auto';
+  if (value === 'en-US' || value === 'zh-CN') return value;
+  return DEFAULT_SETTINGS.locale;
 }
 
 /**
@@ -142,6 +154,7 @@ export function normalizeSettings(raw: unknown): Settings {
       ? (bag.advBudget as Settings['advBudget'])
       : DEFAULT_SETTINGS.advBudget,
     escapeUnicode: pickBoolean(bag.escapeUnicode, DEFAULT_SETTINGS.escapeUnicode),
+    locale: normalizeLocalePref(bag.locale),
   };
 }
 

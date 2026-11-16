@@ -1,81 +1,140 @@
 /**
- * shared/expression-copy — 表达式视图的中文文案**单一来源**（ADR-0018 §5）。
+ * shared/expression-copy — 表达式视图文案的**单一来源**（ADR-0018 §5 / ADR-0026 §1）。
  *
  * 引擎只给 code + params；所有用户可见文案在这里组装（面板内联错误 / 结果条 / toast 共用）。
- * 中英对照表见 #12 spec §7（本轮不引 i18n，只留中文）。
+ * i18n 之后文案走 `view.expr.*` 词条（zh-CN 与 i18n 化之前逐字一致，冒烟按此断言）。
+ *
+ * **对外形态保持兼容**：`EXPR_COPY` 的属性仍是可直接读的字符串（getter 每次按当前 locale 取词条），
+ * `resultTitle` / `status` / `truncated` / `skipped` 仍是函数，`exprErrorText(error)` 签名不变。
  */
+import { t, type MessageKey } from '../i18n/index';
+import type { Params } from '../i18n/types';
 import type { ExprError, ExprErrorCode } from '../protocol/types';
 
-/** 错误码 → 文案模板（`{0}`/`{1}` 由 params 填充；无参数则无占位） */
-const TEMPLATES: Record<ExprErrorCode, string> = {
-  PARSE_ERR_SYNTAX: '语法错误',
-  PARSE_ERR_ROOT_SHAPE: '只能是一个表达式',
-  STATIC_ERR_NODE: '不支持的语法：{0}',
-  STATIC_ERR_CALL: '不允许调用：{0}',
-  EVAL_SHAPE_ERROR: '取值失败：{0}',
-  EVAL_UNKNOWN_FIELD: '字段不存在：{0}',
-  EVAL_STEP_LIMIT: '步数超限（预算 {0}）',
-  EVAL_TIME_LIMIT: '已超时（预算 {0} ms）',
-  EVAL_ILLEGAL_CALL: '调用不被允许：{0}',
-  EVAL_MIXED_NUMBER: '超大整数不能进行该运算：{0}',
-  EVAL_DIV_BY_ZERO: '除数为 0',
-  RESULT_TRUNCATED: '结果已截断（上限 {0}）',
+/** 错误码 → 文案词条（参数按错误码显式映射，保持与旧模板占位一致）。 */
+const TEMPLATE_KEYS: Record<ExprErrorCode, MessageKey> = {
+  PARSE_ERR_SYNTAX: 'view.expr.error.parseSyntax',
+  PARSE_ERR_ROOT_SHAPE: 'view.expr.error.parseRootShape',
+  STATIC_ERR_NODE: 'view.expr.error.staticNode',
+  STATIC_ERR_CALL: 'view.expr.error.staticCall',
+  EVAL_SHAPE_ERROR: 'view.expr.error.evalShape',
+  EVAL_UNKNOWN_FIELD: 'view.expr.error.unknownField',
+  EVAL_STEP_LIMIT: 'view.expr.error.stepLimit',
+  EVAL_TIME_LIMIT: 'view.expr.error.timeLimit',
+  EVAL_ILLEGAL_CALL: 'view.expr.error.illegalCall',
+  EVAL_MIXED_NUMBER: 'view.expr.error.mixedNumber',
+  EVAL_DIV_BY_ZERO: 'view.expr.error.divByZero',
+  RESULT_TRUNCATED: 'view.expr.error.resultTruncated',
 };
 
-/** 参数补充说明（少数错误把参数翻译成人话） */
+/** 参数补充说明（少数错误把参数翻译成人话；其余原样字符串化）。 */
 function paramText(code: ExprErrorCode, param: string | number): string {
   if (code === 'STATIC_ERR_NODE') {
-    if (param === 'depth') return '表达式嵌套过深';
-    if (param === 'text-length') return '表达式过长';
-    if (param === 'root-shape') return '只能是一个表达式';
+    if (param === 'depth') return t('view.expr.param.depth');
+    if (param === 'text-length') return t('view.expr.param.textLength');
+    if (param === 'root-shape') return t('view.expr.param.rootShape');
   }
   if (code === 'EVAL_SHAPE_ERROR') {
-    if (param === 'base-kind') return '在不可取字段的值上取字段';
-    if (param === 'index') return '下标必须是非负整数';
+    if (param === 'base-kind') return t('view.expr.param.baseKind');
+    if (param === 'index') return t('view.expr.param.index');
   }
   return String(param);
 }
 
+/** 按错误码把位置参数映射成词条占位符（缺省 → 空串，与旧模板行为一致）。 */
+function errorParams(code: ExprErrorCode, params: readonly (string | number)[]): Params {
+  const at = (index: number): string => {
+    const value = params[index];
+    return value === undefined ? '' : paramText(code, value);
+  };
+  switch (code) {
+    case 'STATIC_ERR_NODE':
+    case 'EVAL_SHAPE_ERROR':
+      return { detail: at(0) };
+    case 'STATIC_ERR_CALL':
+    case 'EVAL_ILLEGAL_CALL':
+      return { name: at(0) };
+    case 'EVAL_UNKNOWN_FIELD':
+      return { field: at(0) };
+    case 'EVAL_STEP_LIMIT':
+    case 'EVAL_TIME_LIMIT':
+      return { budget: at(0) };
+    case 'EVAL_MIXED_NUMBER':
+      return { op: at(0) };
+    case 'RESULT_TRUNCATED':
+      return { max: at(0) };
+    default:
+      return {};
+  }
+}
+
 /** 拼装错误文案；含可选「第 L 行第 C 列」。 */
 export function exprErrorText(error: ExprError): string {
-  const template = TEMPLATES[error.code] ?? String(error.code);
-  const params = error.params ?? [];
-  const body = template.replace(/\{(\d+)\}/g, (_, index: string) => {
-    const value = params[Number(index)];
-    return value === undefined ? '' : paramText(error.code, value);
-  });
+  const body = t(TEMPLATE_KEYS[error.code] ?? 'view.expr.error.parseSyntax', errorParams(error.code, error.params ?? []));
   const where =
-    error.line !== undefined && error.column !== undefined
-      ? `（第 ${error.line} 行第 ${error.column} 列）`
-      : error.line !== undefined
-        ? `（第 ${error.line} 行）`
-        : '';
+    error.line !== undefined
+      ? error.column !== undefined
+        ? t('view.location.lineColumn', { line: error.line, column: error.column })
+        : t('view.location.line', { line: error.line })
+      : '';
   const base = body + where;
   // 拼写纠错候选（最多 3 条）：`字段不存在：nmae（你是不是想找 name？）`
   const candidates = error.candidates ?? [];
   if (candidates.length === 0) return base;
   const hint = candidates.slice(0, 3).join(' / ');
-  return `${base}（你是不是想找 ${hint}？）`;
+  return base + t('view.expr.candidates', { hint });
 }
 
+/**
+ * 表达式视图固定文案。
+ *
+ * **形态兼容**：字符串属性用 getter（每次按当前 locale 取词条，切语言后重新读取即正确），
+ * 带参文案保持函数调用方式不变（`main.ts` 直接消费 `panelTitle` / `running` 等属性）。
+ */
 export const EXPR_COPY = {
-  panelTitle: '表达式',
-  run: '执行',
-  running: '执行中…',
-  strict: '严格模式',
-  examplesTitle: '示例',
-  historyTitle: '历史',
-  empty: '输入表达式后按 Enter 执行',
-  stale: '文档已修改，结果可能过期',
-  rerun: '重新执行',
-  back: '返回文档树',
+  get panelTitle(): string {
+    return t('view.expr.panelTitle');
+  },
+  get run(): string {
+    return t('view.expr.run');
+  },
+  get running(): string {
+    return t('view.expr.running');
+  },
+  get strict(): string {
+    return t('view.expr.strict');
+  },
+  get examplesTitle(): string {
+    return t('view.expr.examplesTitle');
+  },
+  get historyTitle(): string {
+    return t('view.expr.historyTitle');
+  },
+  get empty(): string {
+    return t('view.expr.empty');
+  },
+  get stale(): string {
+    return t('view.expr.stale');
+  },
+  get rerun(): string {
+    return t('view.expr.rerun');
+  },
+  get back(): string {
+    return t('view.expr.back');
+  },
   /** 结果条标题 */
-  resultTitle: (rootId: string): string => `表达式结果 · ${rootId}`,
+  resultTitle: (rootId: string): string => t('view.expr.resultTitle', { rootId }),
   /** 状态行：`N 项 · X ms` */
-  status: (count: number, ms: number): string => `${count} 项 · ${ms} ms`,
-  truncated: (max: number): string => `已截断（上限 ${max.toLocaleString('en-US')}）`,
-  skipped: (n: number): string => `已跳过 ${n} 项缺少该字段`,
-  noSource: '该行是计算值，没有对应的原文档位置',
-  readonly: '表达式结果只读',
-  watchdog: '表达式执行超时，已终止 Worker；请重新导入文档',
-} as const;
+  status: (count: number, ms: number): string => t('view.expr.status', { count, ms }),
+  truncated: (max: number): string => t('view.expr.truncated', { n: max }),
+  skipped: (n: number): string => t('view.expr.skipped', { n }),
+  get noSource(): string {
+    return t('view.expr.noSource');
+  },
+  get readonly(): string {
+    return t('view.expr.readonly');
+  },
+  get watchdog(): string {
+    return t('view.expr.watchdog');
+  },
+};

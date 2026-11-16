@@ -4,12 +4,18 @@
  * 目的：把「hook 输出形状 = 13 套冒烟的断言契约」从浏览器冒烟提升为 node 环境单测。
  * 只测纯转发 / 纯快照方法；DOM 点击与布局探针（treeGeometry 的 computed style）仍由浏览器冒烟兜底。
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { createDevHook, type DevHookDeps } from '../../../src/app/dev-hook';
+import { initI18n } from '../../../src/i18n/index';
+
+/** 修复摘要由词条拼出（#45 / ADR-0026）：测试固定中文词条表。 */
+beforeAll(async () => {
+  await initI18n('zh-CN');
+});
 import { DocSession } from '../../../src/app/doc-session';
 import { CoreError } from '../../../src/protocol/errors';
 
-/** 83 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
+/** 84 个成员逐个列出：成员名 / 数量是冒烟脚本的硬契约（Object.keys + required 探测）。 */
 const HOOK_MEMBERS = [
   'loadText', 'scrollToPx', 'togglePath', 'expandAll', 'collapseAll', 'state',
   'search', 'searchNext', 'searchPrev', 'searchJump', 'searchMarkStale', 'setSearchFilter',
@@ -35,6 +41,8 @@ const HOOK_MEMBERS = [
   'workspaceState', 'tabStripState', 'tabOpen', 'tabImportText', 'tabSwitch', 'tabClose',
   // #43 / ADR-0025：文档概要（1 个）
   'documentProfile',
+  // #45 / ADR-0026：界面语言（1 个）
+  'localeState',
 ].sort();
 
 function fakeElement(over: Record<string, unknown> = {}): HTMLElement {
@@ -319,7 +327,7 @@ describe('dev hook — API 契约与纯快照组装', () => {
     const deps = fakeDeps({
       meta: () => ({
         name: 'cut.json',
-        repair: { status: 'repaired', ops: [{ at: 12 }], summaryText: '补 1 处', counts: { missing: 1 }, truncatedAt: 12 },
+        repair: { status: 'repaired', ops: [{ at: 12 }], counts: { brackets: 1, quotes: 0, commas: 0, deletedChars: 0 }, truncatedAt: 12 },
       }) as never,
       exportFileName: () => 'cut-truncated-repaired.json',
       ui: {
@@ -336,8 +344,9 @@ describe('dev hook — API 契约与纯快照组装', () => {
       text: '已修复 1 处',
       expanded: true,
       ops: ['op1'],
-      summary: '补 1 处',
-      counts: { missing: 1 },
+      // #45 / ADR-0026 §4：摘要由 counts 页面侧拼出（旧 summaryText 已删）
+      summary: '已修复：补 1 个闭合符（仅语法闭合，未修改任何已有值）',
+      counts: { brackets: 1, quotes: 0, commas: 0, deletedChars: 0 },
       truncatedAt: 12,
       exportName: 'cut-truncated-repaired.json',
       statusState: '已修复截断',
@@ -571,5 +580,25 @@ describe('dev hook — API 契约与纯快照组装', () => {
     await hook.tabImportText('{"a":1}');
     await hook.tabImportText('{"b":2}', 'b.json');
     expect(names).toEqual(['tab.json', 'b.json']);
+  });
+});
+
+describe('dev-hook — localeState（#45 / ADR-0026 §7）', () => {
+  it('返回 locale / pref / html lang / 语言包懒加载证据', async () => {
+    await initI18n('auto');
+    const hook = createDevHook(fakeDeps());
+    const state = hook.localeState() as {
+      locale: string;
+      pref: string;
+      htmlLang: string | null;
+      title: string;
+      zhPackLoaded: boolean;
+      messageCount: number;
+    };
+    expect(typeof state.locale).toBe('string');
+    expect(state.pref).toBe('auto');
+    expect(typeof state.zhPackLoaded).toBe('boolean');
+    expect(state.messageCount).toBeGreaterThan(0);
+    expect(typeof state.title).toBe('string');
   });
 });

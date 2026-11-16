@@ -12,6 +12,7 @@
  */
 import { writeMarkedText } from '../highlight';
 import type { JsonKind, Row } from '../../protocol/types';
+import { t, type MessageKey } from '../../i18n/index';
 
 export interface RowHandle {
   /** DOM 适配器里是行池槽位索引 */
@@ -46,6 +47,11 @@ export interface RowRenderer {
   setTop(handle: RowHandle, topPx: number): void;
   /** S3 扩展：窗口收窄后回收多余行池槽位（隐藏，不销毁） */
   setVisible(handle: RowHandle, visible: boolean): void;
+  /**
+   * 语言切换：回填行池里**创建时**写入的静态文案（浮条按钮 aria-label）。
+   * 行内随数据变化的文案（项数 / title / 类型列）由 TreeView 的 refresh 重画。
+   */
+  relabel(): void;
 }
 
 /** S3 装配缝：app 注入 adapter，由 TreeView 在 mount 时提供行容器。 */
@@ -58,14 +64,19 @@ export interface DomRowPoolOptions {
   poolSize?: number;
 }
 
-const TYPE_LABEL: Record<JsonKind, string> = {
-  object: 'object',
-  array: 'array',
-  string: 'string',
-  number: 'number',
-  boolean: 'bool',
-  null: 'null',
+/** 类型列展示文本（JSON 类型标识符；`boolean` 沿用既有 `bool` 缩写）。 */
+const TYPE_LABEL_KEYS: Record<JsonKind, MessageKey> = {
+  object: 'view.tree.type.object',
+  array: 'view.tree.type.array',
+  string: 'view.tree.type.string',
+  number: 'view.tree.type.number',
+  boolean: 'view.tree.type.boolean',
+  null: 'view.tree.type.null',
 };
+
+function typeLabel(kind: JsonKind): string {
+  return t(TYPE_LABEL_KEYS[kind]);
+}
 
 const VALUE_CLASS: Record<JsonKind, string> = {
   object: 'tok-punct',
@@ -94,26 +105,32 @@ function createChevron(): SVGSVGElement {
   return svg;
 }
 
-const ACTION_LABEL: Record<'copy' | 'edit' | 'raw', string> = {
-  copy: '复制子树 JSON',
-  edit: '编辑此节点 JSON',
-  raw: '在原文中定位',
+type RowAction = 'copy' | 'edit' | 'raw';
+
+const ACTION_LABEL_KEYS: Record<RowAction, 'view.tree.action.copy' | 'view.tree.action.edit' | 'view.tree.action.raw'> = {
+  copy: 'view.tree.action.copy',
+  edit: 'view.tree.action.edit',
+  raw: 'view.tree.action.raw',
 };
 
-const ACTION_GLYPH: Record<'copy' | 'edit' | 'raw', string> = {
+function actionLabel(action: RowAction): string {
+  return t(ACTION_LABEL_KEYS[action]);
+}
+
+const ACTION_GLYPH: Record<RowAction, string> = {
   copy: '⧉',
   edit: '✎',
   raw: '⇠',
 };
 
-function createAction(action: 'copy' | 'edit' | 'raw'): HTMLButtonElement {
+function createAction(action: RowAction): HTMLButtonElement {
   const el = document.createElement('button');
   el.type = 'button';
   // 鼠标快路径：不进 Tab 序列（键盘用户走 F2 编辑 / 右键菜单），见 ADR-0010 修订
   el.tabIndex = -1;
   el.className = 'row__action';
   el.dataset.action = action;
-  el.setAttribute('aria-label', ACTION_LABEL[action]);
+  el.setAttribute('aria-label', actionLabel(action));
   el.textContent = ACTION_GLYPH[action];
   return el;
 }
@@ -138,6 +155,8 @@ interface RowSlot {
   readonly preview: HTMLSpanElement;
   readonly type: HTMLSpanElement;
   readonly actions: HTMLSpanElement;
+  /** 浮条按钮（copy / edit / raw），relabel 时回填 aria-label */
+  readonly actionButtons: readonly HTMLButtonElement[];
   readonly locateRaw: HTMLButtonElement;
   visible: boolean;
 }
@@ -207,6 +226,18 @@ export class DomRowPool implements RowRenderer {
     }
   }
 
+  /** 语言切换：回填浮条三个按钮的 aria-label（创建时写入的静态文案）。 */
+  relabel(): void {
+    for (const slot of this.slots) {
+      for (const button of slot.actionButtons) {
+        const action = button.dataset.action;
+        if (action === 'copy' || action === 'edit' || action === 'raw') {
+          button.setAttribute('aria-label', actionLabel(action));
+        }
+      }
+    }
+  }
+
   destroy(): void {
     for (const slot of this.slots) slot.el.remove();
     this.slots.length = 0;
@@ -259,11 +290,14 @@ export class DomRowPool implements RowRenderer {
 
     const actions = document.createElement('span');
     actions.className = 'row__actions';
-    actions.appendChild(createAction('copy'));
-    actions.appendChild(createAction('edit'));
+    const actionButtons: HTMLButtonElement[] = [];
+    for (const action of ['copy', 'edit', 'raw'] as const) {
+      const button = createAction(action);
+      actions.appendChild(button);
+      actionButtons.push(button);
+    }
     // 「在原文中定位」（#30 / ADR-0019）：没有源文本的根（表达式结果）/ plain 模式按 ctx 隐藏
-    const locateRaw = createAction('raw');
-    actions.appendChild(locateRaw);
+    const locateRaw = actionButtons[2]!;
 
     el.append(guides, caret, keyEl, colon, value, count, preview, type, actions);
     host.appendChild(el);
@@ -280,6 +314,7 @@ export class DomRowPool implements RowRenderer {
       preview,
       type,
       actions,
+      actionButtons,
       locateRaw,
       visible: false,
     };
@@ -331,8 +366,8 @@ export class DomRowPool implements RowRenderer {
         (row.kind === 'array' ? ' row__count--arr' : '') +
         ' is-clickable';
       slot.count.textContent =
-        row.kind === 'array' ? `[${row.count}]` : `${row.count} 项`;
-      slot.count.title = row.open ? '点击收起' : '点击展开';
+        row.kind === 'array' ? `[${row.count}]` : t('view.tree.count', { n: row.count });
+      slot.count.title = row.open ? t('view.tree.collapseHint') : t('view.tree.expandHint');
     } else {
       // 标量行没有项数标：清文本的同时必须清 class/title，否则行池复用到标量行会留可点态
       slot.count.hidden = true;
@@ -351,7 +386,7 @@ export class DomRowPool implements RowRenderer {
     }
 
     slot.type.hidden = !ctx.typeColumn;
-    slot.type.textContent = ctx.typeColumn ? (TYPE_LABEL[row.kind] ?? '?') : '';
+    slot.type.textContent = ctx.typeColumn ? typeLabel(row.kind) : '';
 
     slot.actions.hidden = !ctx.showActions;
     slot.locateRaw.hidden = !ctx.locateRaw;

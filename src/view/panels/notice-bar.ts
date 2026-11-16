@@ -24,7 +24,7 @@ export class NoticeBar {
     const textEl = root.querySelector<HTMLElement>('[data-notice-text]');
     const closeEl = root.querySelector<HTMLButtonElement>('[data-notice-close]');
     if (!textEl || !closeEl) {
-      throw new Error('notice-bar: 缺少 [data-notice-text] / [data-notice-close]');
+      throw new Error('notice-bar: missing [data-notice-text] / [data-notice-close]');
     }
     this.textEl = textEl;
     this.actionEl = root.querySelector<HTMLButtonElement>('[data-notice-action]');

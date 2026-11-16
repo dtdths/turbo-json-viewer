@@ -17,6 +17,7 @@
  */
 import type { JsonKind, OutlineChild, OutlineReply, Path, RootId } from '../protocol/types';
 import { OUTLINE_PAGE } from '../protocol/versions';
+import { t } from '../i18n/index';
 import { ROOT_PATH } from '../shared/path';
 import { computeVirtualWindow } from '../shared/window';
 
@@ -34,7 +35,7 @@ export interface OutlineRow {
   path: Path;
   /** 缩进层级：根 = 0 */
   depth: number;
-  /** 显示键：`$`（根）/ 对象键原文 / 数组下标 `[i]` / 哨兵行文案 */
+  /** 显示键：`$`（根）/ 对象键原文 / 数组下标 `[i]`；哨兵行为空串（文案由面板按 `remaining` 现取） */
   key: string;
   /** true = 数组下标样式（`--syntax-index`） */
   idx: boolean;
@@ -48,6 +49,8 @@ export interface OutlineRow {
   expandable: boolean;
   /** true = 「加载更多」哨兵行 */
   more: boolean;
+  /** 哨兵行专用：该容器还剩多少未加载子项（面板渲染时按当前 locale 取「加载更多」词条） */
+  remaining?: number;
 }
 
 /** 交给 `OutlinePanel.render()` 的只读快照。 */
@@ -506,13 +509,14 @@ export class OutlineState {
       rows.push({
         path: containerPath,
         depth,
-        key: `加载更多（还有 ${remaining} 项）`,
+        key: t('view.outline.loadMore', { n: remaining }),
         idx: false,
         kind: null,
         count: 0,
         open: false,
         expandable: false,
         more: true,
+        remaining,
       });
     }
   }

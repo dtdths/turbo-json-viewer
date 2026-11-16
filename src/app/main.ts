@@ -49,6 +49,7 @@ import type {
   EvalSuccess,
   ExprBudgetLevel,
   ExprCompletion,
+  ExprError,
   FidelityHit,
   FidelityReport,
   JsonKind,
@@ -86,9 +87,20 @@ import { ExpressionBar } from '../view/panels/expression-bar';
 import { EXPR_COPY, exprErrorText } from '../shared/expression-copy';
 import { createMenu } from '../view/menu';
 import { createViewStateStore } from './storage';
+import { currentLocale, formatNumber, initI18n, setLocalePref, t, type MessageKey } from '../i18n';
+import { applyStaticMessages } from '../i18n/dom';
+import type { LocalePref } from '../i18n/types';
+import { patternErrorText, repairNoteText, repairSummaryText } from '../i18n/format';
 
 const chromeApi = (globalThis as { chrome?: { runtime?: { id?: string; getURL(path: string): string } } }).chrome;
 const isExtension = Boolean(chromeApi?.runtime?.id);
+
+/** 文本强调节点（空态文件名用；样式走 `.empty__warn b` / `.empty__pending b`）。 */
+function strongText(text: string): HTMLElement {
+  const node = document.createElement('b');
+  node.textContent = text;
+  return node;
+}
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -121,10 +133,9 @@ const emptyInner = el('emptyInner');
 const emptyTitle = el('emptyTitle');
 const emptySub = el('emptySub');
 const emptyWarn = el('emptyWarn');
-const emptyWarnDoc = el('emptyWarnDoc');
 const emptyError = el('emptyError');
 const emptyPending = el('emptyPending');
-const emptyPendingName = el('emptyPendingName');
+const emptyPendingText = el('emptyPendingText');
 const emptyPendingReplace = el<HTMLButtonElement>('emptyPendingReplace');
 const emptyBusy = el('emptyBusy');
 const emptyClose = el<HTMLButtonElement>('emptyClose');
@@ -173,6 +184,11 @@ const viewStateStore = createViewStateStore();
 const settings = new SettingsState();
 // ESM top-level await：拿不到（隐私模式/配额）就用默认值继续，不阻塞
 await settings.load(viewStateStore);
+// i18n 必须在装配 view / 首次渲染之前（ADR-0026 §2）：解析 locale → 按需 await 语言包 → 回填静态文案，
+// 避免「先英文再闪成中文」。`<title>` 是品牌名，不翻译。
+await initI18n(settings.get('locale'));
+applyStaticMessages();
+document.documentElement.lang = currentLocale();
 if (settings.uiState().railCollapsed) {
   document.body.classList.add('rail-collapsed');
   el('railToggle').setAttribute('aria-pressed', 'false');
@@ -605,7 +621,7 @@ async function closeTab(id: string, opts: { force?: boolean } = {}): Promise<voi
   if (
     !opts.force &&
     tab.runtime.editState.dirty &&
-    !window.confirm(`「${tab.name}」有未导出的临时修改，关闭后将丢弃。确认关闭？`)
+    !window.confirm(t('app.confirm.closeTab', { name: tab.name }))
   ) {
     return;
   }
@@ -698,10 +714,7 @@ function maybeShowWorkspaceMemoryHint(tab: TabState): void {
   if (workspace.size < 2) return;
   const totalBytes = workspace.ids.reduce((sum, id) => sum + (workspace.get(id)?.bytes ?? 0), 0);
   if (tab.bytes < LARGE_DOC_WARN_BYTES && totalBytes < LARGE_DOC_WARN_BYTES) return;
-  showToast(
-    `工作区现有 ${workspace.size} 个标签：内存按文档线性增长（50 MB ≈ 73 MB Worker 堆/份）。关闭不用的标签可释放。`,
-    5000,
-  );
+  showToast(t('app.toast.workspaceMemory', { n: workspace.size }), 5000);
 }
 
 /**
@@ -904,7 +917,7 @@ async function syncSortOrder(next: SortOrder): Promise<void> {
     // （core 这次没换挡）。回滚触发的 applySettings 会因 appliedOrder 相同而 no-op。
     appliedOrder = prevOrder;
     if (prevOrder !== null && settings.get('sortOrder') === next) settings.set('sortOrder', prevOrder);
-    if (session.rootId) showStatusHint(`子键排序切换失败：${formatCoreError(error)}`);
+    if (session.rootId) showStatusHint(t('app.toast.orderFailed', { detail: formatCoreError(error) }));
   }
 }
 
@@ -929,8 +942,26 @@ function applySettings(): void {
   // 子键显示排序（#40 / ADR-0024）：内部按 appliedOrder 去重，非排序设置变化不会发重排请求。
   // 初始化期首跑不做（表达式视图态尚未就绪），由文件末尾的显式首同步接管。
   if (orderSyncReady) void syncSortOrder(current.sortOrder);
+  // 界面语言（#45 / ADR-0026 §3）：设置变化 → 按需加载语言包 → 全量重渲染（异步，fire-and-forget）
+  if (current.locale !== appliedLocalePref) {
+    appliedLocalePref = current.locale;
+    void switchLocale(current.locale);
+  }
 }
 
+/** 当前生效的 locale 偏好（设置值；首跑由 applySettings 按 settings 初始化）。 */
+let appliedLocalePref: LocalePref = 'auto';
+
+/**
+ * 切换界面语言（#45 / ADR-0026 §3）：加载语言包 → 换词条表 → 全量重渲染。
+ * 失败 / `?lang=` 覆盖时 setLocalePref 自身会回退/覆盖，这里只负责重画。
+ */
+async function switchLocale(pref: LocalePref): Promise<void> {
+  await setLocalePref(pref);
+  rerenderChrome();
+}
+
+appliedLocalePref = settings.get('locale');
 settings.subscribe(() => applySettings());
 applySettings();
 
@@ -1025,8 +1056,33 @@ function exprIsStale(): boolean {
 }
 
 /** 引擎错误码 → 中文文案（唯一来源 shared/expression-copy.ts）。 */
-function showExpressionError(error: { message: string; line?: number; column?: number }): void {
-  expressionPanel.setError(error);
+/** 最近一次表达式行内错误（结构化；切语言时按新语言重新格式化，ADR-0026 §3）。 */
+let exprErrorState: ExprError | null = null;
+/** 最近一次表达式状态行（count/ms；切语言时重算文案）。 */
+let exprStatusState: { count: number; ms: number } | null = null;
+
+/** 行内错误 / 状态行的重新本地化（locale 切换时由 rerenderChrome 调用）。 */
+function applyExpressionInlineText(): void {
+  if (exprErrorState) {
+    expressionPanel.setError({
+      message: exprErrorText(exprErrorState),
+      line: exprErrorState.line,
+      column: exprErrorState.column,
+    });
+  }
+  if (exprStatusState) {
+    expressionPanel.setStatus(EXPR_COPY.status(exprStatusState.count, exprStatusState.ms));
+  }
+}
+
+function showExpressionError(error: ExprError): void {
+  exprErrorState = error;
+  exprStatusState = null;
+  expressionPanel.setError({
+    message: exprErrorText(error),
+    line: error.line,
+    column: error.column,
+  });
   expressionPanel.setStatus('');
 }
 
@@ -1035,12 +1091,14 @@ async function runExpression(textArg?: string, strictArg?: boolean): Promise<voi
   if (exprRunning) return;
   const rootId = documentRootId();
   if (!rootId) {
-    showToast('请先导入文档，再执行表达式', 2500, 'error');
+    showToast(t('app.toast.needDocument'), 2500, 'error');
     return;
   }
   const text = (textArg ?? expressionPanel.getText()).trim();
   const strict = strictArg ?? expressionPanel.getStrict();
   if (!text) {
+    exprErrorState = null;
+    exprStatusState = null;
     expressionPanel.setError(null);
     expressionPanel.setStatus('');
     return;
@@ -1049,17 +1107,15 @@ async function runExpression(textArg?: string, strictArg?: boolean): Promise<voi
   const seq = ++exprSeq;
   exprRunning = true;
   expressionPanel.setRunning(true);
+  exprErrorState = null;
+  exprStatusState = null;
   expressionPanel.setError(null);
   expressionPanel.setStatus(EXPR_COPY.running);
   try {
     const reply = await evalWithWatchdog({ rootId, seq, text, strict, budget });
     if (seq !== exprSeq) return; // 迟到回包（又执行了一次）
     if (!reply.ok) {
-      showExpressionError({
-        message: exprErrorText(reply.error),
-        line: reply.error.line,
-        column: reply.error.column,
-      });
+      showExpressionError(reply.error);
       // 保留上一份结果视图（错误只作用于输入，不清已经跑出来的结果）
       return;
     }
@@ -1162,7 +1218,8 @@ function enterExpressionView(
   const plan = session.land(reply, { kind: 'expression' });
   applyLanding(plan);
   renderExpressionBar();
-  expressionPanel.setStatus(EXPR_COPY.status(reply.count, Math.round(reply.ms)));
+  exprStatusState = { count: reply.count, ms: Math.round(reply.ms) };
+  expressionPanel.setStatus(EXPR_COPY.status(exprStatusState.count, exprStatusState.ms));
   updateStatus();
 }
 
@@ -1250,7 +1307,8 @@ async function buildExpressionExamples(): Promise<string[]> {
     const picks: string[] = [];
     for (const field of fields) {
       if (picks.length >= EXPR_EXAMPLES_DOC) break;
-      const isArray = (field.detail ?? '').includes('array');
+      const detail = field.detail;
+      const isArray = detail !== undefined && 'kind' in detail && detail.kind === 'array';
       picks.push(isArray ? `$.${field.label}.slice(0, 5)` : `$.${field.label}`);
     }
     if (picks.length < EXPR_EXAMPLES_DOC) picks.push('$');
@@ -1375,12 +1433,13 @@ function scheduleProfile(force = false): void {
 
 /* ---------------- import layer（文档入口层） ---------------- */
 
-const EMPTY_TITLE_INITIAL = '拖入 JSON，毫秒级开始查看';
-const EMPTY_TITLE_REPLACE = '打开新文档';
-const EMPTY_TITLE_NEW_TAB = '在新标签中打开';
-const EMPTY_SUB_INITIAL = '本地只读 · 数据不经过网络 · 50 MB 文档由 Worker 常驻';
-const EMPTY_SUB_REPLACE = '本地只读 · 数据不经过网络 · 原文件不受影响';
-const EMPTY_SUB_NEW_TAB = '本地只读 · 新标签与当前文档并存，可随时切换';
+/** 空态/入口层三形态的标题与副标题（模块级常量只存 key，渲染时再 t()；ADR-0026 §3）。 */
+const EMPTY_TITLE_INITIAL = 'app.empty.title.initial' as const;
+const EMPTY_TITLE_REPLACE = 'app.empty.title.replace' as const;
+const EMPTY_TITLE_NEW_TAB = 'app.empty.title.newTab' as const;
+const EMPTY_SUB_INITIAL = 'app.empty.sub.initial' as const;
+const EMPTY_SUB_REPLACE = 'app.empty.sub.replace' as const;
+const EMPTY_SUB_NEW_TAB = 'app.empty.sub.newTab' as const;
 
 /** 入口层三种形态（#18 / ADR-0009 §5）：空态 / 替换当前标签 / 新标签。 */
 type ImportMode = 'initial' | 'replace' | 'new-tab';
@@ -1420,7 +1479,7 @@ function setImportBusy(busy: boolean): void {
 function clearPendingFile(): void {
   pendingFile = null;
   emptyPending.hidden = true;
-  emptyPendingName.textContent = '—';
+  emptyPendingText.replaceChildren();
 }
 
 /** 回到「初始空态」的文案/可见性（不改变 empty 整体显示/隐藏）。 */
@@ -1429,10 +1488,9 @@ function resetImportLayerView(): void {
   empty.removeAttribute('role');
   empty.removeAttribute('aria-modal');
   empty.removeAttribute('aria-labelledby');
-  emptyTitle.textContent = EMPTY_TITLE_INITIAL;
-  emptySub.textContent = EMPTY_SUB_INITIAL;
+  emptyTitle.textContent = t(EMPTY_TITLE_INITIAL);
+  emptySub.textContent = t(EMPTY_SUB_INITIAL);
   emptyWarn.hidden = true;
-  emptyWarnDoc.textContent = '—';
   emptyClose.hidden = true;
   emptyModeToggle.hidden = true;
   emptyModeToggle.disabled = false;
@@ -1451,21 +1509,31 @@ function resetImportLayerView(): void {
 function applyImportLayerMode(mode: 'replace' | 'new-tab'): void {
   const isNew = mode === 'new-tab';
   empty.dataset.mode = mode;
-  emptyTitle.textContent = isNew ? EMPTY_TITLE_NEW_TAB : EMPTY_TITLE_REPLACE;
-  emptySub.textContent = isNew ? EMPTY_SUB_NEW_TAB : EMPTY_SUB_REPLACE;
+  emptyTitle.textContent = t(isNew ? EMPTY_TITLE_NEW_TAB : EMPTY_TITLE_REPLACE);
+  emptySub.textContent = t(isNew ? EMPTY_SUB_NEW_TAB : EMPTY_SUB_REPLACE);
   const active = activeTab();
-  emptyWarnDoc.textContent = active ? `${active.name}（${formatBytes(active.meta.bytes)}）` : '当前文档';
+  const currentName = active
+    ? `${active.name}（${formatBytes(active.meta.bytes)}）`
+    : t('app.empty.warnCurrent');
+  // 文件名用 <b> 强调（direction.md 空态形态）：前缀/文件名/后缀三段渲染，文案走词条
+  emptyWarn.replaceChildren(
+    document.createTextNode(t('app.empty.warn.before')),
+    strongText(currentName),
+    document.createTextNode(t('app.empty.warn.after')),
+  );
   emptyWarn.hidden = isNew;
   emptyClose.hidden = false;
   emptyModeToggle.hidden = false;
-  emptyModeToggle.textContent = isNew ? '改为替换当前文档' : '在新标签中打开';
+  emptyModeToggle.textContent = t(
+    isNew ? 'app.empty.modeToggle.replace' : 'app.empty.modeToggle.newTab',
+  );
 }
 
 /** 已打开文档时：打开入口层（替换 / 新标签两种形态）。返回是否真的打开。 */
 function openImportLayer(target: 'replace' | 'new-tab' = 'replace'): boolean {
   if (!session.rootId || importLayerOpen()) return false;
   if (target === 'new-tab' && !workspace.view().canAdd) {
-    showToast(`最多 ${workspace.max} 个标签，请先关闭不用的标签`, 3000, 'error');
+    showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
     return false;
   }
   if (target === 'replace' && !confirmDiscardEdits()) return false;
@@ -1495,7 +1563,7 @@ function toggleImportLayerMode(): void {
   const next = importLayerMode() === 'new-tab' ? 'replace' : 'new-tab';
   if (next === 'replace' && !confirmDiscardEdits()) return;
   if (next === 'new-tab' && !workspace.view().canAdd) {
-    showToast(`最多 ${workspace.max} 个标签，请先关闭不用的标签`, 3000, 'error');
+    showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
     return;
   }
   applyImportLayerMode(next);
@@ -1543,7 +1611,7 @@ async function importBuffer(
   // 软上限在**解析前**判：满 8 个时不要先把 50MB 解析完再拒绝。
   // 注意空工作区的 canAdd 也是 false（activeId=null），第一个标签必须放行。
   if (resolvedTarget === 'new-tab' && workspace.activeId !== null && !workspace.view().canAdd) {
-    showToast(`最多 ${workspace.max} 个标签，请先关闭不用的标签`, 3000, 'error');
+    showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
     return;
   }
   const loadId = ++loadSeq;
@@ -1642,7 +1710,7 @@ function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
     // 兜底：软上限在 UI 已禁用；真发生则释放刚建的根，工作区保持不变
     void core.closeRoot(reply.rootId).catch(() => undefined);
     hideImportLayer();
-    showToast(`最多 ${workspace.max} 个标签，未打开新文档`, 3000, 'error');
+    showToast(t('app.tabs.limitNoOpen', { n: workspace.max }), 3000, 'error');
     return;
   }
   workspace.activate(tab.id);
@@ -1702,14 +1770,14 @@ document.addEventListener('paste', (event: ClipboardEvent) => {
   if (!session.rootId) {
     // 初始空态：粘贴 = 打开文档
     event.preventDefault();
-    void importBuffer('paste', text, '剪贴板.json');
+    void importBuffer('paste', text, t('app.clipboardFile'));
     return;
   }
   // 文档已打开：只有入口层内才接受粘贴；层关闭时完全不处理（Q5-A）。
   // 层形态决定落点（替换当前标签 / 新标签），#18 / ADR-0009 §5。
   if (!importLayerOpen() || importLayerMode() === 'initial') return;
   event.preventDefault();
-  void importBuffer('paste', text, '剪贴板.json');
+  void importBuffer('paste', text, t('app.clipboardFile'));
 });
 
 window.addEventListener('dragover', (event: DragEvent) => {
@@ -1741,7 +1809,12 @@ window.addEventListener('drop', (event: DragEvent) => {
   // 文档视图内拖放：打开替换层并暂存文件，等用户确认（Q6-A）
   if (!openImportLayer()) return;
   pendingFile = file;
-  emptyPendingName.textContent = `${file.name || 'document.json'}（${formatBytes(file.size)}）`;
+  // 同 emptyWarn：文件名加粗（<b>），前后缀走词条
+  emptyPendingText.replaceChildren(
+    document.createTextNode(t('app.empty.pending.before')),
+    strongText(`${file.name || 'document.json'}（${formatBytes(file.size)}）`),
+    document.createTextNode(t('app.empty.pending.after')),
+  );
   emptyPending.hidden = false;
   emptyPendingReplace.focus();
 });
@@ -1866,7 +1939,7 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
     if (!isActiveDocRoot(reply.rootId)) return;
     const plan = session.land(reply, { kind: 'subtree' });
     if (!plan.changed) {
-      showToast(open ? '整棵子树已经全部展开了' : '整棵子树已经全部收起了', 1800, 'info');
+      showToast(t(open ? 'app.toast.subtreeExpanded' : 'app.toast.subtreeCollapsed'), 1800, 'info');
       return;
     }
     // 命中集按路径仍然有效（docRevision 未变），但新出现的行要重新带上命中标记（在 executor 内）
@@ -1887,7 +1960,7 @@ async function toggleSubtree(path: string, open: boolean): Promise<void> {
  */
 async function setNodeOrder(
   path: string,
-  action: { order: SortOrder | null; done: string; noop: string },
+  action: { order: SortOrder | null; done: MessageKey; noop: MessageKey },
 ): Promise<void> {
   if (!session.rootId) return;
   // 树动作：原文视图下先切回树（与 toggleSubtree 一致）
@@ -1899,13 +1972,13 @@ async function setNodeOrder(
     // no-op 判据统一来自落地计划（rowVersion 是否真的推进；回包 EditReply 无 changed 字段）
     const plan = session.land(reply, { kind: 'order' });
     if (!plan.changed) {
-      showToast(action.noop, 1800, 'info');
+      showToast(t(action.noop), 1800, 'info');
       return;
     }
     applyLanding(plan);
     void outlineState.refreshOrder();
     await restoreOrderAnchor(anchor, reply.rootId, () => isActiveDocRoot(reply.rootId));
-    showToast(action.done, 2000, 'success');
+    showToast(t(action.done), 2000, 'success');
   } catch (error) {
     showError(error);
   }
@@ -1934,7 +2007,7 @@ async function applyExpandAll(open: boolean): Promise<void> {
     if (!isActiveDocRoot(reply.rootId)) return;
     const plan = session.land(reply, { kind: 'expandAll' });
     if (!plan.changed) {
-      showToast(open ? '已经全部展开了' : '已经全部收起了', 1800, 'info');
+      showToast(t(open ? 'app.toast.allExpanded' : 'app.toast.allCollapsed'), 1800, 'info');
       return;
     }
     // 回顶与换版本同一拍完成（plan.scroll = top，executor 用 setRoot 的 scrollTopPx）：
@@ -1954,7 +2027,7 @@ const CHANGED_FLASH_MS = 900;
 function renderEditBadge(): void {
   const count = editState.count;
   editBadge.hidden = count === 0;
-  editBadge.textContent = `已修改 ${count} 处`;
+  editBadge.textContent = t('app.edit.badge', { n: count });
   editBadge.classList.toggle('is-dirty', count > 0);
   syncExportUi();
   renderRawChrome();
@@ -1963,12 +2036,12 @@ function renderEditBadge(): void {
 /** 替换文档会丢弃临时修改：有修改时先确认（edit-spec §5）。 */
 function confirmDiscardEdits(): boolean {
   if (!editState.dirty) return true;
-  return window.confirm(`当前有 ${editState.count} 处未导出的临时修改，继续将丢失。继续？`);
+  return window.confirm(t('app.confirm.discardEdits', { n: editState.count }));
 }
 
 function confirmReset(): boolean {
   if (!editState.dirty) return false;
-  return window.confirm(`重置全部 ${editState.count} 处临时修改？原文件不受影响。`);
+  return window.confirm(t('app.confirm.resetEdits', { n: editState.count }));
 }
 
 /**
@@ -2017,7 +2090,7 @@ async function openEditor(path: string): Promise<void> {
       showError(
         new CoreError({
           code: 'TOO_LARGE',
-          message: `子树过大（${formatBytes(coreError.bytes ?? 0)}），超过 5 MB，请选择更小的子树`,
+          message: t('app.toast.subtreeTooLargeEdit', { size: formatBytes(coreError.bytes ?? 0) }),
         }),
       );
       return;
@@ -2034,7 +2107,7 @@ async function applyEditText(text: string): Promise<void> {
     subtreeEditor.close();
     editingPath = null;
     editingRootId = null;
-    showToast('文档已切换，本次编辑已取消', 3000, 'error');
+    showToast(t('app.toast.docSwitched'), 3000, 'error');
     return;
   }
   const path = editingPath;
@@ -2117,7 +2190,7 @@ function currentNameFlags(): ExportNameFlags {
   };
 }
 
-/** 当前导出文件名：表达式结果视图导出 = `<名>-expr-N.json`（与文档导出区分，ADR-0018 §4）。 */
+/** 当前导出文件名：表达式结果视图导出 = 「文档名」-expr-N.json（与文档导出区分，ADR-0018 §4）。 */
 function currentExportName(): string | null {
   const base = currentBaseName();
   if (base === null) return null;
@@ -2258,8 +2331,8 @@ function currentExportMode(): ExportMode {
 /** 同步主按钮文案与菜单勾选（方式变化 / 临时修改计数变化时调用）。 */
 function syncExportUi(): void {
   const mode = currentExportMode();
-  const base = mode === 'file' ? '导出 JSON 文件' : '复制 JSON 到剪贴板';
-  const hint = editState.dirty ? '（含临时修改）' : '';
+  const base = t(mode === 'file' ? 'app.export.mode.file' : 'app.export.mode.clipboard');
+  const hint = editState.dirty ? t('app.export.edited') : '';
   exportBtn.title = `${base}${hint}`;
   exportBtn.setAttribute('aria-label', `${base}${hint}`);
   for (const item of exportMenuItems()) {
@@ -2328,9 +2401,9 @@ async function copyDocJson(): Promise<void> {
     const copied = await writeClipboard(reply.text);
     exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied };
     // 截断结果必须带标记（ADR-0018 §4：截断不能静默发生）
-    const suffix = exprViewActive && exprView?.truncated ? '（结果已截断）' : '';
-    if (copied) showToast(`已复制：JSON${suffix}`, 2000, 'success');
-    else showToast('复制失败：请改用「导出 JSON 文件」', 4000, 'error');
+    const suffix = exprViewActive && exprView?.truncated ? t('app.export.truncated') : '';
+    if (copied) showToast(t('app.toast.copyDone', { what: `JSON${suffix}` }), 2000, 'success');
+    else showToast(t('app.toast.copyFailedExport'), 4000, 'error');
   } catch (error) {
     showError(error);
   } finally {
@@ -2408,7 +2481,7 @@ function showRawContextMenu(line: number, x: number, y: number): void {
   rawCtxController.close('programmatic');
   ctxRawLine = line;
   const item = rawCtxMenu.querySelector<HTMLButtonElement>('[data-raw-act]');
-  if (item) item.title = `第 ${line} 行 → 树视图`;
+  if (item) item.title = t('app.toast.lineToTree', { line });
   rawCtxController.open({ kind: 'point', x, y });
 }
 
@@ -2426,17 +2499,17 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
   // 启用规则（ADR-0010 §1 / 修订 §启用规则）：容器没有原始值；根没有键名；子树项只在「有子孙的容器」上可用。
   setCtxItemDisabled(COPY_ACT.subtree, false);
   setCtxItemDisabled(COPY_ACT.path, false);
-  setCtxItemDisabled(COPY_ACT.value, isContainerKind, '容器没有原始值，请用「复制子树 JSON」');
-  setCtxItemDisabled(COPY_ACT.key, path === ROOT_PATH, '根节点没有键名');
+  setCtxItemDisabled(COPY_ACT.value, isContainerKind, t('app.toast.reasonContainerValue'));
+  setCtxItemDisabled(COPY_ACT.key, path === ROOT_PATH, t('app.toast.reasonRootKey'));
   const canSubtree = isContainerKind && row.count > 0 && path !== ROOT_PATH;
   const subtreeWhy =
     path === ROOT_PATH
-      ? '根节点请用工具栏「全部展开 / 全部收起」'
+      ? t('app.toast.reasonRootExpand')
       : isContainerKind
-        ? '该容器没有子节点'
-        : '只能展开容器节点';
+        ? t('app.toast.reasonEmptyContainer')
+        : t('app.toast.reasonScalar');
   // 文案「整棵子树」= 含该节点自身（收起时也会折叠它）+ 所有深度的子孙容器；不含更上层
-  const subtreeHint = '含该节点自身；不含更上层';
+  const subtreeHint = t('app.title.subtreeHint');
   setCtxItemDisabled('expand-subtree', !canSubtree, subtreeWhy, subtreeHint);
   setCtxItemDisabled('collapse-subtree', !canSubtree, subtreeWhy, subtreeHint);
   // 单节点子键排序覆盖（#41 / ADR-0024 修订 v1.1）：只对「对象容器且直接成员 ≥ 2」可用；
@@ -2444,32 +2517,33 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
   const canOrder = kind === 'object' && row.count >= 2;
   const orderWhy =
     kind === 'array'
-      ? '数组保持索引序，不能排序'
+      ? t('app.title.arrayOrder')
       : kind === 'object'
-        ? '该对象成员少于 2 个'
-        : '只能排序对象成员的子键';
-  const orderHint = '仅影响该节点的直接子键；不影响复制/导出';
+        ? t('app.title.orderMinTwo')
+        : t('app.title.orderObjectOnly');
+  const orderHint = t('app.title.nodeOrderHint');
   for (const act of Object.keys(NODE_ORDER_ACTIONS)) {
     setCtxItemDisabled(act, !canOrder, orderWhy, orderHint);
   }
   // 表达式结果只读（ADR-0018 §1）：结果根上的编辑入口一律禁用（复制四格式照常可用）
-  setCtxItemDisabled('edit', exprViewActive, '表达式结果只读');
+  setCtxItemDisabled('edit', exprViewActive, t('app.toast.exprReadonly'));
   // 双向定位（#30）：表达式结果根没有源文本；plain（修复文档）没有可靠的行/路径映射
   setCtxItemDisabled(
     'locate-raw',
     exprViewActive || meta?.repair !== undefined,
-    exprViewActive ? '表达式结果没有原文位置' : '原始文本被截断修复，无法定位到节点',
+    exprViewActive ? t('app.toast.exprNoSource') : t('app.toast.rawPlainMode'),
   );
   ctxMenuController.open({ kind: 'point', x, y });
 }
 
 /* ---------------- 复制四格式（ADR-0010） ---------------- */
 
-const COPY_LABELS: Record<CopyFormat, string> = {
-  subtree: '子树 JSON',
-  path: '路径',
-  value: '原始值',
-  key: '键名',
+/** 复制格式的展示名（模块级常量只存 key，toast 里再 t()）。 */
+const COPY_LABEL_KEYS: Record<CopyFormat, MessageKey> = {
+  subtree: 'app.copy.format.subtree',
+  path: 'app.copy.format.path',
+  value: 'app.copy.format.value',
+  key: 'app.copy.format.key',
 };
 
 /** 菜单 data-act ↔ 协议 format（固定顺序，见 ADR-0010 §1） */
@@ -2481,10 +2555,13 @@ const COPY_ACT: Record<CopyFormat, string> = {
 };
 
 /** v1.1 右键菜单「子键排序」三项：act → 协议 order + 成功 / no-op 文案（#41 / ADR-0024 修订）。 */
-const NODE_ORDER_ACTIONS: Record<string, { order: SortOrder | null; done: string; noop: string }> = {
-  'order-asc': { order: 'key-asc', done: '已按升序排列该节点的子键', noop: '子键已经是该顺序' },
-  'order-desc': { order: 'key-desc', done: '已按降序排列该节点的子键', noop: '子键已经是该顺序' },
-  'order-global': { order: null, done: '已恢复全局排序', noop: '该节点本来就用全局排序' },
+const NODE_ORDER_ACTIONS: Record<
+  string,
+  { order: SortOrder | null; done: MessageKey; noop: MessageKey }
+> = {
+  'order-asc': { order: 'key-asc', done: 'app.toast.orderAscDone', noop: 'app.toast.orderAscSame' },
+  'order-desc': { order: 'key-desc', done: 'app.toast.orderDescDone', noop: 'app.toast.orderDescSame' },
+  'order-global': { order: null, done: 'app.toast.orderGlobalDone', noop: 'app.toast.orderGlobalSame' },
 };
 
 function copyFormatOfAct(act: string): CopyFormat | null {
@@ -2534,22 +2611,22 @@ async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<vo
   try {
     const reply = await core.copyNode({ rootId: session.rootId, path, format, indent: settings.get('jsonIndent') });
     const copied = await writeClipboard(reply.text);
-    if (copied) showToast(`已复制：${COPY_LABELS[format]}`, 2000, 'success');
-    else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
+    if (copied) showToast(t('app.toast.copyDone', { what: t(COPY_LABEL_KEYS[format]) }), 2000, 'success');
+    else showToast(t('app.toast.copyFailedManual'), 4000, 'error');
   } catch (error) {
     const coreError = CoreError.from(error);
     if (coreError.code === 'TOO_LARGE') {
       showError(
         new CoreError({
           code: 'TOO_LARGE',
-          message: `子树过大（${formatBytes(coreError.bytes ?? 0)}），超过 5 MB，请用「导出」`,
+          message: t('app.toast.copyTooLarge', { size: formatBytes(coreError.bytes ?? 0) }),
         }),
       );
       return;
     }
     // 格式不适用（容器没有「原始值」、根没有「键名」）：树菜单靠禁用项规避，搜索双击会真触发
     if (coreError.code === 'BAD_COMMAND') {
-      showToast('该节点不支持当前复制格式；可在设置里更换', 4000, 'error');
+      showToast(t('app.toast.formatUnsupported'), 4000, 'error');
       return;
     }
     showError(error);
@@ -2589,31 +2666,29 @@ function setSelection(path: string | null): void {
   selPath.textContent = path ?? '—';
   selPath.title = path ?? '';
   // 表达式结果视图：选中行 = 「点一下跳回原文档」，不给编辑暗示（ADR-0018 §1）
-  selMeta.textContent = path ? (exprViewActive ? '点击行跳回原文档' : 'F2 / 双击编辑') : '';
+  selMeta.textContent = path ? (exprViewActive ? t('app.sel.hint.expr') : t('app.sel.hint.edit')) : '';
   updateStatus();
 }
 
 /* ---------------- search ---------------- */
 
-const PANEL_TITLES: Record<
-  'doc' | 'search' | 'outline' | 'settings' | 'expression',
-  string
-> = {
-  doc: '文档',
-  search: '搜索',
-  outline: '大纲',
-  settings: '设置',
-  expression: EXPR_COPY.panelTitle,
-};
-
 type PanelId = 'doc' | 'search' | 'outline' | 'settings' | 'expression';
+
+/** 左面板标题（模块级常量只存 key，setPanel 时再 t()）。 */
+const PANEL_TITLES: Record<PanelId, MessageKey> = {
+  doc: 'app.panel.doc',
+  search: 'app.panel.search',
+  outline: 'app.panel.outline',
+  settings: 'app.panel.settings',
+  expression: 'app.panel.expression',
+};
 
 /** 左面板模式（ADR-0011 §2 持久化；expression = ADR-0018 §1）。 */
 function setPanel(panel: PanelId): void {
   // 离开表达式模式 → 树区回文档树（结果根保留在 worker LRU；重进表达式模式可恢复最近结果）
   if (panel !== 'expression' && exprViewActive) backToDocTree({ silent: true });
   document.body.dataset.panel = panel;
-  panelTitle.textContent = PANEL_TITLES[panel];
+  panelTitle.textContent = t(PANEL_TITLES[panel]);
   const buttons = document.querySelectorAll<HTMLElement>('.actbtn[data-panel-btn]');
   buttons.forEach((button) => {
     const active = button.dataset.panelBtn === panel;
@@ -2656,7 +2731,8 @@ function setPanel(panel: PanelId): void {
       tree.scrollToPx(0);
       rowSource.requestWindow();
       renderExpressionBar(stale);
-      expressionPanel.setStatus(EXPR_COPY.status(exprView.count, Math.round(exprView.ms)));
+      exprStatusState = { count: exprView.count, ms: Math.round(exprView.ms) };
+      expressionPanel.setStatus(EXPR_COPY.status(exprStatusState.count, exprStatusState.ms));
       updateStatus();
     }
   }
@@ -2697,6 +2773,9 @@ function queueSearch(query: string): void {
  * 执行一次搜索（viewmodel 里 begin→apply 管理 seq/docRevision）：
  * 过期回包由 SearchState 丢弃；docRevision 不匹配 → 清空并提示重搜。
  */
+/** 最近一次搜索的正则错误（结构化；切语言时重新格式化，ADR-0026 §3）。 */
+let searchPatternCore: CoreError | null = null;
+
 async function runSearch(query: string): Promise<boolean> {
   // 多标签（ADR-0009 §2）：切标签 / 换根后迟到回包必须丢弃，不能写进当前标签的命中集。
   // 判据只用 rootId（换文档必换根）；不再用 loadSeq——它是全局量，会把别的标签的在途搜索误杀。
@@ -2727,6 +2806,7 @@ async function runSearch(query: string): Promise<boolean> {
       session.docRevision,
     );
     searchJumped = false;
+    searchPatternCore = null;
     applySearchToTree();
     renderSearch();
     return accepted;
@@ -2735,7 +2815,8 @@ async function runSearch(query: string): Promise<boolean> {
     // 无效/不安全的正则（ADR-0014 §2.3）：内联错误行，不弹 toast、不当作「无命中」。
     // 不先 begin('')（会清 patternError）；markPatternError 自己清结果并回 idle。
     if (coreError.code === 'BAD_PATTERN') {
-      searchState.markPatternError(coreError.message);
+      searchPatternCore = coreError;
+      searchState.markPatternError(patternErrorText(coreError));
       searchJumped = false;
       applySearchToTree();
       renderSearch();
@@ -2850,7 +2931,7 @@ function resetSearch(): void {
 
 function setTheme(theme: 'dark' | 'light'): void {
   document.documentElement.dataset.theme = theme;
-  statusTheme.textContent = theme === 'dark' ? '深色' : '亮色';
+  statusTheme.textContent = t(theme === 'dark' ? 'app.status.theme.dark' : 'app.status.theme.light');
 }
 
 el('themeToggle').addEventListener('click', () => {
@@ -2929,7 +3010,7 @@ function renderRepair(): void {
     repairToggle.hidden = true;
     return;
   }
-  repairText.textContent = repair.summaryText ?? '已修复截断（仅语法闭合，未修改任何已有值）';
+  repairText.textContent = repairSummaryText(repair.counts);
   repairText.title = repairText.textContent;
   const ops = repair.ops ?? [];
   repairToggle.hidden = ops.length === 0;
@@ -2941,9 +3022,9 @@ function renderRepair(): void {
     at.className = 'repairbar__at';
     at.dataset.at = String(op.at);
     at.textContent = `@${op.at}`;
-    at.title = '跳到原文对应行';
+    at.title = t('app.repair.jumpTitle');
     const note = document.createElement('span');
-    note.textContent = op.note;
+    note.textContent = repairNoteText(op.note);
     row.append(at, note);
     repairOps.appendChild(row);
   }
@@ -2967,8 +3048,10 @@ function renderDocWarn(): void {
   }
   // 源文本是 UTF-16 常驻：纯 ASCII 时正好 2× 字节数，多字节字符略低；按 2× 给人的是上限
   docWarnNotice.show(
-    `文档 ${formatBytesDecimal(bytes)}：源文本已常驻内存（UTF-16，最多约 ${formatBytesDecimal(bytes * 2)}）` +
-      `供原文视图使用，值图另计。不需要原文视图时可关闭本条。`,
+    t('app.docWarn.text', {
+      size: formatBytesDecimal(bytes),
+      max: formatBytesDecimal(bytes * 2),
+    }),
   );
 }
 
@@ -3037,7 +3120,7 @@ function renderFidelity(): void {
     // 循环导航（2026-11-11 晚用户反馈）：首尾不禁用，到头再点回到另一端
     if (fidelityIndex > hitCount - 1) fidelityIndex = 0;
     if (fidelityIndex < 0) fidelityIndex = hitCount - 1;
-    fidelityCount.textContent = `${fidelityIndex + 1}/${hitCount}`;
+    fidelityCount.textContent = `${fidelityIndex + 1}/${formatNumber(hitCount)}`;
     fidelityPrev.disabled = false;
     fidelityNext.disabled = false;
   } else {
@@ -3051,26 +3134,45 @@ function renderFidelity(): void {
   }
   // 精确数量必须**按类别**说（ADR-0020 起整数精度流失已退场，只剩上溢/下溢/键序）
   const parts: string[] = [];
-  if (report.counts.overflow > 0) parts.push(`数字上溢 ${report.counts.overflow} 处`);
-  if (report.counts.underflow > 0) parts.push(`数字下溢 ${report.counts.underflow} 处`);
-  if (report.counts.keyOrder > 0) parts.push(`整数键顺序 ${report.counts.keyOrder} 处`);
-  const tail = report.truncated ? `（仅列前 ${report.hits.length} 条）` : '';
+  if (report.counts.overflow > 0) {
+    parts.push(t('app.fidelity.overflow', { n: report.counts.overflow }));
+  }
+  if (report.counts.underflow > 0) {
+    parts.push(t('app.fidelity.underflow', { n: report.counts.underflow }));
+  }
+  if (report.counts.keyOrder > 0) {
+    parts.push(t('app.fidelity.keyOrder', { n: report.counts.keyOrder }));
+  }
+  const tail = report.truncated ? t('app.fidelity.tail', { n: report.hits.length }) : '';
   // 条内常驻显示**当前一处**的「原文 → 实际」对照（2026-11-11 晚用户反馈：状态栏太不明显）
   const current = hits[fidelityIndex];
-  const detail = current ? ` · 第 ${fidelityIndex + 1}/${hitCount} 处：${describeFidelityHit(current).replace(/^失真：/, '')}` : '';
-  fidelityNotice.show(`检测到 ${total} 处失真：${parts.join(' · ')}${tail}${detail}`);
+  const detail = current
+    ? t('app.fidelity.detail', {
+        i: fidelityIndex + 1,
+        n: hitCount,
+        desc: fidelityDescription(current),
+      })
+    : '';
+  fidelityNotice.show(
+    t('app.fidelity.summary', { n: total, parts: parts.join(' · '), tail, detail }),
+  );
 }
 
 /**
- * 一条失真的「人话解释」（#31 / ADR-0020 §7）：数字类给**原文 vs 实际值**
+ * 一条失真的「人话解释」正文（#31 / ADR-0020 §7）：数字类给**原文 vs 实际值**
  * （上溢 → Infinity / 下溢 → 0；整数精度流失已退场）；键序类只说明被重排。
  */
-function describeFidelityHit(hit: FidelityHit): string {
-  if (hit.kind === 'key-order') return '失真：整数样式的键顺序被重排';
+function fidelityDescription(hit: FidelityHit): string {
+  if (hit.kind === 'key-order') return t('app.fidelity.descKeyOrder');
   const literal = hit.literal ?? hit.snippet;
-  if (hit.reason === 'overflow') return `失真：原文 ${literal} → 实际 Infinity（数字上溢）`;
-  if (hit.reason === 'underflow') return `失真：原文 ${literal} → 实际 0（数字下溢）`;
-  return `失真：原文 ${literal} → 实际 ${hit.parsed ?? '?'}`;
+  if (hit.reason === 'overflow') return t('app.fidelity.descOverflow', { literal });
+  if (hit.reason === 'underflow') return t('app.fidelity.descUnderflow', { literal });
+  return t('app.fidelity.descParsed', { literal, parsed: hit.parsed ?? '?' });
+}
+
+/** 状态栏/提示条用的完整文案（带「失真：」前缀）。 */
+function describeFidelityHit(hit: FidelityHit): string {
+  return t('app.fidelity.status', { desc: fidelityDescription(hit) });
 }
 
 /**
@@ -3106,24 +3208,29 @@ function isRawView(): boolean {
 function renderRawChrome(): void {
   const info = rawMetaInfo;
   if (!info) {
-    rawModeLabel.textContent = '原文';
+    rawModeLabel.textContent = t('app.raw.mode');
     rawNotice.textContent = '';
     rawNotice.removeAttribute('title');
     rawMetaLabel.textContent = '';
     rawCopyBtn.disabled = true;
     return;
   }
-  rawModeLabel.textContent =
-    info.mode === 'source' ? '原文 · 源码行' : info.mode === 'pretty' ? '原文 · 规范布局' : '原文 · 纯文本';
+  rawModeLabel.textContent = t(
+    info.mode === 'source'
+      ? 'app.raw.mode.source'
+      : info.mode === 'pretty'
+        ? 'app.raw.mode.pretty'
+        : 'app.raw.mode.plain',
+  );
   const notes: string[] = [];
-  if (info.damaged) notes.push('原始文本被截断（已修复），此处显示原始字节');
-  else if (info.mode === 'pretty') notes.push('源文本为单行（minified），按规范格式显示；行内容取自源文本');
-  if (editState.dirty) notes.push('原始文件文本，不含临时修改');
+  if (info.damaged) notes.push(t('app.raw.notice.plain'));
+  else if (info.mode === 'pretty') notes.push(t('app.raw.notice.pretty'));
+  if (editState.dirty) notes.push(t('app.raw.notice.clean'));
   rawNotice.textContent = notes.join(' · ');
   if (notes.length > 0) rawNotice.title = notes.join('\n');
   else rawNotice.removeAttribute('title');
   // 索引构建耗时只在 dev hook / 冒烟里暴露，不进常驻 UI（ADR-0003 修订 §5）
-  rawMetaLabel.textContent = `${info.totalLines.toLocaleString()} 行`;
+  rawMetaLabel.textContent = t('app.raw.lines', { n: info.totalLines });
   rawCopyBtn.disabled = false;
 }
 
@@ -3159,7 +3266,7 @@ async function setViewMode(mode: 'tree' | 'raw', opts: { persist?: boolean } = {
   const rid = session.rootId;
   const seq = ++rawOpenSeq;
   if (!rawMetaInfo) {
-    statusRows.textContent = '正在构建原文索引…';
+    statusRows.textContent = t('app.raw.indexing');
     statusSize.textContent = meta ? `${formatBytes(meta.bytes)} · v${session.docRevision}` : '—';
   }
   try {
@@ -3187,15 +3294,18 @@ async function copyRawSource(): Promise<void> {
   try {
     const reply = await core.rawSource({ rootId: session.rootId, maxBytes: CLIPBOARD_MAX_BYTES });
     const copied = await writeClipboard(reply.text);
-    if (copied) showToast('已复制：原始文本', 2000, 'success');
-    else showToast('复制失败：请手动选中文本后按 ⌘C', 4000, 'error');
+    if (copied) showToast(t('app.raw.copied'), 2000, 'success');
+    else showToast(t('app.raw.copyFailed'), 4000, 'error');
   } catch (error) {
     const coreError = CoreError.from(error);
     if (coreError.code === 'TOO_LARGE') {
       showError(
         new CoreError({
           code: 'TOO_LARGE',
-          message: `原文过大（${formatBytes(coreError.bytes ?? 0)}），超过 ${formatBytes(CLIPBOARD_MAX_BYTES)}，无法复制到剪贴板`,
+          message: t('app.raw.copyTooLarge', {
+            size: formatBytes(coreError.bytes ?? 0),
+            max: formatBytes(CLIPBOARD_MAX_BYTES),
+          }),
         }),
       );
       return;
@@ -3287,7 +3397,7 @@ async function jumpTreeToRaw(path: string): Promise<number> {
     // 迟到回包：已换文档/标签（ADR-0009 §2 的 rootId 路由口径）
     if (rid !== session.rootId) return -1;
     if (reply.offset === null || reply.line === null) {
-      showStatusHint('该节点来自临时修改，原文中没有对应位置');
+      showStatusHint(t('app.toast.locateEdited'));
       return -1;
     }
     rawTreeAnchor = { path, line: reply.line };
@@ -3317,7 +3427,7 @@ async function jumpRawToTree(line: number): Promise<string | null> {
     const reply = await core.rawPathAt({ rootId: rid, line });
     if (rid !== session.rootId) return null;
     if (reply.path === null) {
-      showStatusHint('该行没有对应的树节点');
+      showStatusHint(t('app.toast.locateNoNode'));
       return null;
     }
     const sourcePath = reply.path;
@@ -3333,10 +3443,10 @@ async function jumpRawToTree(line: number): Promise<string | null> {
       jumped = await jumpToPath(target, { silent: true });
     }
     if (!jumped.ok) {
-      showStatusHint('树里找不到对应节点');
+      showStatusHint(t('app.toast.locateNoTree'));
       return null;
     }
-    if (fallback) showStatusHint('该位置已被临时修改，已定位到最近的祖先');
+    if (fallback) showStatusHint(t('app.toast.locateEditedAncestor'));
     flashTreePath(target);
     rawTreeAnchor = { path: sourcePath, line };
     return target;
@@ -3349,30 +3459,81 @@ async function jumpRawToTree(line: number): Promise<string | null> {
   }
 }
 
+/**
+ * 首帧动态文案（ADR-0026 §3）：page.html 默认只留英文；空态标题/副标题、编辑角标、原文
+ * 视图文案与状态栏由 main.ts 渲染（不打 data-i18n 标记），启动时按当前 locale 回填一次。
+ * 幂等：locale 切换后可安全重放（有文档时只重画状态栏/角标，不覆盖已渲染的空态形态）。
+ */
+function renderInitialChrome(): void {
+  if (!session.rootId && importLayerMode() === 'initial') {
+    emptyTitle.textContent = t('app.empty.title.initial');
+    emptySub.textContent = t('app.empty.sub.initial');
+  }
+  renderEditBadge();
+  updateStatus();
+}
+
+/**
+ * 界面语言切换后的全量重渲染（#45 / ADR-0026 §3）：静态标记 → 面板静态标签 → 动态文案。
+ * 幂等；worker 诊断是结构化数据，重画即按新语言格式化（无需重发命令）。
+ */
+function rerenderChrome(): void {
+  document.documentElement.lang = currentLocale();
+  applyStaticMessages();
+  // 左面板标题（活动栏 aria 由静态标记覆盖）
+  const panel = (document.body.dataset.panel as PanelId | undefined) ?? 'doc';
+  panelTitle.textContent = t(PANEL_TITLES[panel]);
+  settingsPanel.relabel();
+  searchPanel.relabel();
+  outlinePanel.relabel();
+  expressionPanel.relabel();
+  expressionBar.relabel();
+  tabStrip.relabel();
+  tree.relabel();
+  rawView.relabel();
+  // 有文档：工具栏/文件 chip/三条提示条/原文头/状态栏；无文档：空态 + 状态栏
+  renderTabChrome();
+  renderEditBadge();
+  renderProfile();
+  renderInitialChrome();
+  applyExpressionInlineText();
+  if (searchPatternCore && searchState.view().patternError) {
+    searchState.markPatternError(patternErrorText(searchPatternCore));
+    renderSearch();
+  }
+  if (importLayerOpen()) {
+    const mode = importLayerMode();
+    if (mode === 'replace' || mode === 'new-tab') applyImportLayerMode(mode);
+  }
+}
+
 function updateStatus(): void {
   if (!session.rootId || !meta) {
-    statusRows.textContent = '未打开文档';
+    statusRows.textContent = t('app.status.rows.none');
     statusSize.textContent = '—';
     statusPath.textContent = '';
-    statusState.textContent = '只读 · 原文件不变';
+    statusState.textContent = t('app.status.readonly');
     return;
   }
   if (locateBusy) {
-    statusRows.textContent = '正在定位…';
+    statusRows.textContent = t('app.status.locating');
   } else if (isRawView()) {
     const rawSnapshot = rawSource.snapshot();
     const lines = rawMetaInfo?.totalLines ?? rawSnapshot.totalLines;
-    statusRows.textContent = `${lines.toLocaleString()} 行 · 原文 · 已渲染 ${rawSnapshot.lines.length}`;
+    statusRows.textContent = t('app.status.raw', { n: lines, rendered: rawSnapshot.lines.length });
   } else {
     const snapshot = rowSource.snapshot();
-    statusRows.textContent = `${session.totalRows.toLocaleString()} 行 · 已渲染 ${snapshot.rows.length}`;
+    statusRows.textContent = t('app.status.tree', {
+      n: session.totalRows,
+      rendered: snapshot.rows.length,
+    });
   }
   statusSize.textContent = `${formatBytes(meta.bytes)} · v${session.docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
   // 表达式结果视图：状态栏明确「这不是文档」（ADR-0018 §1）
   if (exprViewActive && exprView) {
-    statusState.textContent = `表达式结果 ${exprView.rootId} · 只读 · 原文件不变`;
+    statusState.textContent = t('app.status.expr', { rootId: exprView.rootId });
     return;
   }
   // 临时提示（双向定位失败/回退等）优先于常驻态（ADR-0019 §4）
@@ -3382,10 +3543,10 @@ function updateStatus(): void {
   }
   // 修复角标独立于修复条显隐：数据仍不完整，状态栏要一直能看出来
   const repaired = meta.repair?.status === 'repaired';
-  const repairedTag = repaired ? '已修复截断 · ' : '';
+  const repairedTag = repaired ? t('app.status.repaired') : '';
   statusState.textContent = editState.dirty
-    ? `${repairedTag}临时修改 ${editState.count} 处 · 原文件不变`
-    : `${repairedTag}只读 · 原文件不变`;
+    ? repairedTag + t('app.status.edited', { n: editState.count })
+    : repairedTag + t('app.status.readonly');
 }
 
 function formatBytes(bytes: number): string {
@@ -3402,7 +3563,8 @@ function formatBytesDecimal(bytes: number): string {
 
 function formatCoreError(error: unknown): string {
   const coreError = CoreError.from(error);
-  const detail = coreError.code === 'PARSE' && coreError.line ? `（第 ${coreError.line} 行）` : '';
+  const detail =
+    coreError.code === 'PARSE' && coreError.line ? t('app.error.lineSuffix', { line: coreError.line }) : '';
   return `${coreError.code}: ${coreError.message}${detail}`;
 }
 
@@ -3725,3 +3887,7 @@ if (!isExtension) {
  * 即使还没有文档也要发一次 setOrder，把持久化的规则同步给 Worker 服务级 order。 */
 orderSyncReady = true;
 void syncSortOrder(settings.get('sortOrder'));
+
+/* 首帧动态文案按当前 locale 回填（空态标题/副标题、编辑角标、状态栏；ADR-0026 §3）。
+ * page.html 的静态文案已由文件顶部的 applyStaticMessages() 回填。 */
+renderInitialChrome();

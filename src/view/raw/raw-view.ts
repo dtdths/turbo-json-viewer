@@ -17,6 +17,7 @@
 import { CH, JsonLexer, TOK } from '../../shared/json-lex';
 import { clampRowHeight } from '../../shared/num';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
+import { t } from '../../i18n/index';
 import type { RawSnapshot } from '../../viewmodel/raw-window-source';
 
 export interface RawViewOptions {
@@ -171,7 +172,7 @@ export class RawView {
     scroller.className = 'tjv-raw';
     scroller.tabIndex = 0;
     scroller.setAttribute('role', 'document');
-    scroller.setAttribute('aria-label', '原始文本视图');
+    scroller.setAttribute('aria-label', t('view.raw.label'));
     scroller.style.setProperty('--row-h', `${this.rowHeight}px`);
 
     const spacer = document.createElement('div');
@@ -236,6 +237,16 @@ export class RawView {
   /** 用最近一帧快照重绘（行高 / flash 定时器到期等只改渲染态的变化，不重新请求窗口）。 */
   refresh(): void {
     if (this.lastSnapshot) this.render(this.lastSnapshot);
+  }
+
+  /**
+   * 语言切换：回填滚动容器 aria-label + 行内静态提示（定位 / 超长行），
+   * 再按最近一帧快照重画窗口。幂等、不改滚动/行号状态。
+   */
+  relabel(): void {
+    if (!this.mounted) return;
+    this.scroller?.setAttribute('aria-label', t('view.raw.label'));
+    this.refresh();
   }
 
   /**
@@ -409,7 +420,7 @@ export class RawView {
     slot.num.textContent = String(lineNo);
     slot.locate.hidden = !anchorable;
     if (anchorable) {
-      const label = `在树视图中定位（第 ${lineNo} 行）`;
+      const label = t('view.raw.locate', { n: lineNo });
       slot.locate.title = label;
       slot.locate.setAttribute('aria-label', label);
     }
@@ -417,10 +428,7 @@ export class RawView {
 
     if (truncated > 0) {
       slot.el.dataset.truncated = String(truncated);
-      slot.el.setAttribute(
-        'title',
-        `该行还有 ${truncated} 个字符未显示（「复制原文」可见全文）`,
-      );
+      slot.el.setAttribute('title', t('view.raw.truncated', { n: truncated }));
     } else {
       delete slot.el.dataset.truncated;
       slot.el.removeAttribute('title');

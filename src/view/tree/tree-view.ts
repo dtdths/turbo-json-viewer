@@ -13,6 +13,7 @@
 import { clampRowHeight } from '../../shared/num';
 import type { JsonKind, Row } from '../../protocol/types';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
+import { t } from '../../i18n/index';
 import type { WindowSnapshot } from '../../viewmodel/row-window-source';
 import type { RowContext, RowHandle, RowRenderer, RowRendererFactory } from './row-renderer';
 
@@ -215,7 +216,7 @@ export class TreeView {
     scroller.className = 'tjv-tree';
     scroller.tabIndex = 0;
     scroller.setAttribute('role', 'tree');
-    scroller.setAttribute('aria-label', 'JSON 树视图');
+    scroller.setAttribute('aria-label', t('view.tree.label'));
     scroller.style.setProperty('--row-h', `${this.rowHeight}px`);
 
     const spacer = document.createElement('div');
@@ -362,6 +363,16 @@ export class TreeView {
   /** 用最近一帧快照重绘（搜索态/类型列等视图态变化，不重新请求窗口）。 */
   refresh(): void {
     if (this.lastSnapshot) this.render(this.lastSnapshot);
+  }
+
+  /**
+   * 语言切换：回填滚动容器 aria-label + 行池浮条按钮 aria-label，再按当前快照重画行池
+   * （项数 / 展开提示 / 类型列随词条更新）。幂等、不改展开/选中/滚动状态。
+   */
+  relabel(): void {
+    this.scroller?.setAttribute('aria-label', t('view.tree.label'));
+    this.renderer?.relabel();
+    this.refresh();
   }
 
   /**

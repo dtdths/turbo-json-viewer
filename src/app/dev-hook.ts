@@ -10,6 +10,8 @@
  *
  * 兼容性：成员名 / 参数 / 返回形状与历史 `window.__tjv` 逐字一致（13 套冒烟零改动）。
  */
+import { currentLocale, currentLocalePref, isPackLoaded, messageCount } from '../i18n';
+import { repairSummaryText } from '../i18n/format';
 import { CoreError } from '../protocol/errors';
 import type { CoreApi } from '../protocol/core-api';
 import type {
@@ -53,6 +55,22 @@ export interface ExportLastAction {
   name?: string;
   bytes?: number;
   copied?: boolean;
+}
+
+/** 界面语言状态（#45 / ADR-0026 §7：切语言冒烟断言用）。 */
+export interface LocaleHookState {
+  /** 当前生效 locale（en-US / zh-CN） */
+  locale: string;
+  /** 设置里的语言偏好（auto / tag） */
+  pref: string;
+  /** `<html lang>` */
+  htmlLang: string | null;
+  /** `document.title` */
+  title: string;
+  /** zh-CN 语言包是否已加载（懒加载证据） */
+  zhPackLoaded: boolean;
+  /** 当前词条表 key 数（= 语言包完整性粗探针） */
+  messageCount: number;
 }
 
 export interface CtxOpenState {
@@ -360,6 +378,10 @@ export interface DevHook {
   repairState(): RepairHookState;
   repairToggle(): boolean;
   repairClose(): boolean;
+
+  /* ---- 界面语言（#45 / ADR-0026） ---- */
+  /** 当前 locale / 偏好 / html lang / zh 语言包是否已加载（懒加载证据）。 */
+  localeState(): LocaleHookState;
 
   fidelityState(): FidelityHookState;
   fidelityJump(): Promise<{ ms: number } & RawHookState & { fidelity: { barVisible: boolean } }>;
@@ -727,7 +749,7 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       ops: Array.from(ui.repairOps.querySelectorAll('.repairbar__op')).map((n) => n.textContent ?? ''),
       // 结构化 ops（#11 原文跳行验收：at = 原文本偏移）
       opsDetail: meta?.repair?.ops ?? [],
-      summary: meta?.repair?.summaryText ?? null,
+      summary: meta?.repair?.status === 'repaired' ? repairSummaryText(meta.repair.counts) : null,
       counts: meta?.repair?.counts ?? null,
       truncatedAt: meta?.repair?.truncatedAt ?? null,
       exportName: deps.exportFileName(),
@@ -986,6 +1008,19 @@ export function createDevHook(deps: DevHookDeps): DevHook {
     settingsOpen: () => deps.entries.openSettings(),
     /** 行高/缩进/类型列等几何视图态（冒烟断言用）。 */
     treeGeometry: () => deps.entries.treeGeometry(),
+
+    // ---- 界面语言（#45 / ADR-0026 §7）----
+    /** 当前 locale / 偏好 / html lang / zh 语言包懒加载证据（切语言冒烟断言用）。 */
+    localeState: () => ({
+      locale: currentLocale(),
+      pref: currentLocalePref(),
+      htmlLang:
+        typeof document === 'undefined' ? null : (document.documentElement.lang || null),
+      title: typeof document === 'undefined' ? '' : document.title,
+      zhPackLoaded: isPackLoaded('zh-CN'),
+      messageCount: messageCount(),
+    }),
+
     repairState: () => repairState(),
     repairToggle: () => {
       ui.repairToggle.click();

@@ -19,6 +19,7 @@ import {
 } from '../../viewmodel/outline-state';
 import { MAX_SCROLL_PX } from '../../protocol/versions';
 import { clampRowHeight } from '../../shared/num';
+import { t } from '../../i18n/index';
 
 export interface OutlinePanelOptions {
   /** 行高（px）；默认 OUTLINE_ROW_HEIGHT，实际随设置由 `setRowHeight` 更新 */
@@ -34,11 +35,14 @@ export interface OutlinePanelOptions {
   onLoadMore(path: string): void;
 }
 
-/* ---------------- 文案（冒烟断言依赖，不要改名） ---------------- */
+/* ---------------- 文案（冒烟断言依赖；渲染时按当前 locale 取词条） ---------------- */
 
-const EMPTY_IDLE_TEXT = '导入文档后显示结构大纲';
-const EMPTY_LOADING_TEXT = '加载中…';
-const EMPTY_ERROR_TEXT = '大纲加载失败';
+function emptyText(phase: OutlineView['phase']): string | null {
+  if (phase === 'idle') return t('view.outline.empty.idle');
+  if (phase === 'loading') return t('view.outline.empty.loading');
+  if (phase === 'error') return t('view.outline.empty.error');
+  return null;
+}
 
 function isContainerKind(kind: OutlineRow['kind']): boolean {
   return kind === 'object' || kind === 'array';
@@ -82,6 +86,9 @@ export class OutlinePanel {
   private footEl!: HTMLDivElement;
   private footRendered!: HTMLSpanElement;
   private footTotal!: HTMLSpanElement;
+  /** 底栏前后缀文本节点（`已渲染 ` / ` 行`），relabel 时改文本 */
+  private footPrefixNode: Text | null = null;
+  private footSuffixNode: Text | null = null;
 
   private readonly slots: RowSlot[] = [];
   private resizeObserver: ResizeObserver | null = null;
@@ -112,7 +119,7 @@ export class OutlinePanel {
     this.scroller.id = 'outlineScroll';
     this.scroller.setAttribute('role', 'tree');
     this.scroller.setAttribute('tabindex', '0');
-    this.scroller.setAttribute('aria-label', '文档大纲');
+    this.scroller.setAttribute('aria-label', t('view.outline.label'));
     this.scroller.style.setProperty('--outline-row-h', `${this.rowHeight}px`);
 
     this.spacer = el('div', 'outline__spacer');
@@ -127,7 +134,7 @@ export class OutlinePanel {
     /* ---- #outlineEmpty：空态 / 加载中 / 错误 ---- */
     this.emptyEl = el('div', 'outline__empty');
     this.emptyEl.id = 'outlineEmpty';
-    this.emptyEl.textContent = EMPTY_IDLE_TEXT;
+    this.emptyEl.textContent = t('view.outline.empty.idle');
     this.scroller.appendChild(this.emptyEl);
 
     /* ---- #outlineFoot：底栏「已渲染 R / N 行」 ---- */
@@ -140,13 +147,9 @@ export class OutlinePanel {
     this.footTotal = el('span');
     this.footTotal.id = 'outlineTotal';
     this.footTotal.textContent = '0';
-    this.footEl.append(
-      document.createTextNode('已渲染 '),
-      this.footRendered,
-      document.createTextNode(' / '),
-      this.footTotal,
-      document.createTextNode(' 行'),
-    );
+    this.footPrefixNode = document.createTextNode(t('view.outline.foot.prefix'));
+    this.footSuffixNode = document.createTextNode(t('view.outline.foot.suffix'));
+    this.footEl.append(this.footPrefixNode, this.footRendered, document.createTextNode(' / '), this.footTotal, this.footSuffixNode);
 
     // 空态文案不能放进 role=tree（tree 的子节点只能是 treeitem），放面板层
     this.host.append(this.emptyEl, this.scroller, this.footEl);
@@ -195,6 +198,18 @@ export class OutlinePanel {
     this.revealSelected();
   }
 
+  /**
+   * 语言切换：回填静态标签（列表 aria / 底栏前后缀 / 空态），再按当前快照重画窗口。
+   * 幂等、不改展开/选中状态（不触发任何回调）。
+   */
+  relabel(): void {
+    if (!this.mounted) return;
+    this.scroller.setAttribute('aria-label', t('view.outline.label'));
+    if (this.footPrefixNode) this.footPrefixNode.textContent = t('view.outline.foot.prefix');
+    if (this.footSuffixNode) this.footSuffixNode.textContent = t('view.outline.foot.suffix');
+    if (this.view) this.render(this.view);
+  }
+
   focus(): void {
     if (!this.mounted) this.mount();
     this.scroller.focus();
@@ -217,6 +232,8 @@ export class OutlinePanel {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.slots.length = 0;
+    this.footPrefixNode = null;
+    this.footSuffixNode = null;
     this.host.replaceChildren();
     this.view = null;
     this.rendered = 0;
@@ -233,10 +250,7 @@ export class OutlinePanel {
   }
 
   private updateEmpty(view: OutlineView): void {
-    let text: string | null = null;
-    if (view.phase === 'idle') text = EMPTY_IDLE_TEXT;
-    else if (view.phase === 'loading') text = EMPTY_LOADING_TEXT;
-    else if (view.phase === 'error') text = EMPTY_ERROR_TEXT;
+    const text = emptyText(view.phase);
 
     if (text === null) {
       // 隐藏时清空文本：读 #outlineEmpty 永远不会看到过期态文案
@@ -353,16 +367,18 @@ export class OutlinePanel {
 
     if (row.more) {
       /* ---- 「加载更多」哨兵行：data-more="1"、data-path = 所属容器 ---- */
+      const moreText =
+        row.remaining !== undefined ? t('view.outline.loadMore', { n: row.remaining }) : row.key;
       node.dataset.more = '1';
       delete node.dataset.kind;
       delete node.dataset.count;
       node.removeAttribute('aria-expanded');
-      node.setAttribute('aria-label', row.key);
+      node.setAttribute('aria-label', moreText);
       node.removeAttribute('aria-selected');
       slot.caret.remove();
       slot.typeEl.remove();
       slot.countEl.remove();
-      slot.keyEl.textContent = row.key;
+      slot.keyEl.textContent = moreText;
       return;
     }
 
@@ -385,9 +401,11 @@ export class OutlinePanel {
     slot.typeEl.textContent = row.kind ?? '';
     if (container) this.attachChild(node, slot.countEl, false);
     else slot.countEl.remove();
-    slot.countEl.textContent = container ? `${row.count} 项` : '';
+    slot.countEl.textContent = container ? t('view.outline.count', { n: row.count }) : '';
 
-    const label = container ? `${row.key} ${row.kind} ${row.count} 项` : `${row.key} ${row.kind}`;
+    const label = container
+      ? t('view.outline.aria.container', { key: row.key, kind: row.kind ?? '', n: row.count })
+      : t('view.outline.aria.scalar', { key: row.key, kind: row.kind ?? '' });
     node.setAttribute('aria-label', label);
   }
 

@@ -48,7 +48,19 @@ describe('settings-state — 默认值与校验', () => {
       advBudget: 'standard',
       escapeUnicode: false,
       sortOrder: 'raw',
+      locale: 'auto',
     });
+  });
+
+  it('locale：默认跟随系统 / 三档合法保留 / 未知回落 auto（#45 / ADR-0026 §3）', () => {
+    expect(DEFAULT_SETTINGS.locale).toBe('auto');
+    expect(normalizeSettings({}).locale).toBe('auto');
+    expect(normalizeSettings({ locale: 'auto' }).locale).toBe('auto');
+    expect(normalizeSettings({ locale: 'zh-CN' }).locale).toBe('zh-CN');
+    expect(normalizeSettings({ locale: 'en-US' }).locale).toBe('en-US');
+    expect(normalizeSettings({ locale: 'zh-TW' }).locale).toBe('auto');
+    expect(normalizeSettings({ locale: 'de-DE' }).locale).toBe('auto');
+    expect(normalizeSettings({ locale: 1 }).locale).toBe('auto');
   });
 
   it('sortOrder：默认原始顺序 / 三档合法保留 / 非法回落（#40 / ADR-0024 §3）', () => {
@@ -148,6 +160,7 @@ describe('settings-state — 默认值与校验', () => {
         adaptiveExpand: 'true',
         escapeUnicode: 'yes',
         sortOrder: 'bogus',
+        locale: 'klingon',
       }),
     ).toEqual(DEFAULT_SETTINGS);
   });

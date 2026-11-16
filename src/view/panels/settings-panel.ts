@@ -2,13 +2,16 @@
  * view/panels/settings-panel — 设置面板的 DOM 层（ADR-0011 §1 / §4）。
  *
  * 边界：
- *   - 自建 13 行 DOM（segmented / checkbox）；page.html 只留 `.panel.panel--settings` 挂载点。
+ *   - 自建 **14 行** DOM（segmented / checkbox；第 14 行 = 语言，#45 / ADR-0026 §3）；
+ *     page.html 只留 `.panel.panel--settings` 挂载点。
  *   - 控件状态只从 `Settings` 快照同步；用户改动经 `opts.onChange` 上抛，由 app 调
  *     `SettingsState.set()`，再经订阅回到 `render()`。本模块不读写存储、不碰主题/CSS 变量。
  *
  * 硬约束：
  *   - 文本全部走 textContent / createElement，**禁 innerHTML**。
  *   - `render()` 只同步 active / checked，**绝不触发 onChange**；必须幂等、可反复调用。
+ *   - `relabel()`：语言切换时重建整张表（事件随按钮重建、不重复注册），并按最近一次
+ *     model 回填 active / checked；同样不触发 onChange、不改任何设置状态。
  */
 import {
   EXPR_BUDGET_OPTIONS,
@@ -20,14 +23,15 @@ import {
   type SettingsKey,
 } from '../../viewmodel/settings-state';
 import type { SortOrder } from '../../protocol/types';
-import { EXPORT_MODE_LABELS } from '../../viewmodel/export-state';
+import { EXPORT_MODES, EXPORT_MODE_LABELS } from '../../viewmodel/export-state';
+import { languageChoices, t, type MessageKey } from '../../i18n/index';
 
 export interface SettingsPanelOptions {
   /** 用户改了一项（只在用户交互时触发；render 不触发） */
   onChange(key: SettingsKey, value: Settings[SettingsKey]): void;
 }
 
-/** 13 项设置的任一值（= 各字段类型的联合） */
+/** 14 项设置的任一值（= 各字段类型的联合） */
 type SettingValue = Settings[SettingsKey];
 interface SegItem {
   value: SettingValue;
@@ -47,7 +51,7 @@ interface SegRowSpec {
   items: readonly SegItem[];
   /** 行尾小字单位（如 `px`），不占按钮文案 */
   unit?: string;
-  /** 行下说明（可选；仅新的排序行使用，提示作用范围） */
+  /** 行下说明（可选） */
   hint?: string;
 }
 
@@ -57,64 +61,33 @@ interface CheckRowSpec {
   hint: string;
 }
 
-/* ---------------- 13 行的固定顺序与文案（ADR-0011 §1 及其 2026-11-03 / 2026-11-10 修订 + ADR-0012 修订 + ADR-0022 + ADR-0024 §3） ---------------- */
-
-const THEME_ITEMS: readonly SegItem[] = [
-  { value: 'dark', label: '深色' },
-  { value: 'light', label: '亮色' },
-];
-
-const ROW_HEIGHT_ITEMS: readonly SegItem[] = ROW_HEIGHT_OPTIONS.map((value) => ({
-  value,
-  label: String(value),
-  ariaLabel: `${value}px`,
-}));
-
-const INDENT_ITEMS: readonly SegItem[] = INDENT_OPTIONS.map((value) => ({
-  value,
-  label: String(value),
-  ariaLabel: `${value}px`,
-}));
+/* ---------------- 选项值集合（文案在 build 时按当前 locale 取词条） ---------------- */
 
 /** 子键显示排序（#40 / ADR-0024 §3）：原始顺序为默认；取值集合 = `SORT_ORDER_OPTIONS`
  *  （单一来源在 protocol/versions），文案按值显式映射、不依赖数组下标。 */
-const SORT_ORDER_LABELS: Record<SortOrder, string> = {
-  raw: '原始',
-  'key-asc': '升序',
-  'key-desc': '降序',
+const SORT_ORDER_KEYS: Record<SortOrder, MessageKey> = {
+  raw: 'view.settings.sort.raw',
+  'key-asc': 'view.settings.sort.asc',
+  'key-desc': 'view.settings.sort.desc',
 };
-const SORT_ORDER_ITEMS: readonly SegItem[] = SORT_ORDER_OPTIONS.map((value) => ({
-  value,
-  label: SORT_ORDER_LABELS[value],
-}));
-
-const COPY_FORMAT_ITEMS: readonly SegItem[] = [
-  { value: 'subtree', label: '子树 JSON' },
-  { value: 'path', label: '路径' },
-  { value: 'value', label: '原始值' },
-  { value: 'key', label: '键名' },
-];
 
 /** JSON 缩进的展示顺序：2 → 4 → 紧凑（0）；值集合仍来自 `JSON_INDENT_OPTIONS`（ADR-0022 §2）。 */
 const JSON_INDENT_RANK: Readonly<Record<number, number>> = { 2: 0, 4: 1, 0: 2 };
 
-const JSON_INDENT_ITEMS: readonly SegItem[] = [...JSON_INDENT_OPTIONS]
-  .sort((a, b) => JSON_INDENT_RANK[a] - JSON_INDENT_RANK[b])
-  .map((value) => ({ value, label: value === 0 ? '紧凑' : `${value} 空格` }));
+type BudgetLevel = (typeof EXPR_BUDGET_OPTIONS)[number];
+const BUDGET_KEYS: Record<BudgetLevel, MessageKey> = {
+  loose: 'view.settings.budget.loose',
+  standard: 'view.settings.budget.standard',
+  strict: 'view.settings.budget.strict',
+};
 
-/** 导出方式（ADR-0012 修订）：与分体按钮菜单共享同一 SettingsState */
-const EXPORT_MODE_ITEMS: readonly SegItem[] = [
-  { value: 'file', label: EXPORT_MODE_LABELS.file },
-  { value: 'clipboard', label: EXPORT_MODE_LABELS.clipboard },
-];
-
-/** 表达式高级预算（#12 / ADR-0018 §7）：预设档位、不可自定义数值，标准为默认。
- *  取值集合与 `EXPR_BUDGET_OPTIONS` 同源（normalizeSettings 会校验非法值回落默认）。 */
-const EXPR_BUDGET_ITEMS: readonly SegItem[] = [
-  { value: EXPR_BUDGET_OPTIONS[0], label: '宽松' },
-  { value: EXPR_BUDGET_OPTIONS[1], label: '标准' },
-  { value: EXPR_BUDGET_OPTIONS[2], label: '严格' },
-];
+type CopyFormatOption = 'subtree' | 'path' | 'value' | 'key';
+const COPY_FORMAT_KEYS: Record<CopyFormatOption, MessageKey> = {
+  subtree: 'view.settings.copy.subtree',
+  path: 'view.settings.copy.path',
+  value: 'view.settings.copy.value',
+  key: 'view.settings.copy.key',
+};
 
 /* ---------------- helpers ---------------- */
 
@@ -132,6 +105,14 @@ function rowEl(key: SettingsKey): HTMLDivElement {
   row.className = 'settings-panel__row';
   row.dataset.setting = key;
   return row;
+}
+
+/** 复制格式的 4 个选项（两处复用：默认复制格式 / 搜索结果双击复制）。 */
+function copyFormatItems(): SegItem[] {
+  return (Object.keys(COPY_FORMAT_KEYS) as CopyFormatOption[]).map((value) => ({
+    value,
+    label: t(COPY_FORMAT_KEYS[value]),
+  }));
 }
 
 // ---------------------------------------------------------------- panel
@@ -161,56 +142,47 @@ export class SettingsPanel {
     this.host.classList.add('panel', 'panel--settings', 'settings-panel');
     // 宿主（page.html）按 ADR-0011 §4 加 role=group；缺省时补上，保证 aria-label 有意义
     if (!this.host.getAttribute('role')) this.host.setAttribute('role', 'group');
-    this.host.setAttribute('aria-label', '设置');
     this.host.tabIndex = -1;
-    this.host.replaceChildren();
+    this.buildDom();
+  }
 
-    this.host.append(
-      this.buildSegRow({ key: 'theme', label: '主题', items: THEME_ITEMS }),
-      this.buildSegRow({ key: 'rowHeight', label: '行高', items: ROW_HEIGHT_ITEMS, unit: 'px' }),
-      this.buildSegRow({ key: 'indent', label: '缩进', items: INDENT_ITEMS, unit: 'px' }),
-      // 第 13 行（#40 / ADR-0024 §3）：子键显示排序；只影响树/大纲/表达式结果树的显示顺序
-      this.buildSegRow({
-        key: 'sortOrder',
-        label: '子键排序',
-        items: SORT_ORDER_ITEMS,
-        hint: '仅影响树、大纲与表达式结果树的显示顺序；复制、导出与路径不变',
-      }),
-      this.buildCheckRow({ key: 'typeColumn', label: '显示类型列', hint: '键右侧显示 JSON 类型' }),
-      this.buildSegRow({
-        key: 'defaultCopyFormat',
-        label: '默认复制格式',
-        items: COPY_FORMAT_ITEMS,
-      }),
-      this.buildSegRow({ key: 'jsonIndent', label: 'JSON 缩进', items: JSON_INDENT_ITEMS }),
-      this.buildSegRow({
-        key: 'searchCopyFormat',
-        label: '搜索结果双击复制',
-        items: COPY_FORMAT_ITEMS,
-      }),
-      this.buildSegRow({ key: 'exportMode', label: '导出方式', items: EXPORT_MODE_ITEMS }),
-      this.buildCheckRow({
-        key: 'repairTruncated',
-        label: '导入时自动修复截断 JSON',
-        hint: '关闭后截断文本直接报错',
-      }),
-      this.buildCheckRow({
-        key: 'adaptiveExpand',
-        label: '小文档自动全部展开',
-        hint: '≤500 行，关闭后保持默认折叠',
-      }),
-      this.buildSegRow({
-        key: 'advBudget',
-        label: '高级预算',
-        items: EXPR_BUDGET_ITEMS,
-      }),
-      // 第 12 行（ADR-0022 §2）：导出转义非 ASCII；默认关，输出仍是合法 JSON
-      this.buildCheckRow({
-        key: 'escapeUnicode',
-        label: '导出转义非 ASCII',
-        hint: '非 ASCII 输出为 \\uXXXX，仍是合法 JSON',
-      }),
-    );
+  /**
+   * 语言切换：重建整面板 DOM（文案现取词条）+ 按最近一次 model 回填 active/checked。
+   * 幂等、不触发 onChange、不改设置状态；未 mount 时等价 mount。
+   */
+  relabel(): void {
+    if (!this.mounted) {
+      this.mount();
+      return;
+    }
+    // 重建会替换掉焦点所在的按钮（用户刚点的语言选项）：记住并归还焦点；顺带保住滚动位置。
+    const focus = this.captureFocus();
+    const scrollTop = this.host.scrollTop ?? 0;
+    this.buildDom();
+    if (this.model) this.render(this.model);
+    this.host.scrollTop = scrollTop;
+    this.restoreFocus(focus);
+  }
+
+  /** 记住「焦点所在的设置行 + 选项值」（重建前调用）。 */
+  private captureFocus(): { setting: string; value: string } | null {
+    let node = document.activeElement as (HTMLElement & { dataset?: DOMStringMap }) | null;
+    let setting: string | null = null;
+    let value: string | null = null;
+    while (node) {
+      if (setting === null && node.dataset?.setting) setting = node.dataset.setting;
+      if (value === null && node.dataset?.value) value = node.dataset.value;
+      node = node.parentNode as (HTMLElement & { dataset?: DOMStringMap }) | null;
+    }
+    return setting !== null && value !== null ? { setting, value } : null;
+  }
+
+  /** 重建后把焦点还给同值的新按钮（找不到就不抢焦点）。 */
+  private restoreFocus(focus: { setting: string; value: string } | null): void {
+    if (!focus) return;
+    const row = this.host.querySelector(`[data-setting="${focus.setting}"]`);
+    const target = row?.querySelector<HTMLButtonElement>(`[data-value="${focus.value}"]`);
+    target?.focus();
   }
 
   /** 只同步控件状态（active / checked），绝不触发 onChange；幂等。 */
@@ -239,11 +211,151 @@ export class SettingsPanel {
 
   // -------------------------------------------------------------- rendering
 
+  /** 按当前 locale 重建 14 行（事件绑定随按钮一起重建，不会重复注册）。 */
+  private buildDom(): void {
+    this.host.replaceChildren();
+    this.segs.clear();
+    this.checks.clear();
+    this.host.setAttribute('aria-label', t('view.settings.panelLabel'));
+
+    this.host.append(
+      this.buildSegRow({ key: 'theme', label: t('view.settings.theme'), items: this.themeItems() }),
+      this.buildSegRow({
+        key: 'rowHeight',
+        label: t('view.settings.rowHeight'),
+        items: this.rowHeightItems(),
+        unit: 'px',
+      }),
+      this.buildSegRow({
+        key: 'indent',
+        label: t('view.settings.indent'),
+        items: this.indentItems(),
+        unit: 'px',
+      }),
+      // 第 13 项（#40 / ADR-0024 §3）：子键显示排序；只影响树/大纲/表达式结果树的显示顺序
+      this.buildSegRow({
+        key: 'sortOrder',
+        label: t('view.settings.sortOrder'),
+        items: this.sortOrderItems(),
+        hint: t('view.settings.sortOrder.hint'),
+      }),
+      this.buildCheckRow({
+        key: 'typeColumn',
+        label: t('view.settings.typeColumn'),
+        hint: t('view.settings.typeColumn.hint'),
+      }),
+      this.buildSegRow({
+        key: 'defaultCopyFormat',
+        label: t('view.settings.defaultCopyFormat'),
+        items: copyFormatItems(),
+      }),
+      this.buildSegRow({
+        key: 'jsonIndent',
+        label: t('view.settings.jsonIndent'),
+        items: this.jsonIndentItems(),
+      }),
+      this.buildSegRow({
+        key: 'searchCopyFormat',
+        label: t('view.settings.searchCopyFormat'),
+        items: copyFormatItems(),
+      }),
+      this.buildSegRow({
+        key: 'exportMode',
+        label: t('view.settings.exportMode'),
+        items: this.exportModeItems(),
+      }),
+      this.buildCheckRow({
+        key: 'repairTruncated',
+        label: t('view.settings.repairTruncated'),
+        hint: t('view.settings.repairTruncated.hint'),
+      }),
+      this.buildCheckRow({
+        key: 'adaptiveExpand',
+        label: t('view.settings.adaptiveExpand'),
+        hint: t('view.settings.adaptiveExpand.hint'),
+      }),
+      this.buildSegRow({
+        key: 'advBudget',
+        label: t('view.settings.advBudget'),
+        items: this.budgetItems(),
+      }),
+      // 第 12 项（ADR-0022 §2）：导出转义非 ASCII；默认关，输出仍是合法 JSON
+      this.buildCheckRow({
+        key: 'escapeUnicode',
+        label: t('view.settings.escapeUnicode'),
+        hint: t('view.settings.escapeUnicode.hint'),
+      }),
+      // 第 14 项（#45 / ADR-0026 §3）：界面语言；`auto` 跟随系统，其余用各语言自称
+      this.buildSegRow({
+        key: 'locale',
+        label: t('view.settings.language'),
+        items: this.languageItems(),
+        hint: t('view.settings.language.hint'),
+      }),
+    );
+  }
+
+  private themeItems(): SegItem[] {
+    return [
+      { value: 'dark', label: t('view.settings.theme.dark') },
+      { value: 'light', label: t('view.settings.theme.light') },
+    ];
+  }
+
+  private rowHeightItems(): SegItem[] {
+    return ROW_HEIGHT_OPTIONS.map((value) => ({
+      value,
+      label: String(value),
+      ariaLabel: `${value}px`,
+    }));
+  }
+
+  private indentItems(): SegItem[] {
+    return INDENT_OPTIONS.map((value) => ({
+      value,
+      label: String(value),
+      ariaLabel: `${value}px`,
+    }));
+  }
+
+  private sortOrderItems(): SegItem[] {
+    return SORT_ORDER_OPTIONS.map((value) => ({ value, label: t(SORT_ORDER_KEYS[value]) }));
+  }
+
+  private jsonIndentItems(): SegItem[] {
+    return [...JSON_INDENT_OPTIONS]
+      .sort((a, b) => JSON_INDENT_RANK[a] - JSON_INDENT_RANK[b])
+      .map((value) => ({
+        value,
+        label:
+          value === 0
+            ? t('view.settings.jsonIndent.compact')
+            : t('view.settings.jsonIndent.spaces', { n: value }),
+      }));
+  }
+
+  private exportModeItems(): SegItem[] {
+    return EXPORT_MODES.map((value) => ({ value, label: EXPORT_MODE_LABELS[value] }));
+  }
+
+  private budgetItems(): SegItem[] {
+    return EXPR_BUDGET_OPTIONS.map((value) => ({ value, label: t(BUDGET_KEYS[value]) }));
+  }
+
+  /** 语言选项：`auto` 用词条（「跟随系统」），其余用各语言**自称**（不翻译）。 */
+  private languageItems(): SegItem[] {
+    return languageChoices().map((choice) => ({
+      value: choice.value,
+      label: choice.nativeName ?? t('view.settings.language.auto'),
+    }));
+  }
+
   private buildSegRow(spec: SegRowSpec): HTMLDivElement {
     const row = rowEl(spec.key);
 
     const label = document.createElement('span');
-    label.className = 'settings-panel__label';
+    // `settings__label` 是对外 DOM 契约（smoke-i18n 按它取语言行标签）；`settings-panel__label` 负责样式
+    label.className = 'settings-panel__label settings__label';
     label.id = `setting-${spec.key}-label`;
     label.textContent = spec.label;
 
@@ -288,7 +400,7 @@ export class SettingsPanel {
     const hintId = `${inputId}-hint`;
 
     const label = document.createElement('label');
-    label.className = 'settings-panel__label';
+    label.className = 'settings-panel__label settings__label';
     label.htmlFor = inputId;
     label.textContent = spec.label;
 

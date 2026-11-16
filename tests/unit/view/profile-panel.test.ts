@@ -4,7 +4,8 @@
  * 只测 node 环境可跑的纯函数（文案 / 行数据 / 空态），DOM 结构由冒烟断言，
  * 这里不 import DOM API、不测布局。
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { initI18n } from '../../../src/i18n/index';
 import {
   profileEmptyText,
   profileFieldRows,
@@ -12,6 +13,11 @@ import {
   profileMetaText,
 } from '../../../src/view/panels/profile-panel';
 import type { DocumentProfile, FieldStat, PathSample } from '../../../src/protocol/types';
+
+// 概要文案断言中文逐字沿用（i18n 化之前的口径）；node 默认 locale 是 en，这里显式钉 zh-CN。
+beforeAll(async () => {
+  await initI18n('zh-CN');
+});
 
 function field(name: string, kind: FieldStat['kind'], freq = 1): FieldStat {
   return { name, kind, freq };

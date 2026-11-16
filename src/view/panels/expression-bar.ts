@@ -30,6 +30,8 @@ export class ExpressionBar {
   private backHandler: (() => void) | null = null;
   private rerunHandler: (() => void) | null = null;
   private closeHandler: (() => void) | null = null;
+  /** 最近一次渲染的数据：语言切换时按新词条重画（不重新求值、不改结果状态） */
+  private lastView: ExpressionBarView | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -38,7 +40,9 @@ export class ExpressionBar {
     const backBtn = root.querySelector<HTMLButtonElement>('#exprBarBack');
     const closeBtn = root.querySelector<HTMLButtonElement>('#exprBarClose');
     if (!textEl || !rerunBtn || !backBtn || !closeBtn) {
-      throw new Error('expression-bar: 缺少 #exprBarText / #exprBarRerun / #exprBarBack / #exprBarClose');
+      throw new Error(
+        'expression-bar: missing #exprBarText / #exprBarRerun / #exprBarBack / #exprBarClose',
+      );
     }
     this.textEl = textEl;
     this.rerunBtn = rerunBtn;
@@ -61,6 +65,7 @@ export class ExpressionBar {
    * stale 时整条走警告色 + 显示「重新执行」（不自动重跑）。
    */
   show(view: ExpressionBarView): void {
+    this.lastView = view;
     const parts: string[] = [
       EXPR_COPY.resultTitle(view.rootId),
       // ms 由 worker 计时（浮点）；展示口径与面板状态行一致，取整。
@@ -85,6 +90,7 @@ export class ExpressionBar {
   }
 
   hide(): void {
+    this.lastView = null;
     this.root.hidden = true;
     this.textEl.textContent = '—';
     this.textEl.removeAttribute('title');
@@ -95,6 +101,14 @@ export class ExpressionBar {
 
   isVisible(): boolean {
     return !this.root.hidden;
+  }
+
+  /**
+   * 语言切换：用最近一次数据按当前词条重画结果条（幂等；不改结果 / 不改 stale 标记）。
+   * 隐藏时无操作（下次 show 自己会取新词条）。
+   */
+  relabel(): void {
+    if (this.lastView) this.show(this.lastView);
   }
 
   /** 自报状态快照（dev hook / 冒烟断言用）。 */
