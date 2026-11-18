@@ -356,7 +356,7 @@ const checks = {
   'en:no-cjk-shell': report.enShell?.bodyCjk === 0,
   'en:status-theme': report.enShell?.statusTheme === 'Dark',
   // ---- en 设置面板：14 行 + 语言行 ----
-  'en:settings-14-rows': report.enSettings?.rowCount === 14,
+  'en:settings-15-rows': report.enSettings?.rowCount === 15,
   'en:settings-has-language':
     report.enSettings?.hasLanguageRow === true &&
     JSON.stringify(report.enSettings?.languageValues) === JSON.stringify(['auto', 'en-US', 'zh-CN']) &&

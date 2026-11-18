@@ -213,14 +213,23 @@
     </button>
     <h1 class="empty__title" id="emptyTitle">Drop in JSON and start viewing in milliseconds</h1>
     <p class="empty__sub" id="emptySub">Local and read-only · no network · 50 MB documents stay resident in a Worker</p>
-    <!-- 入口层形态切换（#18 / ADR-0009 §4–§5）：替换当前标签 ⇄ 在新标签中打开。
+    <!-- 导入落点（#47 #1）：完整导入层显式二选一；初始值 = 设置「导入位置」，改动只对本次生效。
          单文档时标签条隐藏，这是开第 2 个标签的可见入口（⌘⇧O 同效） -->
-    <button class="linkbtn empty__mode" type="button" id="emptyModeToggle" hidden>Open in a new tab</button>
+    <div class="empty__target" id="emptyTarget" role="radiogroup" aria-label="Import destination" data-i18n-attr="aria-label:app.empty.target" hidden>
+      <label class="empty__target-opt"><input type="radio" name="emptyTargetMode" id="targetNewTab" value="new-tab"><span data-i18n="app.empty.target.newTab">New tab</span></label>
+      <label class="empty__target-opt"><input type="radio" name="emptyTargetMode" id="targetReplace" value="replace"><span data-i18n="app.empty.target.replace">Replace current</span></label>
+    </div>
+    <!-- 完整层提示（#47 #1.4）：标签已满时自动降为「替换」的说明 -->
+    <div class="empty__hint" id="emptyHint" role="status" hidden></div>
     <div class="empty__warn" id="emptyWarn" hidden></div>
     <div class="empty__error" id="emptyError" role="alert" hidden></div>
+    <!-- 精简确认层（#47 #2）：拖入文档正文 / 文档视图内 ⌘V 触发；无 dropzone、无 radio、无覆盖警示 -->
     <div class="empty__pending" id="emptyPending" hidden>
       <span id="emptyPendingText"></span>
-      <button class="btn" type="button" id="emptyPendingReplace" data-i18n="app.empty.pendingReplace">Replace current document</button>
+      <div class="empty__pending-actions">
+        <button class="btn" type="button" id="pendingNewTab" data-i18n="app.empty.pending.newTab">Open in a new tab</button>
+        <button class="btn btn--primary" type="button" id="pendingReplace" data-i18n="app.empty.pending.replace">Replace current document</button>
+      </div>
     </div>
     <div class="empty__busy" id="emptyBusy" hidden data-i18n="app.empty.busy">Parsing…</div>
     <!-- 拖放区只是放置目标：键盘入口是内层 #pickBtn（容器不再声明 button 语义，避免嵌套交互元素） -->

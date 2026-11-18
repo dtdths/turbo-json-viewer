@@ -137,11 +137,16 @@ const emptyWarn = el('emptyWarn');
 const emptyError = el('emptyError');
 const emptyPending = el('emptyPending');
 const emptyPendingText = el('emptyPendingText');
-const emptyPendingReplace = el<HTMLButtonElement>('emptyPendingReplace');
+const pendingNewTab = el<HTMLButtonElement>('pendingNewTab');
+const pendingReplace = el<HTMLButtonElement>('pendingReplace');
 const emptyBusy = el('emptyBusy');
 const emptyClose = el<HTMLButtonElement>('emptyClose');
-/** 入口层「替换 ⇄ 新标签」切换（#18：单文档时标签条隐藏，这是开第 2 个标签的可见入口） */
-const emptyModeToggle = el<HTMLButtonElement>('emptyModeToggle');
+/** 导入落点 radio（#47 #1）：完整导入层的显式二选一，初始值 = 设置「导入位置」 */
+const emptyTarget = el('emptyTarget');
+const targetNewTab = el<HTMLInputElement>('targetNewTab');
+const targetReplace = el<HTMLInputElement>('targetReplace');
+/** 完整层提示行（#47 #1.4：标签已满自动降为替换） */
+const emptyHint = el('emptyHint');
 const importBtn = el<HTMLButtonElement>('importBtn');
 const pickBtn = el<HTMLButtonElement>('pickBtn');
 const dropzone = el('dropzone');
@@ -1444,19 +1449,32 @@ function scheduleProfile(force = false): void {
 
 /* ---------------- import layer（文档入口层） ---------------- */
 
-/** 空态/入口层三形态的标题与副标题（模块级常量只存 key，渲染时再 t()；ADR-0026 §3）。 */
+/**
+ * 入口层四种形态（#18 / ADR-0009 §5；#47 #1/#2）：
+ * - `initial`：空态（无文档）；
+ * - `replace` / `new-tab`：完整导入层（⌘O / 导入按钮 / 文件 chip），带 dropzone 与落点 radio；
+ * - `pending`：精简确认层（拖入文档正文 / 文档视图内 ⌘V），只有两个动作，无 dropzone / radio / 覆盖警示。
+ */
+type ImportMode = 'initial' | 'replace' | 'new-tab' | 'pending';
+type ImportTarget = 'replace' | 'new-tab';
+
+/** 精简确认层的待导入载荷（#47 #2）：拖入的文件或粘贴的文本。 */
+type PendingImport =
+  | { kind: 'file'; file: File }
+  | { kind: 'text'; text: string; name: string };
+
+let pendingImport: PendingImport | null = null;
+/** 完整层「标签已满、本次自动降为替换」提示（#47 #1.4；每次打开层时重算）。 */
+let layerLimitNotice = false;
+
+/** 空态/完整层的标题与副标题（模块级常量只存 key，渲染时再 t()；ADR-0026 §3）。 */
 const EMPTY_TITLE_INITIAL = 'app.empty.title.initial' as const;
 const EMPTY_TITLE_REPLACE = 'app.empty.title.replace' as const;
 const EMPTY_TITLE_NEW_TAB = 'app.empty.title.newTab' as const;
+const EMPTY_TITLE_PENDING = 'app.empty.title.pending' as const;
 const EMPTY_SUB_INITIAL = 'app.empty.sub.initial' as const;
 const EMPTY_SUB_REPLACE = 'app.empty.sub.replace' as const;
 const EMPTY_SUB_NEW_TAB = 'app.empty.sub.newTab' as const;
-
-/** 入口层三种形态（#18 / ADR-0009 §5）：空态 / 替换当前标签 / 新标签。 */
-type ImportMode = 'initial' | 'replace' | 'new-tab';
-
-/** 外部拖放 → 替换层里暂存的文件（等待用户确认，Q6-A） */
-let pendingFile: File | null = null;
 
 /** 入口层是否正在解析（busy 期间拒绝新的 paste / drop，避免并发导入互相抢占）。 */
 function importLayerBusy(): boolean {
@@ -1471,7 +1489,13 @@ function importLayerMode(): ImportMode {
   const mode = empty.dataset.mode;
   if (mode === 'replace') return 'replace';
   if (mode === 'new-tab') return 'new-tab';
+  if (mode === 'pending') return 'pending';
   return 'initial';
+}
+
+/** 当前能否开新标签（空工作区允许建第一个；#18 软上限 8）。 */
+function canOpenNewTab(): boolean {
+  return workspace.activeId === null || workspace.view().canAdd;
 }
 
 /** 最近一次入口层错误（结构化；切语言时重新格式化，ADR-0026 §3）。 */
@@ -1487,29 +1511,40 @@ function setImportError(error: CoreError | null): void {
 function setImportBusy(busy: boolean): void {
   emptyBusy.hidden = !busy;
   empty.classList.toggle('is-busy', busy);
-  emptyPendingReplace.disabled = busy;
   pickBtn.disabled = busy;
-  emptyModeToggle.disabled = busy;
+  targetNewTab.disabled = busy;
+  targetReplace.disabled = busy;
+  pendingNewTab.disabled = busy || !canOpenNewTab();
+  pendingReplace.disabled = busy;
 }
 
-/** 拖入暂存文件名文案（加粗文件名 + 前后缀词条；locale 切换时重放，ADR-0026 §3）。 */
+/** 清空精简确认层的待导入载荷。 */
+function clearPendingImport(): void {
+  pendingImport = null;
+  emptyPending.hidden = true;
+  emptyPendingText.replaceChildren();
+}
+
+/**
+ * 精简确认层的条目文案 + 按钮可用态（#47 #2）：`Import: <b>name（size）</b>`。
+ * 标签已满时「在新标签打开」禁用并说明原因，焦点会落到「覆盖当前页」。
+ */
 function renderPendingText(): void {
-  const file = pendingFile;
-  if (!file) {
+  const entry = pendingImport;
+  if (!entry) {
     emptyPendingText.replaceChildren();
     return;
   }
+  emptyPending.hidden = false;
+  const name = entry.kind === 'file' ? entry.file.name || 'document.json' : entry.name;
+  const size = entry.kind === 'file' ? entry.file.size : new TextEncoder().encode(entry.text).length;
   emptyPendingText.replaceChildren(
-    document.createTextNode(t('app.empty.pending.before')),
-    strongText(`${file.name || 'document.json'}（${formatBytes(file.size)}）`),
-    document.createTextNode(t('app.empty.pending.after')),
+    document.createTextNode(t('app.empty.pending.import')),
+    strongText(`${name}（${formatBytes(size)}）`),
   );
-}
-
-function clearPendingFile(): void {
-  pendingFile = null;
-  emptyPending.hidden = true;
-  emptyPendingText.replaceChildren();
+  pendingNewTab.disabled = !canOpenNewTab();
+  pendingNewTab.title = pendingNewTab.disabled ? t('app.tabs.limit', { n: workspace.max }) : '';
+  pendingReplace.disabled = false;
 }
 
 /** 回到「初始空态」的文案/可见性（不改变 empty 整体显示/隐藏）。 */
@@ -1521,22 +1556,26 @@ function resetImportLayerView(): void {
   emptyTitle.textContent = t(EMPTY_TITLE_INITIAL);
   emptySub.textContent = t(EMPTY_SUB_INITIAL);
   emptyWarn.hidden = true;
+  emptyHint.hidden = true;
+  emptyHint.textContent = '';
+  emptyTarget.hidden = true;
+  const preferred = settings.get('importTarget');
+  targetNewTab.checked = preferred === 'new-tab';
+  targetReplace.checked = preferred === 'replace';
   emptyClose.hidden = true;
-  emptyModeToggle.hidden = true;
-  emptyModeToggle.disabled = false;
-  clearPendingFile();
+  layerLimitNotice = false;
+  clearPendingImport();
   setImportError(null);
   setImportBusy(false);
 }
 
 /**
- * 把入口层切到指定形态（替换 / 新标签）：
+ * 完整层切到指定落点（replace / new-tab）：
  * - 替换：显示「将替换当前文档」警示（ADR-0004 导入层语义不变）；
- * - 新标签：**无覆盖警示**（ADR-0009 §5），复用同一张空态卡。
- * 两种形态之间用一个切换链接（`#emptyModeToggle`）互相可达——单文档时标签条隐藏，
- * 这是开第 2 个标签的可见入口（ADR-0009 §4「⌘O 新标签模式」的落地）。
+ * - 新标签：**无覆盖警示**（ADR-0009 §5），复用同一张空态卡；
+ * - radio 是**对本次导入**的选择，不写设置（设置管初始值，#47 #1）。
  */
-function applyImportLayerMode(mode: 'replace' | 'new-tab'): void {
+function applyImportLayerMode(mode: ImportTarget): void {
   const isNew = mode === 'new-tab';
   empty.dataset.mode = mode;
   emptyTitle.textContent = t(isNew ? EMPTY_TITLE_NEW_TAB : EMPTY_TITLE_REPLACE);
@@ -1553,22 +1592,67 @@ function applyImportLayerMode(mode: 'replace' | 'new-tab'): void {
   );
   emptyWarn.hidden = isNew;
   emptyClose.hidden = false;
-  emptyModeToggle.hidden = false;
-  emptyModeToggle.textContent = t(
-    isNew ? 'app.empty.modeToggle.replace' : 'app.empty.modeToggle.newTab',
-  );
+  emptyTarget.hidden = false;
+  targetNewTab.checked = isNew;
+  targetReplace.checked = !isNew;
+  emptyHint.hidden = !layerLimitNotice;
+  if (layerLimitNotice) emptyHint.textContent = t('app.empty.limitNotice', { n: workspace.max });
 }
 
-/** 已打开文档时：打开入口层（替换 / 新标签两种形态）。返回是否真的打开。 */
-function openImportLayer(target: 'replace' | 'new-tab' = 'replace'): boolean {
-  if (!session.rootId || importLayerOpen()) return false;
-  if (target === 'new-tab' && !workspace.view().canAdd) {
-    showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
-    return false;
-  }
-  if (target === 'replace' && !confirmDiscardEdits()) return false;
+/** 打开精简确认层（#47 #2：拖入文档正文 / 文档视图内 ⌘V）。 */
+function openPendingLayer(entry: PendingImport): void {
+  if (!session.rootId) return;
   resetImportLayerView();
-  applyImportLayerMode(target);
+  pendingImport = entry;
+  empty.dataset.mode = 'pending';
+  empty.setAttribute('role', 'dialog');
+  empty.setAttribute('aria-modal', 'true');
+  empty.setAttribute('aria-labelledby', 'emptyTitle');
+  emptyTitle.textContent = t(EMPTY_TITLE_PENDING);
+  emptySub.textContent = '';
+  emptyClose.hidden = false;
+  renderPendingText();
+  setImportError(null);
+  empty.classList.remove('is-hidden');
+  // 焦点：优先「在新标签打开」（非破坏性）；标签已满时该按钮禁用，落到「覆盖当前页」
+  (pendingNewTab.disabled ? pendingReplace : pendingNewTab).focus();
+}
+
+/** 精简确认层里选定落点（#47 #2）。 */
+function choosePendingTarget(target: ImportTarget): void {
+  const entry = pendingImport;
+  if (!entry) return;
+  if (target === 'new-tab' && !canOpenNewTab()) return;
+  if (target === 'replace' && !confirmDiscardEdits()) return;
+  if (entry.kind === 'file') void importFile(entry.file, target);
+  else void importBuffer('paste', entry.text, entry.name, target);
+}
+
+/**
+ * 已打开文档时：打开**完整导入层**。返回是否真的打开。
+ *
+ * - 初始形态 = 设置「导入位置」（#47 #1）；显式入口（⌘⇧O / 标签条 ＋）传 `target` 覆盖它；
+ * - 默认新标签但标签已满 8 → **自动降为替换**并在层里说明（#47 #1.4）；
+ * - 显式请求新标签且已满 → toast 拒绝（不静默改落点）。
+ */
+function openImportLayer(target?: ImportTarget): boolean {
+  if (!session.rootId || importLayerOpen()) return false;
+  const fromSettings = target === undefined;
+  let mode: ImportTarget = target ?? settings.get('importTarget');
+  let limitFallback = false;
+  if (mode === 'new-tab' && !canOpenNewTab()) {
+    if (!fromSettings) {
+      showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
+      return false;
+    }
+    mode = 'replace';
+    limitFallback = true;
+  }
+  if (mode === 'replace' && !confirmDiscardEdits()) return false;
+  // 注意顺序：resetImportLayerView 会清掉 layerLimitNotice，先 reset 再落本次的提示
+  resetImportLayerView();
+  layerLimitNotice = limitFallback;
+  applyImportLayerMode(mode);
   empty.classList.remove('is-hidden');
   empty.setAttribute('role', 'dialog');
   empty.setAttribute('aria-modal', 'true');
@@ -1577,34 +1661,22 @@ function openImportLayer(target: 'replace' | 'new-tab' = 'replace'): boolean {
   return true;
 }
 
-/** 「新标签」入口（标签条 `＋` / ⌘⇧O / 替换层里的切换链接）。 */
+/** 「新标签」入口（标签条 `＋` / ⌘⇧O / 标签条空白拖放）。 */
 function openNewTabLayer(): void {
   if (!session.rootId) return;
   if (importLayerOpen()) {
-    if (importLayerMode() !== 'new-tab') toggleImportLayerMode();
+    // 精简确认层已打开：不切形态（落点由层里的两个按钮决定）
+    if (importLayerMode() === 'pending') return;
+    if (importLayerMode() === 'new-tab') return;
+    if (!canOpenNewTab()) {
+      showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
+      return;
+    }
+    applyImportLayerMode('new-tab');
+    setImportError(null);
     return;
   }
   openImportLayer('new-tab');
-}
-
-/** 入口层内「替换 ⇄ 新标签」切换。 */
-function toggleImportLayerMode(): void {
-  if (!importLayerOpen()) return;
-  const next = importLayerMode() === 'new-tab' ? 'replace' : 'new-tab';
-  if (next === 'replace' && !confirmDiscardEdits()) return;
-  if (next === 'new-tab' && !workspace.view().canAdd) {
-    showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
-    return;
-  }
-  applyImportLayerMode(next);
-  setImportError(null);
-  // 拖放已经暂存了文件时，切到「新标签」= 用户已经选定落点：立即以新标签导入。
-  // 否则用户会遇到「点了在新标签中打开没反应，还要再点一次『替换』」的死循环感（用户反馈 2026-11-11）。
-  const staged = pendingFile;
-  if (next === 'new-tab' && staged) {
-    clearPendingFile();
-    void importFile(staged, 'new-tab');
-  }
 }
 
 /** 取消入口层：丢弃在途导入回包，回到文档视图。 */
@@ -1624,11 +1696,14 @@ function hideImportLayer(): void {
 
 /* ---------------- import ---------------- */
 
-/** 本次导入应落到哪里：空工作区建第一个标签；入口层「新标签」形态 → 新增；其余 → 替换当前。 */
+/**
+ * 本次导入应落到哪里：空工作区建第一个标签；完整层「新标签」形态 → 新增；
+ * 精简确认层 / 替换层 → 替换当前；层关闭时回落设置「导入位置」（#47 #1）。
+ */
 function currentImportTarget(): 'replace' | 'new-tab' {
   if (!workspace.activeId) return 'new-tab';
-  const mode = importLayerOpen() ? importLayerMode() : 'replace';
-  return mode === 'new-tab' ? 'new-tab' : 'replace';
+  if (importLayerOpen()) return importLayerMode() === 'new-tab' ? 'new-tab' : 'replace';
+  return settings.get('importTarget');
 }
 
 async function importBuffer(
@@ -1647,7 +1722,7 @@ async function importBuffer(
   const loadId = ++loadSeq;
   const inLayer = importLayerOpen();
   if (inLayer) {
-    clearPendingFile();
+    clearPendingImport();
     setImportError(null);
     setImportBusy(true);
   }
@@ -1803,10 +1878,15 @@ document.addEventListener('paste', (event: ClipboardEvent) => {
     void importBuffer('paste', text, t('app.clipboardFile'));
     return;
   }
-  // 文档已打开：只有入口层内才接受粘贴；层关闭时完全不处理（Q5-A）。
-  // 层形态决定落点（替换当前标签 / 新标签），#18 / ADR-0009 §5。
-  if (!importLayerOpen() || importLayerMode() === 'initial') return;
+  // 文档已打开（#47 #2）：层关闭时 ⌘V = 先弹**精简确认层**，确认后才覆盖当前页；
+  // 完整层内粘贴仍是「层内即确认」（ADR-0004），落点由层形态决定。确认层已打开则忽略重复粘贴。
+  const mode = importLayerOpen() ? importLayerMode() : 'initial';
+  if (mode === 'pending') return;
   event.preventDefault();
+  if (mode === 'initial') {
+    openPendingLayer({ kind: 'text', text, name: t('app.clipboardFile') });
+    return;
+  }
   void importBuffer('paste', text, t('app.clipboardFile'));
 });
 
@@ -1832,16 +1912,13 @@ window.addEventListener('drop', (event: DragEvent) => {
     return;
   }
   if (importLayerOpen() && importLayerMode() !== 'initial') {
-    // 入口层内拖放：层本身即确认（Q9-A），立即导入（落点由层形态决定）
-    void importFile(file);
+    // 完整层内拖放：层本身即确认（Q9-A），立即导入（落点由层形态决定）；
+    // 精简确认层已打开时忽略重复拖入（保持第一份待确认数据）。
+    if (importLayerMode() !== 'pending') void importFile(file);
     return;
   }
-  // 文档视图内拖放：打开替换层并暂存文件，等用户确认（Q6-A）
-  if (!openImportLayer()) return;
-  pendingFile = file;
-  renderPendingText();
-  emptyPending.hidden = false;
-  emptyPendingReplace.focus();
+  // 文档视图内拖放（#47 #2）：打开**精简确认层**，两个落点由用户当场选
+  openPendingLayer({ kind: 'file', file });
 });
 
 importBtn.addEventListener('click', () => {
@@ -1861,13 +1938,13 @@ fileChip.addEventListener('click', () => {
   else fileInput.click();
 });
 emptyClose.addEventListener('click', () => closeImportLayer());
-emptyModeToggle.addEventListener('click', () => toggleImportLayerMode());
-emptyPendingReplace.addEventListener('click', () => {
-  const file = pendingFile;
-  if (!file) return;
-  clearPendingFile();
-  void importFile(file);
+// 落点 radio（#47 #1）：只改本次导入的形态，不写设置
+emptyTarget.addEventListener('change', () => {
+  applyImportLayerMode(targetNewTab.checked ? 'new-tab' : 'replace');
+  setImportError(null);
 });
+pendingNewTab.addEventListener('click', () => choosePendingTarget('new-tab'));
+pendingReplace.addEventListener('click', () => choosePendingTarget('replace'));
 empty.addEventListener('click', (event: MouseEvent) => {
   // 点遮罩（inner 之外）关闭入口层（替换层与新标签层都可取消）
   if (event.target === empty && session.rootId && importLayerMode() !== 'initial') closeImportLayer();
@@ -3558,8 +3635,11 @@ function rerenderChrome(): void {
   if (importLayerOpen()) {
     const mode = importLayerMode();
     if (mode === 'replace' || mode === 'new-tab') applyImportLayerMode(mode);
-    // 暂存文件名与错误行也按新语言重画（结构化 error 现格式化）
-    if (pendingFile) renderPendingText();
+    // 精简确认层：标题 + 待导入条目文案按新语言重画
+    if (mode === 'pending') {
+      emptyTitle.textContent = t(EMPTY_TITLE_PENDING);
+      renderPendingText();
+    }
     setImportError(importErrorState);
   }
 }
@@ -3717,7 +3797,8 @@ function buildDevHookDeps(): DevHookDeps {
     subtreeEditor,
     settings,
     entries: {
-      importText: (text, name) => importBuffer('file', text, name),
+      // dev hook 的 loadText 语义固定为「替换当前文档」（自动化既有契约；不跟随设置「导入位置」）
+      importText: (text, name) => importBuffer('file', text, name, 'replace'),
       toggleNode,
       expandAll: applyExpandAll,
       runSearch,
@@ -3923,7 +4004,22 @@ function workspaceHookState(): WorkspaceHookState {
       labels: rendered.map((node) => node.querySelector('.tabstrip__title')?.textContent ?? ''),
       selectedId:
         rendered.find((node) => node.getAttribute('aria-selected') === 'true')?.dataset.tabId ?? null,
-      layer: { open: importLayerOpen(), mode: importLayerMode() },
+      layer: {
+        open: importLayerOpen(),
+        mode: importLayerMode(),
+        target:
+          importLayerMode() === 'new-tab'
+            ? 'new-tab'
+            : importLayerMode() === 'replace'
+              ? 'replace'
+              : null,
+        pendingName: pendingImport
+          ? pendingImport.kind === 'file'
+            ? pendingImport.file.name
+            : pendingImport.name
+          : null,
+        limitNotice: layerLimitNotice,
+      },
     },
   };
 }

@@ -133,6 +133,11 @@ export const view = {
   'view.settings.budget.strict': 'Strict',
   'view.settings.escapeUnicode': 'Escape non-ASCII on export',
   'view.settings.escapeUnicode.hint': 'Non-ASCII is written as \\uXXXX; still valid JSON',
+  'view.settings.importTarget': 'Import destination',
+  'view.settings.importTarget.hint':
+    'Initial choice when the import dialog opens from the toolbar; dropping onto a document or pasting always asks first',
+  'view.settings.importTarget.newTab': 'New tab',
+  'view.settings.importTarget.replace': 'Replace current',
   'view.settings.language': 'Language',
   'view.settings.language.auto': 'System',
   'view.settings.language.hint': 'Applies immediately; “System” follows the browser language',

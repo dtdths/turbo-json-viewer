@@ -131,6 +131,11 @@ export const view: Record<keyof ViewMessages, Message> = {
   'view.settings.budget.strict': '严格',
   'view.settings.escapeUnicode': '导出转义非 ASCII',
   'view.settings.escapeUnicode.hint': '非 ASCII 输出为 \\uXXXX，仍是合法 JSON',
+  'view.settings.importTarget': '导入位置',
+  'view.settings.importTarget.hint':
+    '从工具栏打开导入弹层时的初始选择；拖入文档或粘贴时仍会先问你',
+  'view.settings.importTarget.newTab': '新标签',
+  'view.settings.importTarget.replace': '替换当前',
   'view.settings.language': '语言',
   'view.settings.language.auto': '跟随系统',
   'view.settings.language.hint': '切换后立即生效；跟随系统时按浏览器语言自动选择',

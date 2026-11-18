@@ -303,8 +303,17 @@ export interface TabStripHookState {
   addTitle: string;
   labels: string[];
   selectedId: string | null;
-  /** 入口层形态：initial / replace / new-tab（ADR-0009 §5） */
-  layer: { open: boolean; mode: string };
+  /**
+   * 入口层形态（#47 #1/#2）：initial / replace / new-tab / pending；
+   * `target` = 完整层当前落点，`pendingName` = 精简确认层待导入条目，`limitNotice` = 满 8 自动降为替换。
+   */
+  layer: {
+    open: boolean;
+    mode: string;
+    target: 'new-tab' | 'replace' | null;
+    pendingName: string | null;
+    limitNotice: boolean;
+  };
 }
 
 export interface WorkspaceHookState {

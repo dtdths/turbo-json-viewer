@@ -110,17 +110,29 @@ try {
       await sleep(200);
       const side = document.getElementById('leftPanel').getBoundingClientRect();
       const probe = document.elementFromPoint(side.x + 120, side.y + 200);
+      // #47 #1：完整层默认落点 = 设置「导入位置」= 新标签（radio 显式可见，无覆盖警示）
       out.replaceLayer = {
         open: !document.getElementById('empty').classList.contains('is-hidden'),
         mode: document.getElementById('empty').dataset.mode ?? null,
         warnHidden: document.getElementById('emptyWarn').hidden,
-        toggleText: document.getElementById('emptyModeToggle').textContent,
+        targetOpen: !document.getElementById('emptyTarget').hidden,
+        targetChecked: document.getElementById('targetNewTab').checked,
         layerZ: getComputedStyle(document.getElementById('empty')).zIndex,
         panelDisplay: getComputedStyle(document.getElementById('leftPanel')).display,
         // 左面板中心点命中的元素不属于左面板 = 被遮罩盖住（且点不到）
         panelCovered: !(probe && probe.closest('#leftPanel')),
       };
-      document.getElementById('emptyModeToggle').click();
+      // 切到「替换当前」→ 覆盖警示出现（radio 只对本次导入生效）
+      document.getElementById('targetReplace').click();
+      await sleep(120);
+      out.layerReplace = {
+        mode: document.getElementById('empty').dataset.mode ?? null,
+        warnHidden: document.getElementById('emptyWarn').hidden,
+        title: document.getElementById('emptyTitle').textContent,
+        targetChecked: document.getElementById('targetReplace').checked,
+      };
+      // 再切回新标签，后续按新标签导入
+      document.getElementById('targetNewTab').click();
       await sleep(120);
       out.layer = {
         open: !document.getElementById('empty').classList.contains('is-hidden'),
@@ -128,7 +140,6 @@ try {
       };
       out.layerTitle = document.getElementById('emptyTitle').textContent;
       out.layerWarnHidden = document.getElementById('emptyWarn').hidden;
-      out.layerToggleText = document.getElementById('emptyModeToggle').textContent;
       const docB = ${JSON.stringify(DOC_B)};
       out.two = await h.tabImportText(JSON.stringify(docB), 'b.json');
       await sleep(400);
@@ -351,6 +362,36 @@ try {
         size: h.workspaceState().size,
         toast: h.toastText(),
       };
+      // #47 #1.4：满 8 时从工具栏打开完整层 → 自动降为「替换」并在层里说明
+      document.getElementById('importBtn').click();
+      await sleep(150);
+      const hintEl = document.getElementById('emptyHint');
+      out.capFallback = {
+        open: !document.getElementById('empty').classList.contains('is-hidden'),
+        mode: document.getElementById('empty').dataset.mode ?? null,
+        hintHidden: hintEl.hidden,
+        hintText: hintEl.textContent,
+        targetChecked: document.getElementById('targetReplace').checked,
+      };
+      document.getElementById('emptyClose').click();
+      await sleep(120);
+      // #47 #2：满 8 时拖入文档正文 → 精简层「在新标签打开」禁用，焦点落「覆盖当前页」
+      const f = new File([JSON.stringify({ name: 'cap-drop.json' })], 'cap-drop.json', { type: 'application/json' });
+      const dt3 = new DataTransfer();
+      dt3.items.add(f);
+      const wrap = document.querySelector('.tree-wrap');
+      const b3 = wrap.getBoundingClientRect();
+      wrap.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt3, clientX: b3.left + 30, clientY: b3.top + 30 }));
+      await sleep(250);
+      out.capPending = {
+        open: !document.getElementById('empty').classList.contains('is-hidden'),
+        mode: document.getElementById('empty').dataset.mode ?? null,
+        newTabDisabled: document.getElementById('pendingNewTab').disabled,
+        newTabTitle: document.getElementById('pendingNewTab').title,
+        focused: document.activeElement?.id ?? null,
+      };
+      document.getElementById('emptyClose').click();
+      await sleep(120);
       // 逐个关掉，回空态
       let ws = h.workspaceState();
       for (const tab of ws.tabs) {
@@ -460,13 +501,20 @@ try {
       const box = treeWrap.getBoundingClientRect();
       treeWrap.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt2, clientX: box.left + 40, clientY: box.top + 40 }));
       await sleep(300);
+      // #47 #2：拖入文档正文 → 精简确认层（只有两个落点动作，无 dropzone / radio / 覆盖警示）
+      const pendingText = document.getElementById('emptyPendingText').textContent;
       out.pendingLayer = {
         open: !document.getElementById('empty').classList.contains('is-hidden'),
         mode: document.getElementById('empty').dataset.mode ?? null,
         pendingVisible: !document.getElementById('emptyPending').hidden,
-        toggleText: document.getElementById('emptyModeToggle').textContent,
+        pendingText,
+        title: document.getElementById('emptyTitle').textContent,
+        dropzoneHidden: getComputedStyle(document.getElementById('dropzone')).display === 'none',
+        targetHidden: document.getElementById('emptyTarget').hidden,
+        newTabDisabled: document.getElementById('pendingNewTab').disabled,
+        focused: document.activeElement?.id ?? null,
       };
-      document.getElementById('emptyModeToggle').click();
+      document.getElementById('pendingNewTab').click();
       await sleep(1200);
       out.dropped = {
         size: h.workspaceState().size,
@@ -636,11 +684,17 @@ const checks = {
   'single:tree-viewport': report.singleViewport > 0,
 
   // 第 2 个标签
-  'tab-add:replace-layer-first':
+  'tab-add:default-new-tab-layer':
     report.replaceLayer?.open === true &&
-    report.replaceLayer?.mode === 'replace' &&
-    report.replaceLayer?.warnHidden === false &&
-    report.replaceLayer?.toggleText === '在新标签中打开',
+    report.replaceLayer?.mode === 'new-tab' &&
+    report.replaceLayer?.warnHidden === true &&
+    report.replaceLayer?.targetOpen === true &&
+    report.replaceLayer?.targetChecked === true,
+  'tab-add:radio-switch-replace':
+    report.layerReplace?.mode === 'replace' &&
+    report.layerReplace?.warnHidden === false &&
+    report.layerReplace?.targetChecked === true &&
+    report.layerReplace?.title === '打开新文档',
   // 模态入口层必须把左面板一起遮住（z-index 32 > 左面板 31），且左面板确实开着
   'tab-add:layer-covers-left-panel':
     report.replaceLayer?.panelDisplay === 'flex' &&
@@ -648,8 +702,7 @@ const checks = {
     report.replaceLayer?.panelCovered === true,
   'tab-add:new-tab-layer':
     report.layer?.open === true && report.layer?.mode === 'new-tab' && report.layerWarnHidden === true,
-  'tab-add:layer-copy':
-    report.layerTitle === '在新标签中打开' && report.layerToggleText === '改为替换当前文档',
+  'tab-add:layer-copy': report.layerTitle === '在新标签中打开' && report.layerWarnHidden === true,
   'tab-add:two-tabs':
     report.two?.size === 2 &&
     report.two?.hidden === false &&
@@ -753,6 +806,18 @@ const checks = {
     report.capAddBtn?.disabled === true &&
     report.capAddBtn?.title === '最多 8 个标签',
   'cap:ninth-blocked': report.capNinth?.size === 8 && report.capNinth?.layerOpen === false,
+  'cap:pending-new-tab-disabled':
+    report.capPending?.open === true &&
+    report.capPending?.mode === 'pending' &&
+    report.capPending?.newTabDisabled === true &&
+    String(report.capPending?.newTabTitle ?? '').includes('8 个标签') &&
+    report.capPending?.focused === 'pendingReplace',
+  'cap:layer-fallback-to-replace':
+    report.capFallback?.open === true &&
+    report.capFallback?.mode === 'replace' &&
+    report.capFallback?.hintHidden === false &&
+    String(report.capFallback?.hintText ?? '').includes('8 个标签已满') &&
+    report.capFallback?.targetChecked === true,
   'cap:close-all-empty': report.capClosed?.size === 0 && report.capClosed?.activeId === null,
 
   // 内存提示
@@ -783,12 +848,16 @@ const checks = {
       report.activeLabelAfter === activeBefore?.name
     );
   })(),
-  // 拖文件到文档视图 → 暂存层 → 点「在新标签中打开」应立即新开标签并展示
+  // 拖文件到文档视图 → 精简确认层（#47 #2）→ 点「在新标签中打开」立即新开标签并展示
   'drag:pending-layer':
     report.pendingLayer?.open === true &&
-    report.pendingLayer?.mode === 'replace' &&
+    report.pendingLayer?.mode === 'pending' &&
     report.pendingLayer?.pendingVisible === true &&
-    report.pendingLayer?.toggleText === '在新标签中打开',
+    String(report.pendingLayer?.pendingText ?? '').includes('dropped.json') &&
+    report.pendingLayer?.title === '导入这份数据？' &&
+    report.pendingLayer?.dropzoneHidden === true &&
+    report.pendingLayer?.targetHidden === true &&
+    report.pendingLayer?.focused === 'pendingNewTab',
   'drag:pending-new-tab-immediate':
     report.dropped?.layerOpen === false &&
     report.dropped?.size === (report.before?.length ?? 0) + 1 &&

@@ -49,7 +49,17 @@ describe('settings-state — 默认值与校验', () => {
       escapeUnicode: false,
       sortOrder: 'raw',
       locale: 'auto',
+      importTarget: 'new-tab',
     });
+  });
+
+  it('importTarget：默认新标签 / 两档合法保留 / 非法回落（#47 #1）', () => {
+    expect(DEFAULT_SETTINGS.importTarget).toBe('new-tab');
+    expect(normalizeSettings({}).importTarget).toBe('new-tab');
+    expect(normalizeSettings({ importTarget: 'replace' }).importTarget).toBe('replace');
+    expect(normalizeSettings({ importTarget: 'new-tab' }).importTarget).toBe('new-tab');
+    expect(normalizeSettings({ importTarget: 'bogus' }).importTarget).toBe('new-tab');
+    expect(normalizeSettings({ importTarget: 1 }).importTarget).toBe('new-tab');
   });
 
   it('locale：默认跟随系统 / 三档合法保留 / 未知回落 auto（#45 / ADR-0026 §3）', () => {

@@ -1,8 +1,8 @@
 /**
- * tests/unit/view/settings-panel — 设置面板 DOM 层：#45 / ADR-0026 §3 的第 14 行「语言」+ relabel。
+ * tests/unit/view/settings-panel — 设置面板 DOM 层：#45 / ADR-0026 §3 的语言行 + #47 #1 导入落点行 + relabel。
  *
  * 用极简 fake DOM（仓库不引 jsdom）；只验证面板自己的契约：
- *   - 14 行顺序（locale 殿后）、`[data-setting="locale"]` + `[data-value]` 选项；
+ *   - 15 行顺序（locale 殿后）、`[data-setting="locale"]` + `[data-value]` 选项；
  *   - `relabel()` 重建静态文案（中 ↔ 英），不触发 onChange、按最近 model 回填 active/checked。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -25,6 +25,7 @@ const ROW_ORDER = [
   'adaptiveExpand',
   'advBudget',
   'escapeUnicode',
+  'importTarget',
   'locale',
 ];
 
@@ -78,8 +79,8 @@ function activeValue(rowEl: FakeElement): string | null {
   return segButtons(rowEl).find((button) => button.classList.contains('is-active'))?.dataset.value ?? null;
 }
 
-describe('SettingsPanel — 第 14 行「语言」DOM 契约', () => {
-  it('14 行按固定顺序排列，locale 是最后一行', () => {
+describe('SettingsPanel — 第 15 行「语言」DOM 契约', () => {
+  it('15 行按固定顺序排列，locale 是最后一行', () => {
     const { host } = mountPanel();
     expect(rows(host).map((entry) => entry.dataset.setting)).toEqual(ROW_ORDER);
     expect(host.getAttribute('aria-label')).toBe('设置');
@@ -198,7 +199,7 @@ describe('SettingsPanel — relabel()（运行时切换语言）', () => {
     // 再切回来仍然幂等（行数不叠加、文案恢复中文）
     await setLocalePref('zh-CN');
     panel.relabel();
-    expect(rows(host)).toHaveLength(14);
+    expect(rows(host)).toHaveLength(15);
     expect((row(host, 'theme').children[0] as FakeElement).textContent).toBe('主题');
   });
 

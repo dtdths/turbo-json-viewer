@@ -286,7 +286,14 @@ export class SettingsPanel {
         label: t('view.settings.escapeUnicode'),
         hint: t('view.settings.escapeUnicode.hint'),
       }),
-      // 第 14 项（#45 / ADR-0026 §3）：界面语言；`auto` 跟随系统，其余用各语言自称
+      // 第 15 项（#47 #1）：导入落点默认（完整导入层的初始形态；拖放 / 粘贴仍走精简确认层）
+      this.buildSegRow({
+        key: 'importTarget',
+        label: t('view.settings.importTarget'),
+        items: this.importTargetItems(),
+        hint: t('view.settings.importTarget.hint'),
+      }),
+      // 界面语言（#45 / ADR-0026 §3）：`auto` 跟随系统，其余用各语言自称；保持殿后
       this.buildSegRow({
         key: 'locale',
         label: t('view.settings.language'),
@@ -294,6 +301,13 @@ export class SettingsPanel {
         hint: t('view.settings.language.hint'),
       }),
     );
+  }
+
+  private importTargetItems(): SegItem[] {
+    return [
+      { value: 'new-tab', label: t('view.settings.importTarget.newTab') },
+      { value: 'replace', label: t('view.settings.importTarget.replace') },
+    ];
   }
 
   private themeItems(): SegItem[] {

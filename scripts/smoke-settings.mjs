@@ -40,7 +40,9 @@ const DEFAULT_KEYS = [
   'adaptiveExpand',
   'advBudget',
   'escapeUnicode',
-  // 第 14 项（#45 / ADR-0026 §3）：界面语言（auto = 跟随系统）
+  // 第 15 项（#47 #1）：导入落点默认（新标签 / 替换当前）
+  'importTarget',
+  // 第 16 项（#45 / ADR-0026 §3）：界面语言（auto = 跟随系统），保持殿后
   'locale',
 ];
 
@@ -58,6 +60,7 @@ const DEFAULTS = {
   adaptiveExpand: true,
   advBudget: 'standard',
   escapeUnicode: false,
+  importTarget: 'new-tab',
   locale: 'auto',
 };
 
@@ -452,6 +455,7 @@ const checks = {
         adaptiveExpand: false,
         advBudget: 'standard',
         escapeUnicode: true,
+        importTarget: 'new-tab',
         locale: 'auto',
       }),
   'persist:theme':

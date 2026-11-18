@@ -515,7 +515,10 @@ async function extTargetsPhase() {
 /* 导入层交互回归（grill-with-docs 收口：Q8=A′ / Q9=A / Q10=A / Q11=B / Q12=A / Q13=A） */
 /* ================================================================= */
 
-/** 文档已打开、导入层关闭：body/树上的粘贴不应导入（defaultPrevented=false、文档不变）。 */
+/**
+ * 文档已打开、导入层关闭：⌘V 现在弹**精简确认层**（#47 #2）——确认前不导入；
+ * 验证 defaultPrevented=true、文档不变、层里带待导入条目；最后关层，保持后续 phase 的前置。
+ */
 async function extImportLayerGuardPhase() {
   const out = {};
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -529,12 +532,20 @@ async function extImportLayerGuardPhase() {
   await window.__extSmoke.settle(800);
   out.after = window.__extSmoke.docState();
   out.layerAfter = window.__extSmoke.layer();
+  const closeAfterPaste = document.getElementById('emptyClose');
+  if (closeAfterPaste && out.layerAfter.visible) closeAfterPaste.click();
+  out.closedAfterPaste = await window.__extSmoke.waitUntil(
+    () => !window.__extSmoke.layer().visible,
+    5000,
+    40,
+  );
+  await window.__extSmoke.settle(150);
   out.hasDevHook = Boolean(window.__tjv);
   out.longTasks = window.__extSmoke.take();
   return out;
 }
 
-/** 入口 1：点 #importBtn → replace 层（title/警示条/dialog/几何/半透明）。层保持打开供截图。 */
+/** 入口 1：点 #importBtn → 完整层（#47 #1 默认落点 = 新标签）；再切「替换当前」验证警示条。层保持打开供截图。 */
 async function extImportLayerOpenPhase() {
   const out = {};
   out.before = window.__extSmoke.docState();
@@ -545,10 +556,24 @@ async function extImportLayerOpenPhase() {
   if (btn) btn.click();
   out.opened = await window.__extSmoke.waitUntil(() => {
     const layer = window.__extSmoke.layer();
-    return layer.visible && layer.mode === 'replace';
+    return layer.visible && layer.mode === 'new-tab';
   }, 5000, 40);
   out.openMs = Math.round(performance.now() - t0);
   await window.__extSmoke.settle(180);
+  out.layer = window.__extSmoke.layer();
+  // radio 切「替换当前」→ 覆盖警示必须出现且带当前文件名
+  const replaceRadio = document.getElementById('targetReplace');
+  if (replaceRadio) replaceRadio.click();
+  out.replaceSwitched = await window.__extSmoke.waitUntil(() => {
+    const layer = window.__extSmoke.layer();
+    return layer.visible && layer.mode === 'replace';
+  }, 5000, 40);
+  await window.__extSmoke.settle(150);
+  out.replaceLayer = window.__extSmoke.layer();
+  // 切回新标签，保持本 phase 的「默认落点」前提供截图
+  const newTabRadio = document.getElementById('targetNewTab');
+  if (newTabRadio) newTabRadio.click();
+  await window.__extSmoke.settle(120);
   out.layer = window.__extSmoke.layer();
   out.doc = window.__extSmoke.docState();
   out.hasDevHook = Boolean(window.__tjv);
@@ -581,7 +606,7 @@ async function extImportLayerCancelPhase() {
   if (chip) chip.click();
   out.openedByFileChip = await window.__extSmoke.waitUntil(() => {
     const layer = window.__extSmoke.layer();
-    return layer.visible && layer.mode === 'replace';
+    return layer.visible && layer.mode === 'new-tab';
   }, 5000, 40);
   out.fileChipMs = Math.round(performance.now() - t1);
   await window.__extSmoke.settle(120);
@@ -600,7 +625,7 @@ async function extImportLayerCancelPhase() {
   out.cmdO = window.__extSmoke.pressKey('o', { metaKey: true });
   out.openedByShortcut = await window.__extSmoke.waitUntil(() => {
     const layer = window.__extSmoke.layer();
-    return layer.visible && layer.mode === 'replace';
+    return layer.visible && layer.mode === 'new-tab';
   }, 5000, 40);
   out.shortcutMs = Math.round(performance.now() - t2);
   await window.__extSmoke.settle(120);
@@ -628,6 +653,10 @@ async function extImportLayerReplacePhase() {
   if (btn) btn.click();
   out.layerOpened = await window.__extSmoke.waitUntil(() => window.__extSmoke.layer().visible, 5000, 40);
   await window.__extSmoke.settle(150);
+  // #47 #1：完整层默认 = 设置的「新标签」；本 phase 要测「层内粘贴 = 替换当前」→ 先切替换
+  const replaceRadio = document.getElementById('targetReplace');
+  if (replaceRadio) replaceRadio.click();
+  await window.__extSmoke.settle(120);
   window.__extSmoke.reset();
   const t0 = performance.now();
   out.paste = window.__extSmoke.pasteText('{"replaced":true,"n":42}', 'document');
@@ -1141,19 +1170,23 @@ try {
     const after = layerGuardPhase.after || {};
     metrics.importLayerGuard = { before, after, paste: layerGuardPhase.paste, layerAfter: layerGuardPhase.layerAfter };
     check(
-      'il:paste-guarded-closed-layer',
+      'il:paste-opens-pending-layer',
       Boolean(layerGuardPhase.paste) &&
-        layerGuardPhase.paste.defaultPrevented === false &&
+        layerGuardPhase.paste.defaultPrevented === true &&
         docSame(before, after) &&
         after.toastHidden === true &&
         Boolean(layerGuardPhase.layerAfter) &&
-        layerGuardPhase.layerAfter.visible === false,
+        layerGuardPhase.layerAfter.visible === true &&
+        layerGuardPhase.layerAfter.mode === 'pending' &&
+        layerGuardPhase.layerAfter.pendingVisible === true &&
+        String(layerGuardPhase.layerAfter.pendingText || '').includes('剪贴板.json') &&
+        layerGuardPhase.closedAfterPaste === true,
       {
         defaultPrevented: layerGuardPhase.paste && layerGuardPhase.paste.defaultPrevented,
         before,
         after,
         layerAfter: layerGuardPhase.layerAfter,
-        note: '层关闭且有文档：粘贴合法 JSON 也不导入、不 preventDefault',
+        note: '层关闭且有文档：⌘V 弹精简确认层，确认前不导入',
       },
     );
   }
@@ -1174,19 +1207,24 @@ try {
       'il:entry-importBtn',
       layerOpenPhase.opened === true &&
         layer.visible === true &&
-        layer.mode === 'replace' &&
-        layer.titleText === '打开新文档' &&
+        layer.mode === 'new-tab' &&
+        layer.titleText === '在新标签中打开' &&
         layer.role === 'dialog' &&
         layer.ariaModal === 'true' &&
         layer.closeVisible === true,
       { opened: layerOpenPhase.opened, layer },
     );
     check(
-      'il:warn-shows-current-doc',
-      layer.warnVisible === true &&
-        String(before.fileName || '').length > 0 &&
-        String(layer.warnText || '').includes(String(before.fileName || '')),
-      { warnVisible: layer.warnVisible, warnText: layer.warnText, currentFileName: before.fileName },
+      'il:radio-replace-warn',
+      layerOpenPhase.replaceSwitched === true &&
+        layerOpenPhase.replaceLayer?.mode === 'replace' &&
+        layerOpenPhase.replaceLayer?.warnVisible === true &&
+        String(layerOpenPhase.replaceLayer?.warnText || '').includes(String(before.fileName || '')),
+      {
+        replaceSwitched: layerOpenPhase.replaceSwitched,
+        replaceLayer: layerOpenPhase.replaceLayer,
+        currentFileName: before.fileName,
+      },
     );
     check(
       'il:geometry-above-toolbar',
@@ -1236,7 +1274,7 @@ try {
         layerCancelPhase.openedByFileChip === true &&
         Boolean(layerCancelPhase.layerViaFileChip) &&
         layerCancelPhase.layerViaFileChip.visible === true &&
-        layerCancelPhase.layerViaFileChip.mode === 'replace' &&
+        layerCancelPhase.layerViaFileChip.mode === 'new-tab' &&
         docSame(before, layerCancelPhase.docViaFileChip),
       { openedByFileChip: layerCancelPhase.openedByFileChip, layerViaFileChip: layerCancelPhase.layerViaFileChip },
     );
@@ -1253,7 +1291,7 @@ try {
       layerCancelPhase.openedByShortcut === true &&
         Boolean(layerCancelPhase.layerViaShortcut) &&
         layerCancelPhase.layerViaShortcut.visible === true &&
-        layerCancelPhase.layerViaShortcut.mode === 'replace' &&
+        layerCancelPhase.layerViaShortcut.mode === 'new-tab' &&
         docSame(before, layerCancelPhase.docViaShortcut),
       { openedByShortcut: layerCancelPhase.openedByShortcut, layerViaShortcut: layerCancelPhase.layerViaShortcut },
     );
@@ -1356,7 +1394,7 @@ try {
         layerPendingPhase.pendingLayer.visible === true &&
         layerPendingPhase.pendingLayer.pendingVisible === true &&
         String(layerPendingPhase.pendingLayer.pendingText || '').includes('external-drop.json') &&
-        layerPendingPhase.pendingLayer.mode === 'replace' &&
+        layerPendingPhase.pendingLayer.mode === 'pending' &&
         docSame(before, afterExternalDrop),
       { pendingShown: layerPendingPhase.pendingShown, pendingLayer: layerPendingPhase.pendingLayer, before, afterExternalDrop },
     );

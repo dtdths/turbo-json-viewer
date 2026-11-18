@@ -25,7 +25,12 @@ export type SettingsKey =
   | 'adaptiveExpand'
   | 'advBudget'
   | 'escapeUnicode'
+  /** 完整导入层的默认落点（#47 #1）：新标签 / 替换当前；拖放与粘贴走精简确认层，不受它影响 */
+  | 'importTarget'
   | 'locale';
+
+/** 完整导入层的落点（#47 #1）：只决定 ⌘O / 导入按钮打开时的初始选中项 */
+export type ImportTarget = 'new-tab' | 'replace';
 
 export interface Settings {
   theme: 'dark' | 'light';
@@ -53,8 +58,10 @@ export interface Settings {
   advBudget: ExprBudgetLevel;
   /** 导出时把非 ASCII 转义为 `\uXXXX`（第 12 项；ADR-0022 §2，默认关） */
   escapeUnicode: boolean;
-  /** 界面语言（第 14 项；#45 / ADR-0026 §3）：`auto` = 跟随系统，其余 = 显式 LanguageTag */
+  /** 界面语言（#45 / ADR-0026 §3）：`auto` = 跟随系统，其余 = 显式 LanguageTag */
   locale: LocalePref;
+  /** 导入落点默认（#47 #1）：完整导入层打开时的初始形态；默认新标签 */
+  importTarget: ImportTarget;
 }
 
 /** 布局态（主题之外的工作区 UI 状态，ADR-0011 §2） */
@@ -93,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   advBudget: 'standard',
   escapeUnicode: false,
   locale: 'auto',
+  importTarget: 'new-tab',
 };
 
 export const DEFAULT_UI_STATE: UiState = { panel: 'doc', railCollapsed: false, viewMode: 'tree' };
@@ -155,6 +163,10 @@ export function normalizeSettings(raw: unknown): Settings {
       : DEFAULT_SETTINGS.advBudget,
     escapeUnicode: pickBoolean(bag.escapeUnicode, DEFAULT_SETTINGS.escapeUnicode),
     locale: normalizeLocalePref(bag.locale),
+    importTarget:
+      bag.importTarget === 'new-tab' || bag.importTarget === 'replace'
+        ? bag.importTarget
+        : DEFAULT_SETTINGS.importTarget,
   };
 }
 
