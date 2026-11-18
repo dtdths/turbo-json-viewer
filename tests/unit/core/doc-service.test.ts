@@ -1750,3 +1750,75 @@ describe('DocService — 多 doc 根 / closeRoot（#18 / ADR-0009）', () => {
     expect((await svc.dispatch({ t: 'getNodeJson', rootId: a.rootId, path: '$.n' })).text).toBe('1');
   });
 });
+
+/**
+ * #47 #8 / ADR-0027：表达式结果根的行窗口带 `originPath`（原文档规范路径）。
+ *
+ * 契约：
+ * - 只有 expression 根的行带这个字段（`null` = 计算值，无来源）；doc / repaired 根**不带**；
+ * - 映射走 `locateOriginalPath`（最深已知容器 + 相对后缀，ADR-0018 §4），不做逐节点精确。
+ */
+describe('DocService — 表达式行窗口的原文档路径（#47 #8）', () => {
+  type RowWithOrigin = { path: string; originPath?: string | null };
+  const rowsOf = (win: unknown): RowWithOrigin[] => (win as { rows: RowWithOrigin[] }).rows;
+
+  async function evalOn(svc: DocService, rootId: string, text: string) {
+    const reply = await svc.dispatch({ t: 'eval', rootId, seq: 1, text, strict: false, budget: 'standard' });
+    if (reply.ok !== true) throw new Error(`eval failed: ${JSON.stringify(reply)}`);
+    return reply.rootId;
+  }
+
+  it('过滤后的元素与嵌套字段映射回原路径；计算对象为 null', async () => {
+    const svc = new DocService();
+    const doc = await load(
+      svc,
+      '{"items":[{"id":1,"name":"a"},{"id":2,"name":"b"},{"id":3,"name":"c"}]}',
+    );
+
+    // filter 保留原对象身份 → 结果 $[0] 就是文档里的 $.items[1]
+    const filtered = await evalOn(svc, doc.rootId, '$.items.filter(x => x.id === 2)');
+    const win = await svc.dispatch({
+      t: 'window',
+      rootId: filtered,
+      rowVersion: 1,
+      seq: 1,
+      start: 0,
+      count: 20,
+    });
+    const rows = rowsOf(win);
+    const byPath = (p: string) => rows.find((row) => row.path === p);
+    expect(byPath('$[0]')?.originPath).toBe('$.items[1]');
+
+    // map 映射出标量：来源靠 origins.top（原数组元素的字段路径），不需要展开子层
+    const scalars = await evalOn(svc, doc.rootId, '$.items.map(x => x.name)');
+    const scalarWin = await svc.dispatch({
+      t: 'window',
+      rootId: scalars,
+      rowVersion: 1,
+      seq: 2,
+      start: 0,
+      count: 20,
+    });
+    expect(rowsOf(scalarWin).find((row) => row.path === '$[1]')?.originPath).toBe('$.items[1].name');
+
+    // map 产出的新对象没有来源 → null（页面显示「计算值」）
+    const mapped = await evalOn(svc, doc.rootId, '$.items.map(x => ({ id: x.id }))');
+    const mappedWin = await svc.dispatch({
+      t: 'window',
+      rootId: mapped,
+      rowVersion: 1,
+      seq: 3,
+      start: 0,
+      count: 20,
+    });
+    const mappedRows = rowsOf(mappedWin);
+    expect(mappedRows.find((row) => row.path === '$[0]')?.originPath).toBeNull();
+  });
+
+  it('doc 根的行窗口不带 originPath 字段（字段即「这是表达式结果」的判据）', async () => {
+    const svc = new DocService();
+    const doc = await load(svc, '{"a":1}');
+    const win = await svc.dispatch({ t: 'window', rootId: doc.rootId, rowVersion: 1, seq: 1, start: 0, count: 5 });
+    expect(rowsOf(win).every((row) => !('originPath' in row))).toBe(true);
+  });
+});

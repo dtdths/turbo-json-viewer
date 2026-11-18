@@ -163,6 +163,13 @@ body:not([data-panel="expression"]) .panel--expression {
 .expr__section[hidden] {
   display: none;
 }
+.expr__hint {
+  margin: 2px 0 6px;
+  color: var(--faint);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
 .expr__section-title {
   padding: 0 var(--sp-2) var(--sp-1);
   color: var(--faint);

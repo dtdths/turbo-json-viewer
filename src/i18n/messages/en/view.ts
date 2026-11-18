@@ -75,6 +75,7 @@ export const view = {
   'view.tree.count': '{n} items',
   'view.tree.expandHint': 'Click to expand',
   'view.tree.collapseHint': 'Click to collapse',
+  'view.tree.originComputed': 'Computed value (no document path)',
   'view.tree.type.object': 'object',
   'view.tree.type.array': 'array',
   'view.tree.type.string': 'string',
@@ -144,6 +145,8 @@ export const view = {
   'view.expr.runTitle': 'Run expression (Enter)',
   'view.expr.strict': 'Strict mode',
   'view.expr.examplesTitle': 'Examples',
+  'view.expr.filterHint':
+    'Multi-condition filtering: use filter(...) with an element field, e.g. $.items.filter(x => x.a === 1 && x.b === 2)',
   'view.expr.historyTitle': 'History',
   'view.expr.empty': 'Type an expression, then press Enter to run',
   'view.expr.stale': 'Document changed; the result may be out of date',

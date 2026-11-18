@@ -107,6 +107,10 @@ export const EXPR_COPY = {
   get examplesTitle(): string {
     return t('view.expr.examplesTitle');
   },
+  /** 多条件筛选引导（#47 #7）：不做自研条件行，指到 filter(...) 用法。 */
+  get filterHint(): string {
+    return t('view.expr.filterHint');
+  },
   get historyTitle(): string {
     return t('view.expr.historyTitle');
   },

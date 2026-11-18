@@ -34,6 +34,8 @@ await mkdir(SHOTS, { recursive: true });
 const MENU_ACTS = [
   'copy-subtree',
   'copy-path',
+  // #47 #8 / ADR-0027：表达式结果专用（doc 树常禁用），顺序紧跟「复制路径」
+  'copy-origin-path',
   'copy-value',
   'copy-key',
   'expand-subtree',
@@ -47,6 +49,7 @@ const MENU_ACTS = [
 const MENU_LABELS = [
   '复制子树 JSON',
   '复制路径',
+  '复制原文档路径',
   '复制原始值',
   '复制键名',
   '展开整棵子树',

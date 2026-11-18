@@ -406,7 +406,13 @@ export class DocService {
     }
     const start = Number.isFinite(cmd.start) ? Math.max(0, Math.floor(cmd.start)) : 0;
     const count = Number.isFinite(cmd.count) ? Math.max(0, Math.floor(cmd.count)) : 0;
-    const rows = root.rowModel.window(start, count);
+    const page = root.rowModel.window(start, count);
+    // 表达式结果根：随行窗口回带原文档路径（#47 #8 / ADR-0027）。
+    // 来源映射（origins）只在 worker 内存在，页面不自算；每窗口 ~30 行 × O(路径深度)，可忽略。
+    const rows =
+      root.kind === 'expression' && root.expr
+        ? page.map((row) => ({ ...row, originPath: locateOriginalPath(root.value, root.expr!.origins, row.path) }))
+        : page;
     return {
       rootId: root.rootId,
       rowVersion: root.rowVersion,

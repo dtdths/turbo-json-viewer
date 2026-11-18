@@ -436,6 +436,8 @@ let editingPath: string | null = null;
 /** 编辑器打开时所属的 doc 根（切标签 / 换文档后 Apply 必须丢弃，ADR-0009 §3） */
 let editingRootId: string | null = null;
 let ctxPath: string | null = null;
+/** 右键菜单打开时该行的原文档路径（#47 #8）：只有表达式结果根的行有；`null` = 计算值 / 非表达式视图。 */
+let ctxOriginPath: string | null = null;
 
 /* ---------------- 工作区接线（#18 / ADR-0009）：活动标签 ↔ 模块级视图态 ---------------- */
 
@@ -1306,10 +1308,18 @@ async function buildExpressionExamples(): Promise<string[]> {
     const items = await requestCompletions('', 0);
     const fields = items.filter((item) => item.kind === 'field');
     const picks: string[] = [];
+    // 多条件筛选引导（#47 #7 / ADR-0027）：第一个数组字段给一条 filter(...) 示例——
+    // 多条件搜索不做自研 UI，表达式就是那条路；用 `typeof x === 'object'` 保证在任何数组上都可执行。
+    let filterExampleAdded = false;
     for (const field of fields) {
       if (picks.length >= EXPR_EXAMPLES_DOC) break;
       const detail = field.detail;
       const isArray = detail !== undefined && 'kind' in detail && detail.kind === 'array';
+      if (isArray && !filterExampleAdded) {
+        filterExampleAdded = true;
+        picks.push(`$.${field.label}.filter(x => typeof x === 'object')`);
+        continue;
+      }
       picks.push(isArray ? `$.${field.label}.slice(0, 5)` : `$.${field.label}`);
     }
     if (picks.length < EXPR_EXAMPLES_DOC) picks.push('$');
@@ -2444,6 +2454,10 @@ const ctxMenuController = createMenu({
     const act = item.dataset.act ?? '';
     const path = ctxPath;
     if (!path) return;
+    if (act === 'copy-origin-path') {
+      void copyOriginPathToClipboard();
+      return;
+    }
     const format = copyFormatOfAct(act);
     if (format) {
       void copyNodeToClipboard(path, format);
@@ -2469,6 +2483,7 @@ const ctxMenuController = createMenu({
   },
   onClose: () => {
     ctxPath = null;
+    ctxOriginPath = null;
   },
 });
 
@@ -2551,6 +2566,14 @@ function showContextMenu(path: string, x: number, y: number, row: Row): void {
     'locate-raw',
     exprViewActive || meta?.repair !== undefined,
     exprViewActive ? t('app.toast.exprNoSource') : t('app.toast.rawPlainMode'),
+  );
+  // 原文档路径（#47 #8 / ADR-0027）：只有表达式结果根的行带 originPath 字段；计算值（null）无来源。
+  // 非表达式视图下整项禁用（文档树的路径就是行自己的 path，用「复制路径」即可）。
+  ctxOriginPath = 'originPath' in row && typeof row.originPath === 'string' ? row.originPath : null;
+  setCtxItemDisabled(
+    'copy-origin-path',
+    ctxOriginPath === null,
+    exprViewActive ? t('app.toast.reasonOriginComputed') : t('app.toast.reasonOriginExprOnly'),
   );
   ctxMenuController.open({ kind: 'point', x, y });
 }
@@ -2650,6 +2673,15 @@ async function copyNodeToClipboard(path: string, format: CopyFormat): Promise<vo
     }
     showError(error);
   }
+}
+
+/** 复制表达式结果行的原文档路径（#47 #8）：剪贴板写入与 toast 复用四格式复制的口径。 */
+async function copyOriginPathToClipboard(): Promise<void> {
+  const origin = ctxOriginPath;
+  if (!origin) return;
+  const copied = await writeClipboard(origin);
+  if (copied) showToast(t('app.toast.copyDone', { what: t('app.menu.copyOriginPath') }), 2000, 'success');
+  else showToast(t('app.toast.copyFailedManual'), 4000, 'error');
 }
 
 /** 零权限剪贴板：clipboard.writeText → execCommand 兜底（不声明 clipboardWrite，ADR-0010 §7）。 */
@@ -3556,8 +3588,17 @@ function updateStatus(): void {
   statusSize.textContent = `${formatBytes(meta.bytes)} · v${session.docRevision}`;
   statusPath.textContent = selected ?? ROOT_PATH;
   statusPath.title = selected ?? ROOT_PATH;
-  // 表达式结果视图：状态栏明确「这不是文档」（ADR-0018 §1）
+  // 表达式结果视图：状态栏明确「这不是文档」（ADR-0018 §1），并并列该行的**原文档路径**（#47 #8 / ADR-0027）。
+  // 原路径随行窗口回包（`originPath` 字段），页面不自算映射；计算值显示「计算值」。
   if (exprViewActive && exprView) {
+    if (selected) {
+      const originRow = rowSource.snapshot().rows.find((row) => row.path === selected);
+      if (originRow !== undefined && 'originPath' in originRow) {
+        const originText = originRow.originPath ?? t('app.status.exprComputed');
+        statusPath.textContent = `${selected} ← ${originText}`;
+        statusPath.title = statusPath.textContent;
+      }
+    }
     statusState.textContent = t('app.status.expr', { rootId: exprView.rootId });
     return;
   }

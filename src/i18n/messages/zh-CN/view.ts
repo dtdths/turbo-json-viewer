@@ -74,6 +74,7 @@ export const view: Record<keyof ViewMessages, Message> = {
   'view.tree.count': '{n} 项',
   'view.tree.expandHint': '点击展开',
   'view.tree.collapseHint': '点击收起',
+  'view.tree.originComputed': '计算值（无原文档路径）',
   'view.tree.type.object': 'object',
   'view.tree.type.array': 'array',
   'view.tree.type.string': 'string',
@@ -142,6 +143,8 @@ export const view: Record<keyof ViewMessages, Message> = {
   'view.expr.runTitle': '执行表达式（Enter）',
   'view.expr.strict': '严格模式',
   'view.expr.examplesTitle': '示例',
+  'view.expr.filterHint':
+    '多条件筛选：用 filter(...) 组合元素字段条件，例如 $.items.filter(x => x.a === 1 && x.b === 2)',
   'view.expr.historyTitle': '历史',
   'view.expr.empty': '输入表达式后按 Enter 执行',
   'view.expr.stale': '文档已修改，结果可能过期',

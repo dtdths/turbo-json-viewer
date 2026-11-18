@@ -44,6 +44,14 @@ export interface Row {
   /** 容器是否展开 */
   open: boolean;
   hasChildren: boolean;
+  /**
+   * **只有 expression 结果根的行带这个字段**（doc / repaired 根不出现，字段是否存在即「这是表达式结果」的判据）：
+   * 该行对应到原文档的规范路径；`null` = 计算值，没有文档来源（如 `map(x => ({...}))` 产出的对象）。
+   *
+   * 映射走 `core/expression/locate.ts`（最深已知容器 + 相对后缀，ADR-0018 §4 / ADR-0027），
+   * 不做逐节点精确：来源映射是 worker 内的 WeakMap，只在 worker 求，页面不解算（ADR-0018 否决过页面侧路径表）。
+   */
+  originPath?: Path | null;
 }
 
 export interface RowWindow {

@@ -362,7 +362,11 @@ export class ExpressionPanel {
     }
     const title = el('div', 'expr__section-title');
     title.textContent = EXPR_COPY.examplesTitle;
-    const buttons: HTMLElement[] = [title];
+    // 多条件筛选引导（#47 #7）：多条件搜索不做自研 UI，指到 filter(...)（ADR-0027）
+    const hint = el('div', 'expr__hint');
+    hint.id = 'exprFilterHint';
+    hint.textContent = EXPR_COPY.filterHint;
+    const buttons: HTMLElement[] = [title, hint];
     this.examples.forEach((text, index) => {
       const button = el('button', 'expr-example');
       button.type = 'button';

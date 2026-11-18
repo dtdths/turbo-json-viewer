@@ -48,6 +48,18 @@ function check(name, pass, detail) {
 }
 
 try {
+  // headless CfT 默认拒绝 `navigator.clipboard.readText()`：为本套的「复制原文档路径」逐字比对授一次权限
+  // （与 scripts/smoke-copy.mjs 同口径；授权失败只是退回 null 读回，不阻断）。
+  try {
+    await chrome.browser.send('Browser.grantPermissions', {
+      origin: server.base,
+      permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+    });
+    report.clipboardGranted = true;
+  } catch {
+    report.clipboardGranted = false;
+  }
+
   const page = await chrome.openPage();
   const errorsBefore = page.exceptions.length;
   const logsBefore = page.logs.length;
@@ -138,6 +150,12 @@ try {
     out.firstExample = first ? first.textContent : null;
     if (first) { first.click(); await sleep(120); }
     out.textAfterExample = window.__tjv.expressionState().text;
+    // #47 #4：文档树键名 hover title = 该行规范路径
+    out.keyTitles = [...document.querySelectorAll('.row[data-path]')]
+      .slice(0, 4)
+      .map((el) => ({ path: el.dataset.path, title: el.querySelector('.row__key')?.title ?? null }));
+    // #47 #7：多条件筛选引导行（表达式不做自研条件搜索）
+    out.filterHint = document.getElementById('exprFilterHint')?.textContent ?? null;
     return out;
   })()`);
   report.load = phase1;
@@ -148,6 +166,18 @@ try {
     'examples:3-dynamic-plus-2-generic',
     Array.isArray(phase1.state.examples) && phase1.state.examples.length === 5 &&
       phase1.state.examples.slice(0, 3).every((e) => typeof e === 'string' && e.includes('$.')),
+    { examples: phase1.state.examples },
+  );
+  check(
+    'tree:key-title-is-path',
+    Array.isArray(phase1.keyTitles) && phase1.keyTitles.length > 0 &&
+      phase1.keyTitles.every((t) => t.title === t.path) &&
+      String(phase1.filterHint ?? '').includes('filter('),
+    { keyTitles: phase1.keyTitles },
+  );
+  check(
+    'examples:filter-hint-present',
+    Array.isArray(phase1.state.examples) && phase1.state.examples.some((e) => String(e).includes('.filter(')),
     { examples: phase1.state.examples },
   );
   check(
@@ -226,6 +256,72 @@ try {
     { history: phase2.history },
   );
   check('run:no-long-task', (phase2.longTasks || []).every((t) => t < 50), { longTasks: phase2.longTasks });
+
+  // ---- phase 2b：表达式行的原文档路径（#47 #8 / ADR-0027）----
+  const phase2b = await page.eval(`(async () => {
+    const out = {};
+    const { sleep } = window.__ex;
+    const menuItem = () => document.querySelector('[data-act="copy-origin-path"]');
+    const rightClick = (path) => {
+      const row = document.querySelector('.row[data-path="' + path + '"]');
+      if (!row) return false;
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 420, clientY: 320 }));
+      return true;
+    };
+    // 标量结果行（map 出 name）：原路径 = 原数组元素的字段
+    out.mappedRowTitle = document.querySelector('.row[data-path="$[0]"] .row__key')?.title ?? null;
+    out.clicked = rightClick('$[0]');
+    await sleep(120);
+    out.statusPath = document.getElementById('statusPath').textContent;
+    out.menuOpen = !document.getElementById('ctxMenu').hidden;
+    out.menuDisabled = menuItem()?.disabled ?? null;
+    out.menuLabel = menuItem()?.textContent?.trim() ?? null;
+    menuItem()?.click();
+    await sleep(160);
+    out.clipboard = await window.__tjv.clipboardText();
+    out.toast = window.__tjv.toastText();
+    // 计算对象（map 出新对象）：没有原路径 → 状态栏与菜单都标「计算值」
+    await window.__tjv.expressionRunText('$.data.items.filter(x => x.price > 100).map(x => ({ id: x.id }))');
+    await sleep(220);
+    out.computedRowTitle = document.querySelector('.row[data-path="$[0]"] .row__key')?.title ?? null;
+    out.clickedComputed = rightClick('$[0]');
+    await sleep(120);
+    out.computedStatusPath = document.getElementById('statusPath').textContent;
+    out.computedMenuDisabled = menuItem()?.disabled ?? null;
+    out.computedMenuTitle = menuItem()?.title ?? null;
+    // 收拾现场：关闭菜单并恢复一份表达式结果（后续 phase 依赖「结果视图仍激活」）
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(80);
+    await window.__tjv.expressionRunText('$.data.items.filter(x => x.price > 100).map(x => x.name)');
+    await sleep(180);
+    out.menuClosed = document.getElementById('ctxMenu').hidden;
+    return out;
+  })()`);
+  report.originPath = phase2b;
+
+  check(
+    'origin:status-path-and-menu',
+    phase2b.clicked === true &&
+      String(phase2b.statusPath).includes('$[0] ← $.data.items[11].name') &&
+      phase2b.menuOpen === true &&
+      phase2b.menuDisabled === false &&
+      String(phase2b.clipboard) === '$.data.items[11].name',
+    phase2b,
+  );
+  check(
+    'origin:computed-labeled',
+    String(phase2b.mappedRowTitle) === '$.data.items[11].name' &&
+      String(phase2b.computedRowTitle).includes('计算值') &&
+      String(phase2b.computedStatusPath).includes('计算值') &&
+      phase2b.computedMenuDisabled === true,
+    {
+      mappedRowTitle: phase2b.mappedRowTitle,
+      computedRowTitle: phase2b.computedRowTitle,
+      computedStatusPath: phase2b.computedStatusPath,
+      computedMenuDisabled: phase2b.computedMenuDisabled,
+      computedMenuTitle: phase2b.computedMenuTitle,
+    },
+  );
 
   // ---- phase 3：补全（根字段 / Math / 数组方法 / #43 类型感知元素字段） ----
   const phase3 = await page.eval(`(async () => {

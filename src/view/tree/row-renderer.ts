@@ -347,6 +347,9 @@ export class DomRowPool implements RowRenderer {
       'row__caret' + (row.open ? ' is-open' : '') + (row.hasChildren ? '' : ' is-leaf');
 
     slot.keyEl.className = 'row__key' + (row.idx ? ' row__key--idx' : '');
+    // 键名 hover 的 title（#47 #4 / #8）：doc 树 = 该行规范路径；表达式结果树 = 原文档路径，
+    // 计算值（没有来源）显示「计算值」。`originPath` 字段是否存在就是「这是表达式结果」的判据。
+    slot.keyEl.title = 'originPath' in row ? (row.originPath ?? t('view.tree.originComputed')) : row.path;
     setText(slot.keyEl, row.key, ctx.searchTerm);
 
     if (row.hasChildren) {
