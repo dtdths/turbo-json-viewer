@@ -57,6 +57,48 @@ try {
   Object.assign(report, phase1);
   await page.screenshot(path.join(SHOTS, 'edit-open.png'));
 
+  // ---- phase 1b：#47 #3 双击不再进编辑（还给浏览器选词）；F2 / 右键菜单仍是入口 ----
+  const phase1b = await page.eval(`(async () => {
+    const out = {};
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.__tjv.editClose();
+    await sleep(120);
+    const scroller = document.querySelector('.tjv-tree');
+    const row = document.querySelector('.row[data-path="$.c"]');
+    // 单击选中（行选中语义不变）
+    row.click();
+    await sleep(80);
+    out.selectedAfterClick = window.__tjv.state().selected;
+    // 双击：不再打开编辑弹层（监听已移除）；合成事件不触发浏览器默认选词，只断言「不弹层」
+    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 }));
+    await sleep(150);
+    out.modalAfterDblClick = document.getElementById('editModal').hidden;
+    // F2 仍是入口：选中行上按 F2 → 打开编辑器
+    scroller.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }));
+    await sleep(250);
+    out.modalAfterF2 = document.getElementById('editModal').hidden;
+    out.editPath = document.getElementById('editPath').textContent;
+    window.__tjv.editClose();
+    await sleep(120);
+    // 右键菜单：编辑项右侧 F2 提示（aria-hidden 视觉提示 + 按钮 aria-keyshortcuts）
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 420, clientY: 320 }));
+    await sleep(120);
+    const item = document.querySelector('#ctxMenu [data-act="edit"]');
+    out.menuOpen = !document.getElementById('ctxMenu').hidden;
+    out.menuKey = item.querySelector('.ctxmenu__key')?.textContent ?? null;
+    out.menuAria = item.getAttribute('aria-keyshortcuts');
+    out.menuKeyHidden = item.querySelector('.ctxmenu__key')?.getAttribute('aria-hidden');
+    out.menuWidth = Math.round(document.getElementById('ctxMenu').getBoundingClientRect().width);
+    out.menuOverflow = item.scrollWidth > item.clientWidth;
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await sleep(80);
+    // 还原现场：phase 2 起于「$.b 的编辑器已打开」（与 phase 1 结束时一致）
+    await window.__tjv.editOpen('$.b');
+    await sleep(200);
+    return out;
+  })()`);
+  Object.assign(report, { phase1b });
+
   // ---- phase 2：Apply 数组扩元素 → undo → redo ----
   const phase2 = await page.eval(`(async () => {
     const out = {};
@@ -186,6 +228,17 @@ const checks = {
     report.kindText === 'array' &&
     report.pathText === '$.b' &&
     report.text === JSON.stringify([1, 2, 3], null, 2),
+  // #47 #3：双击不再是编辑入口（还给浏览器选词）；F2 与右键菜单仍是入口，菜单项带 F2 提示
+  'dblclick:not-edit-entry':
+    report.phase1b?.selectedAfterClick === '$.c' && report.phase1b?.modalAfterDblClick === true,
+  'f2:opens-editor': report.phase1b?.modalAfterF2 === false && report.phase1b?.editPath === '$.c',
+  'menu:f2-hint':
+    report.phase1b?.menuOpen === true &&
+    report.phase1b?.menuKey === 'F2' &&
+    report.phase1b?.menuAria === 'F2' &&
+    report.phase1b?.menuKeyHidden === 'true' &&
+    report.phase1b?.menuWidth === 176 &&
+    report.phase1b?.menuOverflow === false,
   'apply:array-element': 
     report.applied?.totalRows === baseRows + 1 &&
     report.applied?.editCount === 1 &&

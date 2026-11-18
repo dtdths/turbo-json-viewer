@@ -129,7 +129,7 @@ export const app = {
   'app.menu.export': 'Export method',
   'app.menu.copySubtree': 'Copy subtree JSON',
   'app.menu.copyPath': 'Copy path',
-  'app.menu.copyOriginPath': 'Copy original document path',
+  'app.menu.copyOriginPath': 'Copy original path',
   'app.menu.copyValue': 'Copy raw value',
   'app.menu.copyKey': 'Copy key',
   'app.menu.expandSubtree': 'Expand entire subtree',

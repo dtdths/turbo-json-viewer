@@ -647,6 +647,15 @@ body[data-panel="settings"] .empty__inner {
   color: var(--accent-text);
   font-size: var(--text-caption);
 }
+/* 菜单项右侧的快捷键提示（#47 #3）：mono 小字、贴右缘；`aria-hidden` + 按钮上的 `aria-keyshortcuts` 供读屏 */
+.ctxmenu__key {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+.ctxmenu__item:hover .ctxmenu__key { color: var(--muted); }
 .ctxmenu__item:hover { background: var(--bg-hover); color: var(--text); }
 .ctxmenu__item:focus-visible {
   outline: none;

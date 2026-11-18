@@ -65,10 +65,10 @@ A 纯只读；B 全文源文本编辑；C 子树/结构化编辑。
 
 - **已实现**：`core/edit-history.ts`（撤销栈深度 `EDIT_UNDO_DEPTH=100`；reset = LIFO 反向应用）+ `DocService` 的
   `getNodeJson/replaceNode/undo/redo/reset/exportDoc`；`viewmodel/edit-state.ts`（修改计数 / undo/redo 可用性）；
-  树入口（双击 / 右键菜单 / F2）+ `setChangedPath` 高亮；`SubtreeEditor`（720×520）+ S5 `CodeEditor` 适配器
+  树入口（右键菜单 / F2 / 行尾 ✎）+ `setChangedPath` 高亮；`SubtreeEditor`（720×520）+ S5 `CodeEditor` 适配器
   （CM6 懒加载 130.6KB gz ≤140 预算）；导出 = `exportDoc` → Blob `-edited`；替换文档前未保存确认 + `beforeunload` 提示。
 - **与 edit-spec 的偏差**：spec §2 写「F2/Enter 打开编辑」，但 Enter 已是树「展开 / 折叠」键（slice 1 契约），
-  故编辑键只取 **F2**（+ 双击 / 右键菜单）；Enter 语义不变。
+  故编辑键只取 **F2**（+ 右键菜单 / 行尾 ✎）；Enter 语义不变。
 - **语义落地**：no-op = 规范化 pretty 文本相等（键序变化算修改）；根替换 / 撤销根替换 = 根重建语义；
   reset 每步版本 ++（迟到窗口一律 stale）；5MB 只读由 `TOO_LARGE` 提示、不打开编辑器。
 - **体积**：`build.mjs` 启用 `minify:true` —— 产物体积预算按 minify 后 gz 计（CM6 首开闭包 200→130.6KB gz）。
@@ -81,3 +81,15 @@ A 纯只读；B 全文源文本编辑；C 子树/结构化编辑。
 | CM6 全文源文本编辑 | 用户不需要；整份文本编辑的阈值/双源问题更重；子树编辑已覆盖 mock 工作流 |
 | 保持纯只读（编辑走外部工具） | 用户明确需要会话内改 mock 数据 |
 | 写回原文件 | 用户明确不想改原文件；浏览器无法静默写回本地文件 |
+
+## 修订（2026-11-18）：双击还给浏览器默认选词
+
+用户实测反馈（#47 #3）：树行**双击**在习惯上更常被当作「选中这段文案」，与编辑弹层冲突。决策与落地：
+
+- **删掉 `dblclick → 编辑`**（`view/tree/tree-view.ts` 的 `onDblClickBound` 一并移除，不再 `preventDefault`），双击恢复浏览器默认的选词/选段；
+- 编辑入口保留且足够：**F2**（选中行，`tree-view.ts` 键盘分支）、**右键菜单**「编辑此节点 JSON」、**行 hover 的 ✎**（`main.ts` 的 `onRowAction`）；本 ADR 原文写的「双击」从入口表里去掉；
+- 右键菜单该项右侧加 **`F2` 快捷键提示**（`.ctxmenu__key`，`aria-hidden` 视觉提示 + 按钮 `aria-keyshortcuts="F2"` 供读屏）；菜单仍是 `min-width: 176px`，中文本地化下实测 176（英文文案长时按内容变宽，属既有行为）；
+- **不留**「修饰键 + 双击」的隐藏后门（对不知道的人零收益）；
+- 双击时**行选中不变**（单击选行 → 状态栏路径/高亮；双击只额外选词）。
+
+回归：`smoke-edit` 新增 `dblclick:not-edit-entry`（双击不弹层、单击选中照旧）/ `f2:opens-editor` / `menu:f2-hint`（提示文案、`aria-keyshortcuts`、菜单宽 176、无溢出）。

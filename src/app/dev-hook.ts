@@ -938,12 +938,16 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       const menu = deps.entries.contextMenu.menu;
       return {
         hidden: menu.hidden,
-        items: deps.entries.contextMenu.items().map((item) => ({
-          act: item.dataset.act ?? '',
-          label: item.textContent ?? '',
-          disabled: item.disabled,
-          title: item.title,
-        })),
+        items: deps.entries.contextMenu.items().map((item) => {
+          // 右侧快捷键提示（.ctxmenu__key）不是动作文案：label 只取词条标签（#47 #3）
+          const labelEl = item.querySelector<HTMLElement>('[data-i18n]');
+          return {
+            act: item.dataset.act ?? '',
+            label: (labelEl?.textContent ?? item.textContent ?? '').trim(),
+            disabled: item.disabled,
+            title: item.title,
+          };
+        }),
       };
     },
     /** 点菜单项（真实 DOM click），等到 toast 变化后返回（复制是异步的）。 */

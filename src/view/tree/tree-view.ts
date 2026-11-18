@@ -166,26 +166,6 @@ export class TreeView {
     }
   };
 
-  /** 行双击 → 编辑意图（caret/项数标/行操作按钮除外，避免与展开/操作冲突）。 */
-  private readonly onDblClickBound = (event: MouseEvent): void => {
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-    const rowEl = target.closest('.row') as HTMLElement | null;
-    if (!rowEl) return;
-    // 项数标同 caret：双击它只应是两次 toggle，不弹编辑层（#9）
-    if (
-      target.closest('.row__caret') ||
-      target.closest('.row__count') ||
-      target.closest('.row__actions')
-    ) {
-      return;
-    }
-    const path = rowEl.dataset.path;
-    if (!path || !this.opts.onEdit) return;
-    event.preventDefault();
-    this.opts.onEdit(path);
-  };
-
   /** 行右键 → 菜单意图；只接管行上的 contextmenu，空白区保留浏览器默认菜单。 */
   private readonly onContextMenuBound = (event: MouseEvent): void => {
     const target = event.target as HTMLElement | null;
@@ -240,7 +220,6 @@ export class TreeView {
     scroller.addEventListener('scroll', this.onScrollBound, { passive: true });
     scroller.addEventListener('click', this.onClickBound);
     scroller.addEventListener('keydown', this.onKeyDownBound);
-    scroller.addEventListener('dblclick', this.onDblClickBound);
     scroller.addEventListener('contextmenu', this.onContextMenuBound);
   }
 
@@ -429,7 +408,6 @@ export class TreeView {
       scroller.removeEventListener('scroll', this.onScrollBound);
       scroller.removeEventListener('click', this.onClickBound);
       scroller.removeEventListener('keydown', this.onKeyDownBound);
-      scroller.removeEventListener('dblclick', this.onDblClickBound);
       scroller.removeEventListener('contextmenu', this.onContextMenuBound);
       scroller.remove();
     }
