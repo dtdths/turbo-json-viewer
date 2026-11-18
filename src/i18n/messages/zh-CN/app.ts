@@ -189,6 +189,7 @@ export const app: Record<keyof AppMessages, Message> = {
   'app.toast.copyTooLarge': '子树过大（{size}），超过 5 MB，请用「导出」',
   'app.toast.formatUnsupported': '该节点不支持当前复制格式；可在设置里更换',
   'app.copy.format.subtree': '子树 JSON',
+  'app.copy.format.originPath': '原文档路径',
   'app.copy.format.path': '路径',
   'app.copy.format.value': '原始值',
   'app.copy.format.key': '键名',

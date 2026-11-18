@@ -31,6 +31,7 @@ const SHOTS = path.join(REPO_ROOT, '.spike', 'smoke');
 await mkdir(SHOTS, { recursive: true });
 
 /** 固定菜单契约（ADR-0010 §1 / 修订 2026-11-09 #22 / #30 ADR-0019 / #41 ADR-0024 修订）：11 项、DOM 顺序即此顺序。 */
+// 右键菜单固定 12 项（ADR-0010 修订 2026-11-18）
 const MENU_ACTS = [
   'copy-subtree',
   'copy-path',
@@ -559,6 +560,10 @@ const checks = {
     JSON.stringify(actsOf(report.containerMenu)) === JSON.stringify(MENU_ACTS) &&
     JSON.stringify(labelsOf(report.containerMenu)) === JSON.stringify(MENU_LABELS),
 
+  // #47 #8 / ADR-0027：doc 树里「复制原文档路径」常禁用并说明原因（只有表达式结果行可用）
+  'menu:origin-path-doc-disabled':
+    isDisabled(report.containerMenu, 'copy-origin-path') &&
+    String(item(report.containerMenu, 'copy-origin-path')?.title ?? '').includes('仅表达式结果可用'),
   'menu:container-value-disabled':
     isDisabled(report.containerMenu, 'copy-value') &&
     isEnabled(report.containerMenu, 'copy-key') &&

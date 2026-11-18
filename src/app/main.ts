@@ -1252,6 +1252,7 @@ function renderExpressionBar(stale = false): void {
 function backToDocTree(opts: { silent?: boolean } = {}): void {
   if (!exprViewActive) return;
   exprViewActive = false;
+  selectedOrigin = null;
   syncLocateRaw();
   expressionBar.hide();
   const saved = docSessionBeforeExpr;
@@ -1272,6 +1273,28 @@ function backToDocTree(opts: { silent?: boolean } = {}): void {
   setSelection(null);
   updateStatus();
   if (!opts.silent) focusTree();
+}
+
+/**
+ * 选中行的原文档路径缓存（#47 #8 / ADR-0027）：`WindowSnapshot.rows` 只是视口 ± overscan 的窗口，
+ * 选中行滚出窗口后 `find` 会 miss；状态栏不能因此从「$[3] ← $.data.items[2]」退回「$[3]」。
+ * 缓存只存 worker 回包里给的值，不自己算映射。
+ */
+let selectedOrigin: { rootId: string; path: string; origin: string | null } | null = null;
+
+/** 用当前窗口回包刷新选中行的原路径缓存（miss 时保留旧缓存；换根/离开表达式视图时由调用方清）。 */
+function refreshSelectedOrigin(): void {
+  if (!exprViewActive || !exprView || selected === null) {
+    selectedOrigin = null;
+    return;
+  }
+  if (selectedOrigin !== null && (selectedOrigin.path !== selected || selectedOrigin.rootId !== exprView.rootId)) {
+    selectedOrigin = null;
+  }
+  const row = rowSource.snapshot().rows.find((item) => item.path === selected);
+  if (row !== undefined && 'originPath' in row) {
+    selectedOrigin = { rootId: exprView.rootId, path: selected, origin: row.originPath ?? null };
+  }
 }
 
 /** 表达式结果行 → 原文档节点（点结果行；ADR-0018 §1/§4.3）。 */
@@ -1314,7 +1337,7 @@ async function buildExpressionExamples(): Promise<string[]> {
     const fields = items.filter((item) => item.kind === 'field');
     const picks: string[] = [];
     // 多条件筛选引导（#47 #7 / ADR-0027）：第一个数组字段给一条 filter(...) 示例——
-    // 多条件搜索不做自研 UI，表达式就是那条路；用 `typeof x === 'object'` 保证在任何数组上都可执行。
+    // 多条件搜索不做自研 UI，表达式就是那条路。谓词取 `x !== null`：对标量数组也不会得到 0 项（可执行性优先）。
     let filterExampleAdded = false;
     for (const field of fields) {
       if (picks.length >= EXPR_EXAMPLES_DOC) break;
@@ -1322,7 +1345,7 @@ async function buildExpressionExamples(): Promise<string[]> {
       const isArray = detail !== undefined && 'kind' in detail && detail.kind === 'array';
       if (isArray && !filterExampleAdded) {
         filterExampleAdded = true;
-        picks.push(`$.${field.label}.filter(x => typeof x === 'object')`);
+        picks.push(`$.${field.label}.filter(x => x !== null)`);
         continue;
       }
       picks.push(isArray ? `$.${field.label}.slice(0, 5)` : `$.${field.label}`);
@@ -2757,7 +2780,7 @@ async function copyOriginPathToClipboard(): Promise<void> {
   const origin = ctxOriginPath;
   if (!origin) return;
   const copied = await writeClipboard(origin);
-  if (copied) showToast(t('app.toast.copyDone', { what: t('app.menu.copyOriginPath') }), 2000, 'success');
+  if (copied) showToast(t('app.toast.copyDone', { what: t('app.copy.format.originPath') }), 2000, 'success');
   else showToast(t('app.toast.copyFailedManual'), 4000, 'error');
 }
 
@@ -2788,6 +2811,7 @@ async function writeClipboard(text: string): Promise<boolean> {
 
 function setSelection(path: string | null): void {
   selected = path;
+  refreshSelectedOrigin();
   tree.setSelected(path);
   // 大纲当前高亮唯一来源 = 树选中路径（ADR-0013 §4）
   outlineState.setSelected(path);
@@ -3672,9 +3696,10 @@ function updateStatus(): void {
   // 原路径随行窗口回包（`originPath` 字段），页面不自算映射；计算值显示「计算值」。
   if (exprViewActive && exprView) {
     if (selected) {
-      const originRow = rowSource.snapshot().rows.find((row) => row.path === selected);
-      if (originRow !== undefined && 'originPath' in originRow) {
-        const originText = originRow.originPath ?? t('app.status.exprComputed');
+      refreshSelectedOrigin();
+      const cached = selectedOrigin;
+      if (cached !== null && cached.path === selected && cached.rootId === exprView.rootId) {
+        const originText = cached.origin ?? t('app.status.exprComputed');
         statusPath.textContent = `${selected} ← ${originText}`;
         statusPath.title = statusPath.textContent;
       }

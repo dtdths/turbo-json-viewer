@@ -1815,6 +1815,33 @@ describe('DocService — 表达式行窗口的原文档路径（#47 #8）', () =
     expect(mappedRows.find((row) => row.path === '$[0]')?.originPath).toBeNull();
   });
 
+  it('标量结果根（$ 行）也映射回原路径：靠 origins.root 兜底', async () => {
+    const svc = new DocService();
+    const doc = await load(svc, '{"data":{"name":"x","items":[{"id":1}]}}');
+    const scalar = await evalOn(svc, doc.rootId, '$.data.name');
+    const win = await svc.dispatch({
+      t: 'window',
+      rootId: scalar,
+      rowVersion: 1,
+      seq: 1,
+      start: 0,
+      count: 5,
+    });
+    expect(rowsOf(win).find((row) => row.path === '$')?.originPath).toBe('$.data.name');
+
+    // 对象结果根（同一节点身份）同样映射
+    const objectRoot = await evalOn(svc, doc.rootId, '$.data.items[0]');
+    const win2 = await svc.dispatch({
+      t: 'window',
+      rootId: objectRoot,
+      rowVersion: 1,
+      seq: 2,
+      start: 0,
+      count: 5,
+    });
+    expect(rowsOf(win2).find((row) => row.path === '$')?.originPath).toBe('$.data.items[0]');
+  });
+
   it('doc 根的行窗口不带 originPath 字段（字段即「这是表达式结果」的判据）', async () => {
     const svc = new DocService();
     const doc = await load(svc, '{"a":1}');

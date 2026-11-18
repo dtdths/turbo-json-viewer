@@ -25,6 +25,11 @@ export interface EvalBudget {
 export interface EvalOrigins {
   top: (string | null)[] | Record<string, string | null>;
   objects: WeakMap<object, string>;
+  /**
+   * 结果根自己的文档来源路径（`Ev.p`；静态链 / 文档引用才有值，计算表达式为 `null`）。
+   * 标量结果根（如 `$.data.name`）没有对象身份，`objects` / `top` 都覆盖不到，靠它兜底（#47 #8 / ADR-0027）。
+   */
+  root: string | null;
 }
 
 /** 求值成功：结果是纯 JSON 值 + 预算标记（确定性：同输入同预算同结果）。 */

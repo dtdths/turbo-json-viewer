@@ -203,6 +203,7 @@ export const app = {
   'app.toast.copyTooLarge': 'Subtree too large ({size}), over 5 MB. Use “Export”.',
   'app.toast.formatUnsupported': 'This node does not support the current copy format; change it in settings',
   'app.copy.format.subtree': 'subtree JSON',
+  'app.copy.format.originPath': 'original path',
   'app.copy.format.path': 'path',
   'app.copy.format.value': 'raw value',
   'app.copy.format.key': 'key',

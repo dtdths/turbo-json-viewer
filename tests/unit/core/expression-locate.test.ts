@@ -41,10 +41,11 @@ function evaluate(text: string, doc: unknown = DOC, budgetOver: Partial<EvalBudg
 function makeOrigins(
   top: EvalOrigins['top'],
   entries: [object, string][],
+  root: string | null = null,
 ): EvalOrigins {
   const objects = new WeakMap<object, string>();
   for (const [key, value] of entries) objects.set(key, value);
-  return { top, objects };
+  return { top, objects, root };
 }
 
 /* ---------------------------- 从真实求值到 locate ---------------------------- */
@@ -210,5 +211,13 @@ describe('core/expression/locate — 纯函数白盒', () => {
     const origins = makeOrigins([], []);
     expect(locateOriginalPath({ a: 1 }, origins, '$.a')).toBe(null);
     expect(locateOriginalPath([1, 2], origins, '$[0]')).toBe(null);
+  });
+
+  // #47 #8 / ADR-0027：标量结果根没有对象身份，`objects` / `top` 都覆盖不到 → 靠 origins.root
+  it('标量结果根（$ 行）用 origins.root 兜底', () => {
+    const origins = makeOrigins([], [], '$.data.name');
+    expect(locateOriginalPath('hotel', origins, '$')).toBe('$.data.name');
+    // 没有 root 来源时仍是 null（计算值）
+    expect(locateOriginalPath('hotel', makeOrigins([], []), '$')).toBe(null);
   });
 });

@@ -77,6 +77,10 @@ export function locateOriginalPath(resultRoot: unknown, origins: EvalOrigins, re
     return null;
   }
 
+  // 结果根自己就是文档节点（`$` 行）：`objects` 只认容器身份、`top` 只覆盖第一段子项，
+  // 标量根（`$.data.name`）两边都覆盖不到 → 用求值时记下的 `origins.root` 兜底（#47 #8 / ADR-0027）。
+  if (segments.length === 0 && origins.root !== null && origins.root !== undefined) return origins.root;
+
   let current: unknown = resultRoot;
   let bestOrigin: string | null = null;
   let bestDepth = -1;

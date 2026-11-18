@@ -220,6 +220,8 @@ export class DomRowPool implements RowRenderer {
       // 隐藏槽位也清掉项数标的可点态（#9）：池复用后不会残留 title / is-clickable
       slot.count.className = 'row__count';
       slot.count.removeAttribute('title');
+      // 键名 title（#47 #4/#8：规范路径 / 原文档路径 / 计算值）同样不能在池里残留
+      slot.keyEl.removeAttribute('title');
       slot.preview.textContent = '';
       slot.type.textContent = '';
       if (this.selectedKey === slot.key) this.selectedKey = null;

@@ -1618,7 +1618,7 @@ export function runExpression(ast: unknown, docRoot: unknown, opts: EvaluateOpti
     steps: 0,
     truncated: false,
     skipped: 0,
-    origins: { top: [], objects: new WeakMap<object, string>() },
+    origins: { top: [], objects: new WeakMap<object, string>(), root: null },
   };
 
   try {
@@ -1661,7 +1661,7 @@ export function runExpression(ast: unknown, docRoot: unknown, opts: EvaluateOpti
       ms: machine.now() - machine.start,
       truncated: machine.truncated,
       skipped: machine.skipped,
-      origins: { top, objects: machine.origins.objects },
+      origins: { top, objects: machine.origins.objects, root: root.p ?? null },
     };
   } catch (err) {
     if (err instanceof EvalFailure) return { ok: false, error: err.error };
