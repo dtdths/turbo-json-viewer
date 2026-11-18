@@ -399,7 +399,23 @@ try {
         targetChecked: document.getElementById('targetReplace').checked,
       };
       document.getElementById('emptyClose').click();
-      await sleep(120);
+      // 关闭动效（#52 补齐「关」）：先挂 .is-leaving 淡出 110ms，逻辑上已关闭、指针穿透
+      const closeEl = document.getElementById('empty');
+      out.closeMotion = {
+        leaving: closeEl.classList.contains('is-leaving'),
+        hidden: closeEl.classList.contains('is-hidden'),
+        pointerEvents: getComputedStyle(closeEl).pointerEvents,
+        scrimName: getComputedStyle(closeEl).animationName,
+        cardName: getComputedStyle(document.getElementById('emptyInner')).animationName,
+      };
+      // 轮询到收尾（最多 400ms）：机器繁忙时不把 110ms 计时器当成断言目标
+      for (let i = 0; i < 40 && !closeEl.classList.contains('is-hidden'); i += 1) await sleep(10);
+      out.closeSettled = {
+        hidden: closeEl.classList.contains('is-hidden'),
+        leaving: closeEl.classList.contains('is-leaving'),
+        mode: closeEl.dataset.mode ?? null,
+        ariaHidden: closeEl.getAttribute('aria-hidden'),
+      };
       // #47 #2：满 8 时拖入文档正文 → 精简层「在新标签打开」禁用，焦点落「覆盖当前页」
       const f = new File([JSON.stringify({ name: 'cap-drop.json' })], 'cap-drop.json', { type: 'application/json' });
       const dt3 = new DataTransfer();
@@ -697,6 +713,17 @@ const checks = {
     report.bootMotion?.cardDuration === '0.16s',
   'entry:reduced-motion':
     report.reducedMotion?.scrim === 'none' && report.reducedMotion?.card === 'none',
+  // 关闭动效：淡出期间逻辑上已关闭（指针穿透 / 不可点），110ms 后落 is-hidden 并复位视图
+  'close:layer-motion':
+    report.closeMotion?.leaving === true &&
+    report.closeMotion?.hidden === false &&
+    report.closeMotion?.pointerEvents === 'none' &&
+    report.closeMotion?.scrimName === 'tjv-fade-out' &&
+    report.closeMotion?.cardName === 'tjv-sink-out' &&
+    report.closeSettled?.hidden === true &&
+    report.closeSettled?.leaving === false &&
+    report.closeSettled?.mode === 'initial' &&
+    report.closeSettled?.ariaHidden === null,
 
   // 单文档：标签条必须隐藏、零视觉变化
   'single:one-tab':

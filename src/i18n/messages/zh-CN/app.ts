@@ -98,7 +98,7 @@ export const app: Record<keyof AppMessages, Message> = {
   'app.empty.warn.before': '将替换当前文档 ',
   'app.empty.warn.after': '；原文件不受影响。',
   'app.empty.warnCurrent': '当前文档',
-  'app.empty.pending.import': '待导入：',
+  'app.empty.pending.import': '待导入',
   'app.empty.pending.newTab': '在新标签中打开',
   'app.empty.pending.replace': '替换当前文档',
   'app.empty.busy': '正在解析…',
@@ -110,6 +110,7 @@ export const app: Record<keyof AppMessages, Message> = {
   'app.empty.target': '导入位置',
   'app.empty.target.newTab': '新标签',
   'app.empty.target.replace': '替换当前',
+  'app.empty.target.hint': '只对本次导入生效',
   'app.empty.limitNotice': '{n} 个标签已满，本次导入会替换当前文档',
 
   /* ---------------- 编辑弹层 ---------------- */

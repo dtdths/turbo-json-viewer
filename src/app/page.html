@@ -211,32 +211,52 @@
     <button class="iconbtn empty__close" type="button" id="emptyClose" aria-label="Cancel import" data-i18n-attr="aria-label:app.empty.close" hidden>
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.6 4.6 6.8 6.8M11.4 4.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
     </button>
-    <h1 class="empty__title" id="emptyTitle">Drop in JSON and start viewing in milliseconds</h1>
-    <p class="empty__sub" id="emptySub">Local and read-only · no network · 50 MB documents stay resident in a Worker</p>
-    <!-- 导入落点（#47 #1）：完整导入层显式二选一；初始值 = 设置「导入位置」，改动只对本次生效。
-         单文档时标签条隐藏，这是开第 2 个标签的可见入口（⌘⇧O 同效） -->
-    <div class="empty__target" id="emptyTarget" role="radiogroup" aria-label="Import destination" data-i18n-attr="aria-label:app.empty.target" hidden>
-      <label class="empty__target-opt"><input type="radio" name="emptyTargetMode" id="targetNewTab" value="new-tab"><span data-i18n="app.empty.target.newTab">New tab</span></label>
-      <label class="empty__target-opt"><input type="radio" name="emptyTargetMode" id="targetReplace" value="replace"><span data-i18n="app.empty.target.replace">Replace current</span></label>
+    <div class="empty__head">
+      <h1 class="empty__title" id="emptyTitle">Drop in JSON and start viewing in milliseconds</h1>
+      <p class="empty__sub" id="emptySub">Local and read-only · no network · 50 MB documents stay resident in a Worker</p>
     </div>
-    <!-- 完整层提示（#47 #1.4）：标签已满时自动降为「替换」的说明 -->
-    <div class="empty__hint" id="emptyHint" role="status" hidden></div>
-    <div class="empty__warn" id="emptyWarn" hidden></div>
-    <div class="empty__error" id="emptyError" role="alert" hidden></div>
-    <!-- 精简确认层（#47 #2）：拖入文档正文 / 文档视图内 ⌘V 触发；无 dropzone、无 radio、无覆盖警示 -->
-    <div class="empty__pending" id="emptyPending" hidden>
-      <span id="emptyPendingText"></span>
-      <div class="empty__pending-actions">
-        <button class="btn" type="button" id="pendingNewTab" data-i18n="app.empty.pending.newTab">Open in a new tab</button>
-        <button class="btn btn--primary" type="button" id="pendingReplace" data-i18n="app.empty.pending.replace">Replace current document</button>
+    <div class="empty__body">
+      <!-- 导入落点（#47 #1）：完整导入层显式二选一；初始值 = 设置「导入位置」，改动只对本次生效。
+           控件与设置面板同一套分段控件（.segmented）；原生 radio 只做视觉隐藏，键盘/读屏语义保留。
+           单文档时标签条隐藏，这是开第 2 个标签的可见入口（⌘⇧O 同效） -->
+      <div class="empty__field" id="emptyTarget" hidden>
+        <span class="empty__field-label" id="emptyTargetLabel" data-i18n="app.empty.target">Import destination</span>
+        <div class="segmented empty__seg" role="radiogroup" aria-labelledby="emptyTargetLabel">
+          <label class="segmented__btn empty__seg-opt">
+            <input class="empty__seg-input" type="radio" name="emptyTargetMode" id="targetNewTab" value="new-tab">
+            <span data-i18n="app.empty.target.newTab">New tab</span>
+          </label>
+          <label class="segmented__btn empty__seg-opt">
+            <input class="empty__seg-input" type="radio" name="emptyTargetMode" id="targetReplace" value="replace">
+            <span data-i18n="app.empty.target.replace">Replace current</span>
+          </label>
+        </div>
+        <span class="empty__field-hint" data-i18n="app.empty.target.hint">Applies to this import only</span>
       </div>
-    </div>
-    <div class="empty__busy" id="emptyBusy" hidden data-i18n="app.empty.busy">Parsing…</div>
-    <!-- 拖放区只是放置目标：键盘入口是内层 #pickBtn（容器不再声明 button 语义，避免嵌套交互元素） -->
-    <div class="dropzone" id="dropzone">
-      <svg class="dropzone__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h6.2L18 7.8v12.7H7.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M13.7 3.5v4.3H18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-      <strong data-i18n="app.empty.dropzone">Drop a JSON file here</strong>
-      <span class="dropzone__hint"><span data-i18n="app.empty.or">or</span> <button class="linkbtn" type="button" id="pickBtn" data-i18n="app.empty.pick">choose a file</button> · <kbd>⌘V</kbd> <span data-i18n="app.empty.pasteHint">to paste from the clipboard</span></span>
+      <!-- 完整层提示（#47 #1.4）：标签已满时自动降为「替换」的说明 -->
+      <div class="empty__hint" id="emptyHint" role="status" hidden></div>
+      <div class="empty__warn" id="emptyWarn" hidden></div>
+      <div class="empty__error" id="emptyError" role="alert" hidden></div>
+      <!-- 精简确认层（#47 #2）：拖入文档正文 / 文档视图内 ⌘V 触发；无 dropzone、无落点控件、无覆盖警示 -->
+      <div class="empty__pending" id="emptyPending" hidden>
+        <div class="empty__pending-file">
+          <svg class="empty__pending-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 1.8h4.6L12.2 5.2v9H4.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8.7 1.8v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+          <span class="empty__pending-label" data-i18n="app.empty.pending.import">Import</span>
+          <span class="empty__pending-text" id="emptyPendingText"></span>
+        </div>
+        <!-- 动作右对齐：非破坏性的「新标签」是主按钮（焦点也在这里），替换当前文档是次按钮 -->
+        <div class="empty__pending-actions">
+          <button class="btn" type="button" id="pendingReplace" data-i18n="app.empty.pending.replace">Replace current document</button>
+          <button class="btn btn--primary" type="button" id="pendingNewTab" data-i18n="app.empty.pending.newTab">Open in a new tab</button>
+        </div>
+      </div>
+      <div class="empty__busy" id="emptyBusy" hidden data-i18n="app.empty.busy">Parsing…</div>
+      <!-- 拖放区只是放置目标：键盘入口是内层 #pickBtn（容器不再声明 button 语义，避免嵌套交互元素） -->
+      <div class="dropzone" id="dropzone">
+        <svg class="dropzone__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5h6.2L18 7.8v12.7H7.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M13.7 3.5v4.3H18" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <strong data-i18n="app.empty.dropzone">Drop a JSON file here</strong>
+        <span class="dropzone__hint"><span data-i18n="app.empty.or">or</span> <button class="linkbtn" type="button" id="pickBtn" data-i18n="app.empty.pick">choose a file</button> · <kbd>⌘V</kbd> <span data-i18n="app.empty.pasteHint">to paste from the clipboard</span></span>
+      </div>
     </div>
   </div>
 </section>

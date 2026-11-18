@@ -378,24 +378,46 @@ body.rail-collapsed .rail { display: none; }
   z-index: 30;
 }
 .empty.is-hidden { display: none; }
+/* 初始空态 = 居中英雄区；完整层 / 精简确认层 = 同一张卡的对话框形态（head / body 两段，对齐编辑弹层） */
 .empty__inner { width: min(620px, calc(100vw - 120px)); text-align: center; }
+.empty__head { text-align: center; }
 .empty__title { font-size: var(--text-display); letter-spacing: -0.02em; margin: 0 0 8px; }
 .empty__sub { color: var(--muted); margin: 0 0 26px; }
-/* 导入落点 radio（#47 #1）：完整导入层里的显式二选一；初始空态 / 精简确认层不显示 */
-.empty__target {
+.empty__body { display: flex; flex-direction: column; gap: 14px; }
+.empty__close { position: absolute; top: 10px; right: 10px; }
+
+/* 导入落点（#47 #1）：与设置面板同一套分段控件（.segmented）；
+   原生 radio 只做视觉隐藏，键盘 / 读屏 / 冒烟选择的语义不变 */
+.empty__field {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 18px;
-  margin: -12px 0 20px;
+  gap: 6px 10px;
   font-size: var(--text-small);
-  color: var(--text-2);
 }
-.empty__target[hidden] { display: none; }
-.empty__target-opt { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.empty__target-opt input { accent-color: var(--accent); margin: 0; }
+.empty__field[hidden] { display: none; }
+.empty__field-label { color: var(--text-2); }
+.empty__field-hint { color: var(--faint); font-size: var(--text-micro); }
+.empty__seg { flex: 0 0 auto; }
+.empty__seg-opt { position: relative; display: inline-flex; align-items: center; white-space: nowrap; }
+/* 与设置面板的分段控件同字号（--text-caption 12px；.segmented__btn 默认 small 13px） */
+.empty__seg .empty__seg-opt { font-size: var(--text-caption); }
+.empty__seg-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.empty__seg .empty__seg-opt:has(.empty__seg-input:checked) { background: var(--bg-selected); color: var(--accent); }
+.empty__seg .empty__seg-opt:has(.empty__seg-input:focus-visible) { box-shadow: var(--focus-ring); }
+.empty__seg .empty__seg-opt:has(.empty__seg-input:disabled) { opacity: 0.45; cursor: not-allowed; }
+.empty__seg .empty__seg-opt:has(.empty__seg-input:disabled):hover { background: transparent; color: var(--muted); }
 .empty__hint {
-  margin: 0 0 14px;
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
@@ -437,23 +459,42 @@ body[data-panel="settings"] .empty__inner {
 }
 .empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__inner {
   position: relative;
+  width: min(560px, calc(100vw - 120px));
   max-height: calc(100vh - 140px);
   overflow: auto;
-  padding: 26px 30px 30px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg, 10px);
   background: var(--bg-panel);
   box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, 0.35));
   text-align: left;
 }
-.empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__title { text-align: left; font-size: var(--text-display-sm); }
-.empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__sub { text-align: left; margin-bottom: 16px; }
-.empty__close { position: absolute; top: 8px; right: 8px; }
+/* 卡头：标题 / 副标题，一条发丝线把它和正文分开（右侧给关闭按钮让位） */
+.empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__head {
+  padding: 16px 46px 14px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+}
+.empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__sub {
+  margin: 5px 0 0;
+  font-size: var(--text-small);
+  line-height: 1.45;
+}
+/* 卡身：纵向排布，间距交给 gap（隐藏的块不占位，不会叠 margin） */
+.empty:is([data-mode="replace"], [data-mode="new-tab"], [data-mode="pending"]) .empty__body {
+  padding: 16px 20px 18px;
+}
 .empty__warn {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin: 0 0 16px;
   padding: 8px 10px;
   border: 1px solid var(--warn-border);
   border-radius: var(--radius-sm);
@@ -464,7 +505,6 @@ body[data-panel="settings"] .empty__inner {
 }
 .empty__warn b { color: var(--text); font-family: var(--font-mono); }
 .empty__error {
-  margin: 0 0 14px;
   padding: 8px 10px;
   border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
@@ -477,23 +517,40 @@ body[data-panel="settings"] .empty__inner {
   word-break: break-word;
   text-align: left;
 }
-.empty__pending {
+.empty__pending { display: flex; flex-direction: column; gap: 14px; }
+/* 待导入条目：一行「图标 + 待导入 + 名称 + 大小」，名称等宽、大小贴右缘 */
+.empty__pending-file {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  margin: 0 0 14px;
-  padding: 8px 10px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-panel-2);
   font-size: var(--text-small);
-  color: var(--text-2);
 }
-.empty__pending b { color: var(--text); font-family: var(--font-mono); }
-.empty__pending-actions { display: flex; justify-content: center; gap: 8px; }
-.empty__pending-actions .btn { min-width: 150px; }
-.empty__busy { margin: 0 0 12px; font-size: var(--text-small); color: var(--muted); }
+.empty__pending-icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--faint); }
+.empty__pending-label { flex: 0 0 auto; color: var(--muted); }
+.empty__pending-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.empty__pending-text strong {
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty__pending-size { margin-left: auto; flex: 0 0 auto; color: var(--faint); font-size: var(--text-micro); font-variant-numeric: tabular-nums; }
+.empty__pending-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.empty__busy { font-size: var(--text-small); color: var(--muted); }
 .empty.is-busy .dropzone { opacity: 0.6; pointer-events: none; }
 .empty.is-busy { cursor: progress; }
 .empty__warn[hidden],
@@ -501,10 +558,15 @@ body[data-panel="settings"] .empty__inner {
 .empty__pending[hidden],
 .empty__busy[hidden],
 .empty__close[hidden] { display: none; }
-.empty:is([data-mode="replace"], [data-mode="new-tab"]) .dropzone { min-height: 150px; }
-/* 精简确认层（#47 #2）：只留标题 + 待导入条目 + 两个动作；没有 dropzone / radio / 替换警示 */
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) .dropzone {
+  min-height: 128px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-panel-2);
+}
+.empty:is([data-mode="replace"], [data-mode="new-tab"]) .dropzone:hover { background: var(--bg-elevated); }
+/* 精简确认层（#47 #2）：只留标题 + 待导入条目 + 两个动作；没有 dropzone / 落点控件 / 替换警示 */
 .empty[data-mode="pending"] .empty__sub,
-.empty[data-mode="pending"] .empty__target,
+.empty[data-mode="pending"] .empty__field,
 .empty[data-mode="pending"] .empty__warn,
 .empty[data-mode="pending"] .dropzone { display: none; }
 
@@ -737,12 +799,13 @@ body[data-view="tree"] .raw-wrap { display: none; }
 .raw { flex: 1 1 auto; min-height: 0; display: flex; position: relative; overflow: hidden; }
 
 /* ==========================================================================
-   弹层入场动效（#52 / T4，#47 #9）：只做入场、只动 `opacity` / `transform`
-   - 遮罩与卡片 `--dur`(160ms) + `--ease-out`；菜单 `--dur-fast`(110ms) + `scale(.98)`
+   弹层开合动效（#52 / T4，#47 #9）：只动 `opacity` / `transform`（含长属性 translate / scale）
+   - 遮罩与卡片 `--dur`(160ms) + `--ease-out`；菜单 / 出场 `--dur-fast`(110ms)
    - 卡片用 `translate` 长属性上浮 4px：`.empty__inner` 在左面板打开时带 `transform:
      translateX(...)`（ADR-0016 §2.6），长属性与 `transform` 叠加，不会把它覆盖掉
    - 菜单的 `.is-entering` 由 `view/menu.ts` 在**定位之后**挂上（scale 会改变量到的尺寸）
-   - 只入场、不出场（关闭仍是原来的 `hidden` 瞬切，键盘/焦点归还语义不变）
+   - 入场在 `hidden` / `is-hidden` 解除时自动播；出场由 `.is-leaving` 触发（`app/main.ts`
+     挂类，110ms 后再落 `is-hidden`，见文件末「关闭动效」）
    ========================================================================== */
 
 @keyframes tjv-fade-in {
@@ -779,10 +842,38 @@ body[data-view="tree"] .raw-wrap { display: none; }
 /* toast：上滑 6px + 淡入（基态 transform 是居中 translateX(-50%)，关键帧里要带上） */
 .toast:not([hidden]) { animation: tjv-toast-in var(--dur) var(--ease-out) both; }
 
-/* 减少动态偏好（与 outline-panel / raw-view / tree 三处先例同口径）：全部 0ms */
+/* ==========================================================================
+   弹层关闭动效（补齐 #52 的「关」；入场见上）
+   - `.is-leaving` 由 `app/main.ts` 在关层时挂上：110ms 淡出 + 卡片轻沉 + 收 1.5% 缩放
+   - 期间**逻辑上已关闭**（`importLayerOpen()` = false）、指针穿透、焦点已归还；
+     110ms 后落 `is-hidden` 并复位视图——键盘 / 焦点 / 拖放语义不变
+   - `scale` 用长属性与 `transform: translateX(...)`（左面板居中）叠加，互不覆盖
+   ========================================================================== */
+
+@keyframes tjv-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes tjv-sink-out {
+  from { opacity: 1; translate: 0 0; scale: 1; }
+  to { opacity: 0; translate: 0 3px; scale: 0.985; }
+}
+
+.empty.is-leaving { animation: tjv-fade-out var(--dur-fast) var(--ease-out) both; pointer-events: none; }
+.empty.is-leaving .empty__inner { animation: tjv-sink-out var(--dur-fast) var(--ease-out) both; }
+
+/* 落点切换：覆盖警示只淡入一次（不改变布局，也不影响 hidden 的语义） */
+.empty__warn:not([hidden]) { animation: tjv-fade-in var(--dur-fast) var(--ease-out) both; }
+
+/* 减少动态偏好（与 outline-panel / raw-view / tree 三处先例同口径）：全部 0ms。
+   放在文件末尾，才能压过上面所有 `animation:` 规则（同特异性靠源码顺序） */
 @media (prefers-reduced-motion: reduce) {
   .empty:not(.is-hidden),
   .empty:not(.is-hidden) .empty__inner,
+  .empty.is-leaving,
+  .empty.is-leaving .empty__inner,
+  .empty__warn:not([hidden]),
   .ctxmenu.is-entering,
   .modal:not([hidden]) .modal__backdrop,
   .modal:not([hidden]) .modal__panel,

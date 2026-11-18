@@ -705,7 +705,7 @@ function enterEmptyState(): void {
   viewRawBtn.setAttribute('aria-pressed', 'false');
   // 导入层回初始空态
   resetImportLayerView();
-  empty.classList.remove('is-hidden');
+  showEmptyLayer();
   empty.classList.remove('is-busy');
   fileChip.hidden = true;
   setExportButtonsDisabled(true);
@@ -1516,7 +1516,8 @@ function importLayerBusy(): boolean {
 }
 
 function importLayerOpen(): boolean {
-  return !empty.classList.contains('is-hidden');
+  // 淡出中（`.is-leaving`）按已关闭处理：状态 / 快捷键 / 拖放看到的是关闭后的世界
+  return !empty.classList.contains('is-hidden') && !empty.classList.contains('is-leaving');
 }
 
 function importLayerMode(): ImportMode {
@@ -1560,8 +1561,9 @@ function clearPendingImport(): void {
 }
 
 /**
- * 精简确认层的条目文案 + 按钮可用态（#47 #2）：`Import: <b>name（size）</b>`。
- * 标签已满时「在新标签打开」禁用并说明原因，焦点会落到「覆盖当前页」。
+ * 精简确认层的条目：文件名（等宽 / 过长省略、悬停看全名）+ 大小（贴右缘微字）。
+ * 前置的「待导入」在 page.html 里走词条；标签已满时「在新标签打开」禁用并说明原因，
+ * 焦点会落到「替换当前文档」。
  */
 function renderPendingText(): void {
   const entry = pendingImport;
@@ -1572,10 +1574,13 @@ function renderPendingText(): void {
   emptyPending.hidden = false;
   const name = entry.kind === 'file' ? entry.file.name || 'document.json' : entry.name;
   const size = entry.kind === 'file' ? entry.file.size : new TextEncoder().encode(entry.text).length;
-  emptyPendingText.replaceChildren(
-    document.createTextNode(t('app.empty.pending.import')),
-    strongText(`${name}（${formatBytes(size)}）`),
-  );
+  const nameEl = document.createElement('strong');
+  nameEl.textContent = name;
+  nameEl.title = name;
+  const sizeEl = document.createElement('span');
+  sizeEl.className = 'empty__pending-size';
+  sizeEl.textContent = formatBytes(size);
+  emptyPendingText.replaceChildren(nameEl, sizeEl);
   pendingNewTab.disabled = !canOpenNewTab();
   pendingNewTab.title = pendingNewTab.disabled ? t('app.tabs.limit', { n: workspace.max }) : '';
   pendingReplace.disabled = false;
@@ -1647,8 +1652,8 @@ function openPendingLayer(entry: PendingImport): void {
   emptyClose.hidden = false;
   renderPendingText();
   setImportError(null);
-  empty.classList.remove('is-hidden');
-  // 焦点：优先「在新标签打开」（非破坏性）；标签已满时该按钮禁用，落到「覆盖当前页」
+  showEmptyLayer();
+  // 焦点：优先「在新标签打开」（非破坏性）；标签已满时该按钮禁用，落到「替换当前文档」
   (pendingNewTab.disabled ? pendingReplace : pendingNewTab).focus();
 }
 
@@ -1687,7 +1692,7 @@ function openImportLayer(target?: ImportTarget): boolean {
   resetImportLayerView();
   layerLimitNotice = limitFallback;
   applyImportLayerMode(mode);
-  empty.classList.remove('is-hidden');
+  showEmptyLayer();
   empty.setAttribute('role', 'dialog');
   empty.setAttribute('aria-modal', 'true');
   empty.setAttribute('aria-labelledby', 'emptyTitle');
@@ -1713,19 +1718,87 @@ function openNewTabLayer(): void {
   openImportLayer('new-tab');
 }
 
+/* ---------------- 导入层开合动效（#52：入场见 shell.css，这里补「关」） ---------------- */
+
+/** 关闭动效时长：与 `.empty.is-leaving` 的 `--dur-fast`（110ms）对齐。 */
+const EMPTY_EXIT_MS = 110;
+let emptyExitTimer: number | null = null;
+
+/** 与 CSS `prefers-reduced-motion: reduce` 同口径：层直接瞬切。 */
+function reducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** 撤掉进行中的关闭动效（重开层 / 复位时用；防止延时回调把新层藏掉）。 */
+function cancelEmptyExit(): void {
+  if (emptyExitTimer !== null) {
+    window.clearTimeout(emptyExitTimer);
+    emptyExitTimer = null;
+  }
+  if (empty.classList.contains('is-leaving')) {
+    empty.classList.remove('is-leaving');
+    empty.removeAttribute('aria-hidden');
+    empty.inert = false;
+  }
+}
+
+/** 关闭收尾：落到 `is-hidden` 并复位视图（文案 / 落点 / 错误区）。 */
+function settleEmptyHidden(): void {
+  if (emptyExitTimer !== null) {
+    window.clearTimeout(emptyExitTimer);
+    emptyExitTimer = null;
+  }
+  empty.classList.remove('is-leaving');
+  empty.classList.add('is-hidden');
+  empty.removeAttribute('aria-hidden');
+  empty.inert = false;
+  resetImportLayerView();
+}
+
+/**
+ * 显示导入层。`display: none` 解除时入场 keyframes 自动重播；若层正在淡出，
+ * 先撤掉 `.is-leaving` 再显示（动画名切换同样从头播）。
+ */
+function showEmptyLayer(): void {
+  cancelEmptyExit();
+  empty.inert = false;
+  empty.classList.remove('is-hidden');
+  empty.removeAttribute('aria-hidden');
+}
+
+/**
+ * 关上导入层（#52）：先 110ms 淡出再 `is-hidden`。
+ * 淡出期间按「已关闭」处理（`importLayerOpen()` = false、指针穿透、焦点已归还），
+ * ⌘V / Esc / 拖放 / 状态判断都不会与动效打架；重开时 `showEmptyLayer()` 会撤掉退场。
+ */
+function hideEmptyLayer(): void {
+  if (empty.classList.contains('is-hidden') || empty.classList.contains('is-leaving')) return;
+  // 焦点先归还（`aria-hidden` / `inert` 之前）：reduce 分支同样要还
+  if (empty.contains(document.activeElement)) {
+    (document.activeElement as HTMLElement).blur();
+  }
+  if (reducedMotion()) {
+    settleEmptyHidden();
+    return;
+  }
+  empty.classList.add('is-leaving');
+  empty.setAttribute('aria-hidden', 'true');
+  // 淡出期间整层不可聚焦（aria-hidden 里有可聚焦元素是违规），收尾 / 撤销时摘掉
+  empty.inert = true;
+  emptyExitTimer = window.setTimeout(settleEmptyHidden, EMPTY_EXIT_MS);
+}
+
 /** 取消入口层：丢弃在途导入回包，回到文档视图。 */
 function closeImportLayer(): void {
   if (!session.rootId || !importLayerOpen()) return;
   if (empty.classList.contains('is-busy')) loadSeq += 1;
-  empty.classList.add('is-hidden');
-  resetImportLayerView();
+  hideEmptyLayer();
   importBtn.focus();
 }
 
-/** 导入成功后隐藏入口层（初始空态、替换层或新标签层）。 */
+/** 导入成功后隐藏入口层（初始空态、替换层、新标签层或精简确认层）。 */
 function hideImportLayer(): void {
-  empty.classList.add('is-hidden');
-  resetImportLayerView();
+  hideEmptyLayer();
 }
 
 /* ---------------- import ---------------- */
@@ -1972,6 +2045,11 @@ fileChip.addEventListener('click', () => {
   else fileInput.click();
 });
 emptyClose.addEventListener('click', () => closeImportLayer());
+// 关闭动效收尾：淡出播完立即落 is-hidden（计时器只是兜底：后台标签页节流 / animation: none）
+empty.addEventListener('animationend', (event: AnimationEvent) => {
+  // 只认出场自己的关键帧：入场 animationend 不能把刚挂上的 `.is-leaving` 收掉
+  if (event.target === empty && event.animationName === 'tjv-fade-out') settleEmptyHidden();
+});
 // 落点 radio（#47 #1）：只改本次导入的形态，不写设置
 emptyTarget.addEventListener('change', () => {
   applyImportLayerMode(targetNewTab.checked ? 'new-tab' : 'replace');

@@ -104,7 +104,7 @@ export const app = {
   'app.empty.warn.before': 'This will replace the current document ',
   'app.empty.warn.after': '; the source file is untouched.',
   'app.empty.warnCurrent': 'Current document',
-  'app.empty.pending.import': 'Import: ',
+  'app.empty.pending.import': 'Import',
   'app.empty.pending.newTab': 'Open in a new tab',
   'app.empty.pending.replace': 'Replace current document',
   'app.empty.busy': 'Parsing…',
@@ -116,6 +116,7 @@ export const app = {
   'app.empty.target': 'Import destination',
   'app.empty.target.newTab': 'New tab',
   'app.empty.target.replace': 'Replace current',
+  'app.empty.target.hint': 'Applies to this import only',
   'app.empty.limitNotice': 'All {n} tabs are in use — this import will replace the current document',
 
   /* ---------------- 编辑弹层 ---------------- */

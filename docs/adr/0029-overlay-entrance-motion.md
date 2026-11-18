@@ -22,7 +22,7 @@
 | 子树编辑弹层（`.modal__backdrop` / `.modal__panel`） | 遮罩淡入；面板淡入 + 上浮 4px（同卡片） | `--dur` + `--ease-out` |
 | toast（`.toast`） | 上滑 6px + 淡入 | `--dur` + `--ease-out` |
 
-- **不出场**：关闭仍是原来的 `hidden` 瞬切。淡出会把「键盘/焦点归还 / 外部点击关闭」的时序拉长，且没有用户诉求。
+- **不出场**：关闭仍是原来的 `hidden` 瞬切。淡出会把「键盘/焦点归还 / 外部点击关闭」的时序拉长，且没有用户诉求。**（2026-11-18 修订：入口层 / 精简确认层补齐出场，见 ADR-0030；菜单 / 子树编辑弹层 / toast 维持只入场。）**
 - 卡片与面板的「上浮」用 **`translate` 长属性**（不是 `transform`）：`.empty__inner` 在左面板打开时带 `transform: translateX(calc(var(--left-panel-w)/2))`（ADR-0016 §2.6），长属性与 `transform` 叠加，不会把它覆盖掉。
 - toast 基态是 `transform: translateX(-50%)`（水平居中），关键帧里显式带上 `translateX(-50%)`，避免入场把居中顶掉。
 
@@ -32,7 +32,7 @@
 
 ### 3. `prefers-reduced-motion: reduce` 全部 0ms
 
-在 `shell.css` 末尾一个 `@media` 块里对上述选择器统一 `animation: none`（与三个既有先例同口径）。不开新设置项、不做「动效强度」档位。
+在 `shell.css` 末尾一个 `@media` 块里对上述选择器统一 `animation: none`（与三个既有先例同口径）。不开新设置项、不做「动效强度」档位。**（2026-11-18 修订：入场层 / 确认层的出场选择器 `tjv-fade-out` / `tjv-sink-out` 也并入同一块，块移到文件最末尾，才能靠源码顺序压过前面同特异性的 `animation:` 规则，见 ADR-0030 §4。）**
 
 ## 被否决的替代
 
