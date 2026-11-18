@@ -241,8 +241,8 @@ interface TabExtras {
   exprView: ExprViewState | null;
   /** 树的滚动位置（切回来时恢复，ADR-0009 §3「滚动锚点」） */
   scrollTopPx: number;
-  /** 搜索选项（Aa / .*）：与每标签 SearchState 的选项快照同源，切标签不串味（ADR-0014 §2.5） */
-  searchOpts: { caseSensitive: boolean; regex: boolean };
+  /** 搜索选项（Aa / .* / 全字）：与每标签 SearchState 的选项快照同源，切标签不串味（ADR-0014 §2.5） */
+  searchOpts: { caseSensitive: boolean; regex: boolean; wholeWord: boolean };
   /** 原文视图的滚动位置（切回来时恢复） */
   rawScrollTopPx: number;
   /** 双向定位的上次对照锚点（#30 / ADR-0019 §5）：内存、per-tab、不持久化 */
@@ -261,7 +261,7 @@ function extrasOf(tabId: string): TabExtras {
       exprView: null,
       scrollTopPx: 0,
       rawScrollTopPx: 0,
-      searchOpts: { caseSensitive: false, regex: false },
+      searchOpts: { caseSensitive: false, regex: false, wholeWord: false },
       anchor: null,
     };
     tabExtras.set(tabId, extras);
@@ -340,7 +340,11 @@ const rawView = new RawView(rawHost, {
 rawView.mount();
 
 /** 搜索面板的会话态选项（ADR-0014 §2.5：唯一真相在 app 层，不持久化，刷新回默认）。 */
-let searchOpts: { caseSensitive: boolean; regex: boolean } = { caseSensitive: false, regex: false };
+let searchOpts: { caseSensitive: boolean; regex: boolean; wholeWord: boolean } = {
+  caseSensitive: false,
+  regex: false,
+  wholeWord: false,
+};
 
 const searchPanel = new SearchPanel(searchHost, {
   onQueryChange: (query: string) => queueSearch(query),
@@ -367,6 +371,13 @@ const searchPanel = new SearchPanel(searchHost, {
     searchOpts = { ...opts };
     window.clearTimeout(searchTimer);
     void runSearch(searchPanel.currentQuery());
+  },
+  // 逐条隐藏 / 全部恢复（#53）：隐藏集在 viewmodel（每标签独立、不落盘），这里只负责落地
+  onHideResult: (path) => {
+    hideSearchHit(path);
+  },
+  onRestoreHidden: () => {
+    restoreHiddenHits();
   },
 });
 searchPanel.mount();
@@ -684,7 +695,7 @@ function enterEmptyState(): void {
   tree.setSearch(null);
   tree.setSelected(null);
   rawView.scrollToPx(0);
-  searchOpts = { caseSensitive: false, regex: false };
+  searchOpts = { caseSensitive: false, regex: false, wholeWord: false };
   resetSearch();
   outlineState.close();
   document.body.dataset.view = 'tree';
@@ -1795,7 +1806,7 @@ function resetTabStateForNewDoc(tab: TabState): void {
   extras.exprView = null;
   extras.scrollTopPx = 0;
   extras.rawScrollTopPx = 0;
-  extras.searchOpts = { caseSensitive: false, regex: false };
+  extras.searchOpts = { caseSensitive: false, regex: false, wholeWord: false };
   extras.anchor = null;
   rawOpenSeq += 1;
   fidelitySeq += 1;
@@ -2993,6 +3004,7 @@ function applySearchToTree(): void {
   }
   tree.setSearch({
     term: searchState.query,
+    wholeWord: searchState.wholeWord,
     hitPaths: searchState.hitPaths(),
     currentPath: searchState.currentHit()?.path ?? null,
   });
@@ -3009,6 +3021,31 @@ function applyFilter(filter: SearchFilter): void {
   renderSearch();
   const current = searchState.current;
   if (current >= 0) searchPanel.scrollTo(current);
+}
+
+/**
+ * 逐条隐藏当前标签的一条命中（#53）。隐藏是**视图状态**：树高亮、chips、`⌘G` 全部按可见集走。
+ * `searchJumped = false`：当前命中可能换人，下一次 ⌘G 应跳新的当前项而不是再往前。
+ */
+function hideSearchHit(path: string): boolean {
+  if (!searchState.hide(path)) return false;
+  afterHiddenChanged();
+  return true;
+}
+
+/** 「全部恢复」（#53）：清空隐藏集，尽量回到原来那条命中。 */
+function restoreHiddenHits(): boolean {
+  if (!searchState.restoreHidden()) return false;
+  afterHiddenChanged();
+  return true;
+}
+
+/** 隐藏集变化后的视图收尾（树高亮 / 面板 / 当前项滚入视口；⌘G 从新的当前项重新开始）。 */
+function afterHiddenChanged(): void {
+  searchJumped = false;
+  applySearchToTree();
+  renderSearch();
+  if (searchState.current >= 0) searchPanel.scrollTo(searchState.current);
 }
 
 /**
@@ -3832,6 +3869,8 @@ function buildDevHookDeps(): DevHookDeps {
       gotoHit,
       applyFilter,
       markSearchStale,
+      searchHide: hideSearchHit,
+      searchRestoreHidden: restoreHiddenHits,
       setPanel: (panel) => {
         if (panel !== 'none') setPanel(panel);
       },

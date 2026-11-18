@@ -482,12 +482,16 @@ describe('SearchState — view / contentHeight / window', () => {
       hits: state.hits,
       counts: { all: 2, key: 1, value: 1, path: 0 },
       total: 2,
+      visibleTotal: 2,
+      hiddenCount: 0,
+      hiddenCounts: { all: 0, key: 0, value: 0, path: 0 },
       size: 2,
       current: 0,
       filter: 'all',
       truncated: false,
       caseSensitive: false,
       regex: false,
+      wholeWord: false,
       patternError: null,
     });
 
@@ -721,5 +725,142 @@ describe('SearchState — markPatternError（ADR-0014 §2.3）', () => {
     expect(state.apply(makeReply(staleSeq, { hits: makeHits('$.a'), total: 1 }), 1)).toBe(false);
     expect(state.patternError).toBe('正则语法错误：x');
     expect(state.view().phase).toBe('idle');
+  });
+});
+
+describe('SearchState — 结果逐条隐藏（#53）', () => {
+  it('hide(path)：从可见列表与计数里移除，hiddenCount / visibleTotal 同步', () => {
+    const { state } = readyState(makeHits(['$.a', 'key'], ['$.b', 'value'], ['$.c', 'key']));
+    expect(state.hide('$.b')).toBe(true);
+    expect(state.allHits).toHaveLength(3); // 原命中集保留（可恢复）
+    expect(state.hits.map((hit) => hit.path)).toEqual(['$.a', '$.c']);
+    expect(state.counts).toEqual({ all: 2, key: 2, value: 0, path: 0 });
+    expect(state.hiddenCount).toBe(1);
+    expect(state.visibleTotal).toBe(2);
+    expect(state.view().hiddenCount).toBe(1);
+    expect(state.view().visibleTotal).toBe(2);
+  });
+
+  it('重复隐藏 / 空 path → false（幂等）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b'));
+    expect(state.hide('$.a')).toBe(true);
+    expect(state.hide('$.a')).toBe(false);
+    expect(state.hide('')).toBe(false);
+    expect(state.hiddenCount).toBe(1);
+  });
+
+  it('隐藏当前命中 → 选中同一下标的下一条可见（末尾则最后一条）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b', '$.c'));
+    state.select(1); // $.b
+    state.hide('$.b');
+    expect(state.currentHit()?.path).toBe('$.c');
+    state.select(1); // $.c（当前最后一条）
+    state.hide('$.c');
+    expect(state.currentHit()?.path).toBe('$.a');
+  });
+
+  it('隐藏当前项之前的项 → current 跟着前移，仍停在同一节点', () => {
+    const { state } = readyState(makeHits('$.a', '$.b', '$.c'));
+    state.select(2); // $.c
+    state.hide('$.a');
+    expect(state.currentHit()?.path).toBe('$.c');
+    expect(state.current).toBe(1);
+  });
+
+  it('隐藏最后一条当前命中 → 环回第一条可见（「下一条」）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b', '$.c'));
+    state.select(2); // $.c
+    state.hide('$.c');
+    expect(state.currentHit()?.path).toBe('$.a');
+  });
+
+  it('隐藏不在命中集里的 path → false（不改计数口径）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b'));
+    expect(state.hide('$.nope')).toBe(false);
+    expect(state.hiddenCount).toBe(0);
+    expect(state.view().visibleTotal).toBe(state.counts.all);
+  });
+
+  it('隐藏全部 → size=0、current=-1；恢复后回到首条', () => {
+    const { state } = readyState(makeHits('$.a', '$.b'));
+    state.hide('$.a');
+    state.hide('$.b');
+    expect(state.size).toBe(0);
+    expect(state.current).toBe(-1);
+    expect(state.visibleTotal).toBe(0);
+    expect(state.counts).toEqual({ all: 0, key: 0, value: 0, path: 0 });
+    expect(state.restoreHidden()).toBe(true);
+    expect(state.hits).toHaveLength(2);
+    expect(state.current).toBe(0);
+    expect(state.hiddenCount).toBe(0);
+  });
+
+  it('restoreHidden：尽量保持当前命中（按 path）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b', '$.c'));
+    state.select(1); // $.b
+    state.hide('$.a');
+    state.restoreHidden();
+    expect(state.currentHit()?.path).toBe('$.b');
+  });
+
+  it('恢复一个都没有时返回 false', () => {
+    const { state } = readyState(makeHits('$.a'));
+    expect(state.restoreHidden()).toBe(false);
+  });
+
+  it('hiddenCounts：隐藏命中的 field 分布（区分「本来没命中」与「被隐藏光了」）', () => {
+    const { state } = readyState(makeHits(['$.a', 'key'], ['$.b', 'value'], ['$.c', 'key']));
+    state.hide('$.b');
+    expect(state.view().hiddenCounts).toEqual({ all: 1, key: 0, value: 1, path: 0 });
+    state.hide('$.a');
+    expect(state.view().hiddenCounts).toEqual({ all: 2, key: 1, value: 1, path: 0 });
+  });
+
+  it('filter 切换保留隐藏集；counts 与 size 都按可见集算', () => {
+    const { state } = readyState(makeHits(['$.a', 'key'], ['$.b', 'value'], ['$.c', 'key']));
+    state.hide('$.b');
+    state.setFilter('key');
+    expect(state.hits.map((hit) => hit.path)).toEqual(['$.a', '$.c']);
+    expect(state.counts.all).toBe(2); // key 档计数也是可见集口径
+    state.setFilter('value');
+    expect(state.size).toBe(0);
+    state.setFilter('all');
+    expect(state.size).toBe(2);
+  });
+
+  it('被隐藏的 path 不参与 hitPaths（树不标已隐藏的命中）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b'));
+    state.hide('$.a');
+    expect([...state.hitPaths()]).toEqual(['$.b']);
+  });
+
+  it('新搜索 begin() 清空隐藏集（不跨轮次累积）', () => {
+    const { state } = readyState(makeHits('$.a', '$.b'));
+    state.hide('$.a');
+    expect(state.hiddenCount).toBe(1);
+    const seq = state.begin('hotel');
+    state.apply(makeReply(seq, { hits: makeHits('$.a', '$.b'), total: 2 }), 1);
+    expect(state.hiddenCount).toBe(0);
+    expect(state.hits).toHaveLength(2);
+  });
+
+  it('clear / markStale 清空隐藏集', () => {
+    const { state } = readyState(makeHits('$.a'));
+    state.hide('$.a');
+    state.markStale();
+    expect(state.hiddenCount).toBe(0);
+    const second = readyState(makeHits('$.a')).state;
+    second.hide('$.a');
+    second.clear();
+    expect(second.hiddenCount).toBe(0);
+  });
+
+  it('begin() 快照 wholeWord，view 回填', () => {
+    const state = new SearchState();
+    state.begin('hotel', { wholeWord: true });
+    expect(state.wholeWord).toBe(true);
+    expect(state.view().wholeWord).toBe(true);
+    state.begin('hotel');
+    expect(state.view().wholeWord).toBe(false);
   });
 });

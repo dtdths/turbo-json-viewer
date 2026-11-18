@@ -7,10 +7,14 @@
  *   - 结果列表虚拟化：固定 44px 行、spacer = size × 44、窗口由 viewmodel 的
  *     `computeResultWindow` 计算；行节点池复用，滚动只重画窗口。
  *
- * 搜索选项（ADR-0014 §2.1）：查询框右侧两个真实 `<button>`——`Aa`（区分大小写）与
- * `.*`（正则），`aria-pressed` 反映状态、Tab 顺序在查询框之后；点击只回调
+ * 搜索选项（ADR-0014 §2.1）：查询框右侧三个真实 `<button>`——`Aa`（区分大小写）、`.*`（正则）、
+ * `\b`（全字匹配， #53），`aria-pressed` 反映状态、Tab 顺序在查询框之后；点击只回调
  * `onOptionsChange`，**不发协议请求**。正则错误（`view.patternError`）只渲染成查询行
  * 下方的 `role="alert"` 内联错误行，并把输入框标 `aria-invalid`。
+ *
+ * 结果逐条隐藏（#53）：行尾 `×` 是 `<span aria-hidden>`（行本身是 `<button>`，不能再嵌
+ * button），hover / 行聚焦时出现；键盘等价 = 行聚焦时按 `Delete`。隐藏按 path、不级联；
+ * 计数（`可见/总`、四档 chips）与树高亮都按可见集，底栏出现「已隐藏 M 条 · 全部恢复」。
  *
  * 硬约束：全部文本走 textContent / createElement / replaceChildren，**禁 innerHTML**。
  * DOM 契约（§3.1）的 class / id 由 app 与 smoke 脚本依赖，不要改名。
@@ -39,8 +43,12 @@ export interface SearchPanelOptions {
   onNext(): void;
   /** 输入框 Enter */
   onSubmit(): void;
-  /** `Aa` / `.*` 切换；app 负责快照重跑当前查询（面板只回调，不发命令） */
-  onOptionsChange?(opts: { caseSensitive: boolean; regex: boolean }): void;
+  /** `Aa` / `.*` / `\b` 切换；app 负责快照重跑当前查询（面板只回调，不发命令） */
+  onOptionsChange?(opts: { caseSensitive: boolean; regex: boolean; wholeWord: boolean }): void;
+  /** 逐条隐藏一条结果（#53；path 由行上的 data-path 给，app 写进 SearchState） */
+  onHideResult?(path: string): void;
+  /** 「全部恢复」被隐藏的结果（#53） */
+  onRestoreHidden?(): void;
 }
 
 /* ---------------- 常量文案（全部在渲染时按当前 locale 取词条） ---------------- */
@@ -143,12 +151,13 @@ function createChevronIcon(up: boolean): SVGSVGElement {
  * 匹配由 shared/highlight 计算、DOM 写入由 view/highlight 统一承担（下标基于原串，全部走 textContent）。
  * 路径（key）与值预览共用本函数。
  */
-function writeHighlighted(el: HTMLElement, text: string, term: string): void {
-  writeMarkedText(el, text, term, 'result__hit');
+function writeHighlighted(el: HTMLElement, text: string, term: string, wholeWord: boolean): void {
+  writeMarkedText(el, text, term, 'result__hit', { wholeWord });
 }
 
 interface ResultSlot {
   readonly el: HTMLButtonElement;
+  readonly hideEl: HTMLSpanElement;
   readonly pathEl: HTMLSpanElement;
   readonly fieldEl: HTMLSpanElement;
   readonly valueEl: HTMLSpanElement;
@@ -174,10 +183,12 @@ export class SearchPanel {
   private optsEl!: HTMLElement;
   private caseBtn!: HTMLButtonElement;
   private regexBtn!: HTMLButtonElement;
+  private wholeWordBtn!: HTMLButtonElement;
   private errorEl!: HTMLElement;
   /** 面板侧乐观态：点击即翻转，下一次 render 由 viewmodel 快照回填为准 */
   private caseSensitiveOn = false;
   private regexOn = false;
+  private wholeWordOn = false;
   private countValue!: HTMLElement;
   private prevBtn!: HTMLButtonElement;
   private nextBtn!: HTMLButtonElement;
@@ -197,6 +208,12 @@ export class SearchPanel {
   private footRendered!: HTMLElement;
   private footTotal!: HTMLElement;
   private footTruncated!: HTMLElement;
+  private footInfo!: HTMLElement;
+  private footHidden!: HTMLElement;
+  private footHiddenText!: HTMLElement;
+  private footRestore!: HTMLButtonElement;
+  /** 底栏「已隐藏 M 条」当前渲染的 M（-1 = 未渲染；只在变化时重建，避免每帧重建按钮） */
+  private footHiddenRendered = -1;
   /** 底栏前缀文本节点（`虚拟滚动 · 已渲染 `），relabel 时改文本 */
   private footPrefixNode: Text | null = null;
 
@@ -258,7 +275,15 @@ export class SearchPanel {
     this.regexBtn.setAttribute('aria-pressed', 'false');
     this.regexBtn.title = t('view.search.regex.title');
 
-    this.optsEl.append(this.caseBtn, this.regexBtn);
+    this.wholeWordBtn = el('button', 'csearch__toggle');
+    this.wholeWordBtn.id = 'searchWholeWord';
+    this.wholeWordBtn.type = 'button';
+    this.wholeWordBtn.textContent = '\\b';
+    this.wholeWordBtn.setAttribute('aria-label', t('view.search.wholeWord.label'));
+    this.wholeWordBtn.setAttribute('aria-pressed', 'false');
+    this.wholeWordBtn.title = t('view.search.wholeWord.title');
+
+    this.optsEl.append(this.caseBtn, this.regexBtn, this.wholeWordBtn);
     box.appendChild(this.optsEl);
 
     const countEl = el('span', 'csearch__count');
@@ -338,6 +363,7 @@ export class SearchPanel {
     this.footEl = el('div', 'results__foot');
     this.footEl.id = 'resultsFoot';
     this.footEl.hidden = true;
+    this.footInfo = el('span', 'results__footinfo');
     this.footRendered = el('span');
     this.footRendered.id = 'resultsRendered';
     this.footRendered.textContent = '0';
@@ -348,13 +374,23 @@ export class SearchPanel {
     this.footTruncated.textContent = '';
     this.footTruncated.hidden = true;
     this.footPrefixNode = document.createTextNode(t('view.search.foot.prefix'));
-    this.footEl.append(
+    this.footInfo.append(
       this.footPrefixNode,
       this.footRendered,
       document.createTextNode(' / '),
       this.footTotal,
       this.footTruncated,
     );
+    // 已隐藏 M 条 · 全部恢复（#53）：内容按需重建（hidden 时清空，footText 不残留）
+    this.footHidden = el('span', 'results__hidden');
+    this.footHidden.id = 'resultsHidden';
+    this.footHidden.hidden = true;
+    this.footHiddenText = el('span', 'results__hidden-text');
+    this.footRestore = el('button', 'results__restore');
+    this.footRestore.type = 'button';
+    this.footRestore.id = 'resultsRestore';
+    this.footHidden.append(this.footHiddenText, this.footRestore);
+    this.footEl.append(this.footInfo, this.footHidden);
 
     this.host.append(csearch, this.filtersEl, this.scroller, this.footEl);
 
@@ -375,6 +411,9 @@ export class SearchPanel {
     this.filtersEl.addEventListener('click', this.handleFiltersClick);
     this.windowEl.addEventListener('click', this.handleRowClick);
     this.windowEl.addEventListener('dblclick', this.handleRowDblClick);
+    // 挂在 scroller 上：行（windowEl 内）与列表自身（scroller）的 Delete 都要能收到
+    this.scroller.addEventListener('keydown', this.handleRowKeydown);
+    this.footRestore.addEventListener('click', this.handleRestoreHidden);
 
     this.resizeObserver = new ResizeObserver(() => this.drawWindow());
     this.resizeObserver.observe(this.scroller);
@@ -393,6 +432,9 @@ export class SearchPanel {
     this.caseBtn.title = t('view.search.case.title');
     this.regexBtn.setAttribute('aria-label', t('view.search.regex.label'));
     this.regexBtn.title = t('view.search.regex.title');
+    this.wholeWordBtn.setAttribute('aria-label', t('view.search.wholeWord.label'));
+    this.wholeWordBtn.title = t('view.search.wholeWord.title');
+    this.footHiddenRendered = -1;
     this.prevBtn.setAttribute('aria-label', t('view.search.prev.label'));
     this.prevBtn.title = t('view.search.prev.title');
     this.nextBtn.setAttribute('aria-label', t('view.search.next.label'));
@@ -400,6 +442,10 @@ export class SearchPanel {
     this.filtersEl.setAttribute('aria-label', t('view.search.filters.label'));
     this.scroller.setAttribute('aria-label', t('view.search.list.label'));
     for (const [filter, node] of this.filterLabelNodes) node.textContent = filterLabel(filter);
+    for (const slot of this.slots) {
+      slot.hideEl.title = t('view.search.hide.title');
+      slot.el.setAttribute('aria-keyshortcuts', 'Delete');
+    }
     if (this.footPrefixNode) this.footPrefixNode.textContent = t('view.search.foot.prefix');
     if (this.view) this.render(this.view);
   }
@@ -514,6 +560,8 @@ export class SearchPanel {
     this.filtersEl.removeEventListener('click', this.handleFiltersClick);
     this.windowEl.removeEventListener('click', this.handleRowClick);
     this.windowEl.removeEventListener('dblclick', this.handleRowDblClick);
+    this.scroller.removeEventListener('keydown', this.handleRowKeydown);
+    this.footRestore.removeEventListener('click', this.handleRestoreHidden);
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.slots.length = 0;
@@ -538,8 +586,10 @@ export class SearchPanel {
   private updateOptionToggles(view: SearchPanelView): void {
     this.caseSensitiveOn = view.caseSensitive;
     this.regexOn = view.regex;
+    this.wholeWordOn = view.wholeWord;
     this.syncToggle(this.caseBtn, view.caseSensitive);
     this.syncToggle(this.regexBtn, view.regex);
+    this.syncToggle(this.wholeWordBtn, view.wholeWord);
   }
 
   private syncToggle(button: HTMLButtonElement, on: boolean): void {
@@ -562,7 +612,10 @@ export class SearchPanel {
   }
 
   private updateHeader(view: SearchPanelView): void {
-    this.countValue.textContent = view.truncated ? truncatedCountText() : formatCount(view.total);
+    // 有隐藏时头部显示「可见/总」（#53）；没有隐藏时维持原来的单个总数（少一点噪音）
+    const totalText = view.truncated ? truncatedCountText() : formatCount(view.total);
+    this.countValue.textContent =
+      view.hiddenCount > 0 ? `${formatCount(view.visibleTotal)}/${totalText}` : totalText;
 
     const pos = view.current >= 0 ? formatCount(view.current + 1) : '0';
     this.posEl.textContent = `${pos} / ${formatCount(view.size)}`;
@@ -587,7 +640,15 @@ export class SearchPanel {
     else if (view.phase === 'searching') text = t('view.search.empty.searching');
     else if (view.phase === 'stale') text = t('view.search.empty.stale');
     else if (view.phase === 'ready' && view.size === 0) {
-      text = t('view.search.empty.noHits', { query: view.query });
+      // 全是隐藏（#53）时别说「没有命中」——命中在，只是被用户逐条收起了
+      if (view.hiddenCount > 0 && view.visibleTotal === 0) text = t('view.search.empty.allHidden');
+      else if (
+        view.filter !== 'all' &&
+        view.counts[view.filter] === 0 &&
+        view.hiddenCounts[view.filter] > 0 // 该档本来有命中、只是被隐藏光了
+      ) {
+        text = t('view.search.empty.filteredHidden', { n: view.hiddenCount });
+      } else text = t('view.search.empty.noHits', { query: view.query });
     }
 
     if (text === null) {
@@ -601,20 +662,39 @@ export class SearchPanel {
   }
 
   private updateFoot(view: SearchPanelView): void {
+    // 结果全被隐藏时底栏仍要露出「全部恢复」（#53）
+    const showFoot = view.size > 0 || view.hiddenCount > 0;
+    this.footEl.hidden = !showFoot;
+    this.footInfo.hidden = view.size === 0;
     if (view.size === 0) {
-      this.footEl.hidden = true;
       this.footRendered.textContent = '0';
       this.footTotal.textContent = '0';
       this.footTruncated.hidden = true;
       this.footTruncated.textContent = '';
+    } else {
+      this.footRendered.textContent = formatCount(this.rendered);
+      this.footTotal.textContent = formatCount(view.size);
+      this.footTruncated.hidden = !view.truncated;
+      // 带前导空格直接写进 truncate span，保证未截断时 foot.textContent 以数字结尾（无尾随空格）
+      this.footTruncated.textContent = view.truncated ? ` ${truncatedHint()}` : '';
+    }
+    this.renderHiddenCount(view.hiddenCount);
+  }
+
+  /** 底栏「已隐藏 M 条 · 全部恢复」：只在 M 变化时重建内容（按钮不每帧重建/失焦）。 */
+  private renderHiddenCount(count: number): void {
+    if (count === this.footHiddenRendered) return;
+    this.footHiddenRendered = count;
+    if (count <= 0) {
+      this.footHidden.hidden = true;
+      this.footHiddenText.textContent = '';
+      // 按钮文案也清掉：hidden 元素仍会被 textContent 读到，别污染 footText
+      this.footRestore.textContent = '';
       return;
     }
-    this.footEl.hidden = false;
-    this.footRendered.textContent = formatCount(this.rendered);
-    this.footTotal.textContent = formatCount(view.size);
-    this.footTruncated.hidden = !view.truncated;
-    // 带前导空格直接写进 truncate span，保证未截断时 foot.textContent 以数字结尾（无尾随空格）
-    this.footTruncated.textContent = view.truncated ? ` ${truncatedHint()}` : '';
+    this.footHiddenText.textContent = t('view.search.hidden.count', { n: count });
+    this.footRestore.textContent = t('view.search.hidden.restore');
+    this.footHidden.hidden = false;
   }
 
   /** 只重画可见窗口：spacer 撑出总高度，窗口内行节点池复用。 */
@@ -656,8 +736,8 @@ export class SearchPanel {
       slot.el.classList.toggle('is-selected', selected);
       slot.el.setAttribute('aria-selected', selected ? 'true' : 'false');
 
-      writeHighlighted(slot.pathEl, hit.path, term);
-      writeHighlighted(slot.valueEl, hit.preview, term);
+      writeHighlighted(slot.pathEl, hit.path, term, view.wholeWord);
+      writeHighlighted(slot.valueEl, hit.preview, term, view.wholeWord);
       slot.fieldEl.textContent = fieldLabel(hit.field);
       slot.kindEl.textContent = hit.kind;
       used++;
@@ -682,10 +762,17 @@ export class SearchPanel {
       const valueEl = el('span', 'result__value');
       const kindEl = el('span', 'result__kind');
       meta.append(fieldEl, valueEl, kindEl);
-      elBtn.append(pathEl, meta);
+      // 行尾 ×（#53）：行本身是 <button>，这里只能是 span（aria-hidden）+ 行聚焦 Delete 等价
+      const hideEl = el('span', 'result__hide');
+      hideEl.setAttribute('aria-hidden', 'true');
+      hideEl.title = t('view.search.hide.title');
+      hideEl.textContent = '×';
+      // 行不可 Tab 聚焦（listbox 模式），把键盘等价挂到行上供读屏/快捷键发现
+      elBtn.setAttribute('aria-keyshortcuts', 'Delete');
+      elBtn.append(pathEl, meta, hideEl);
 
       this.windowEl.appendChild(elBtn);
-      this.slots.push({ el: elBtn, pathEl, fieldEl, valueEl, kindEl, index: -1, visible: false });
+      this.slots.push({ el: elBtn, hideEl, pathEl, fieldEl, valueEl, kindEl, index: -1, visible: false });
     }
   }
 
@@ -741,11 +828,14 @@ export class SearchPanel {
     const next = {
       caseSensitive: button === this.caseBtn ? !this.caseSensitiveOn : this.caseSensitiveOn,
       regex: button === this.regexBtn ? !this.regexOn : this.regexOn,
+      wholeWord: button === this.wholeWordBtn ? !this.wholeWordOn : this.wholeWordOn,
     };
     this.caseSensitiveOn = next.caseSensitive;
     this.regexOn = next.regex;
+    this.wholeWordOn = next.wholeWord;
     this.syncToggle(this.caseBtn, next.caseSensitive);
     this.syncToggle(this.regexBtn, next.regex);
+    this.syncToggle(this.wholeWordBtn, next.wholeWord);
     this.opts.onOptionsChange?.(next);
   };
 
@@ -766,6 +856,16 @@ export class SearchPanel {
     if (event.detail > 1) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    // 行尾 ×（#53）：隐藏该条，不触发跳转
+    const hideEl = target.closest('.result__hide');
+    if (hideEl) {
+      const owner = hideEl.closest('.result');
+      if (owner instanceof HTMLButtonElement && owner.dataset.path) {
+        event.preventDefault();
+        this.hideRow(owner.dataset.path);
+      }
+      return;
+    }
     const row = target.closest('.result');
     if (!(row instanceof HTMLButtonElement)) return;
     const index = Number(row.dataset.index);
@@ -782,5 +882,34 @@ export class SearchPanel {
     const hitPath = row.dataset.path;
     if (!hitPath) return;
     this.opts.onCopyResult?.(hitPath);
+  };
+
+  /** 逐条隐藏（#53）：回调 app 写状态机；行消失后焦点交给列表，Delete 仍可继续。 */
+  private hideRow(path: string): void {
+    this.opts.onHideResult?.(path);
+    this.scroller.focus();
+  }
+
+  /**
+   * 键盘等价：行聚焦时 `Delete` 隐藏该行；**列表本身聚焦**时 `Delete` 隐藏当前命中
+   * （行不是 Tab 可达的，列表才是——否则纯键盘用户没有入口）。
+   */
+  private readonly handleRowKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Delete') return;
+    const target = event.target;
+    const row = target instanceof Element ? target.closest('.result') : null;
+    const path =
+      row instanceof HTMLButtonElement
+        ? (row.dataset.path ?? null)
+        : target === this.scroller
+          ? (this.view?.hits[this.view.current]?.path ?? null)
+          : null;
+    if (!path) return;
+    event.preventDefault();
+    this.hideRow(path);
+  };
+
+  private readonly handleRestoreHidden = (): void => {
+    this.opts.onRestoreHidden?.();
   };
 }

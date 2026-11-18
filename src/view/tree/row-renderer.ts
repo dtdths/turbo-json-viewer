@@ -25,6 +25,8 @@ export interface RowContext {
   /** 搜索的「当前命中」行 */
   current: boolean;
   searchTerm?: string;
+  /** 搜索选项：全字匹配（#53）→ 只标整词命中 */
+  searchWholeWord?: boolean;
   typeColumn: boolean;
   showActions: boolean;
   /** 是否显示「在原文中定位」按钮（#30 / ADR-0019）：表达式结果视图 / plain 模式不显示 */
@@ -139,8 +141,8 @@ function createAction(action: RowAction): HTMLButtonElement {
  * 写入文本；有搜索词时把命中片段包进 `<mark class="row__hit">`。
  * 匹配由 shared/highlight 计算、DOM 写入由 view/highlight 统一承担（下标基于原串，全部走 textContent）。
  */
-function setText(el: HTMLElement, text: string, term?: string): void {
-  writeMarkedText(el, text, term, 'row__hit');
+function setText(el: HTMLElement, text: string, term?: string, wholeWord?: boolean): void {
+  writeMarkedText(el, text, term, 'row__hit', { wholeWord: wholeWord === true });
 }
 
 interface RowSlot {
@@ -352,14 +354,14 @@ export class DomRowPool implements RowRenderer {
     // 键名 hover 的 title（#47 #4 / #8）：doc 树 = 该行规范路径；表达式结果树 = 原文档路径，
     // 计算值（没有来源）显示「计算值」。`originPath` 字段是否存在就是「这是表达式结果」的判据。
     slot.keyEl.title = 'originPath' in row ? (row.originPath ?? t('view.tree.originComputed')) : row.path;
-    setText(slot.keyEl, row.key, ctx.searchTerm);
+    setText(slot.keyEl, row.key, ctx.searchTerm, ctx.searchWholeWord);
 
     if (row.hasChildren) {
       slot.value.className = 'row__value tok-punct';
       setText(slot.value, row.kind === 'array' ? '[…]' : '{…}');
     } else {
       slot.value.className = 'row__value ' + (VALUE_CLASS[row.kind] ?? 'tok-punct');
-      setText(slot.value, row.preview, ctx.searchTerm);
+      setText(slot.value, row.preview, ctx.searchTerm, ctx.searchWholeWord);
     }
 
     if (row.hasChildren) {
@@ -384,7 +386,7 @@ export class DomRowPool implements RowRenderer {
     const previewText = row.hasChildren ? row.preview : '';
     if (previewText) {
       slot.preview.hidden = false;
-      setText(slot.preview, previewText, ctx.searchTerm);
+      setText(slot.preview, previewText, ctx.searchTerm, ctx.searchWholeWord);
     } else {
       slot.preview.hidden = true;
       slot.preview.textContent = '';

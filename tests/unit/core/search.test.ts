@@ -491,3 +491,84 @@ describe('searchDocument — 路径命中的 limit / 截断（ADR-0023 §5）', 
     expect(result.truncated).toBe(false);
   });
 });
+
+describe('searchDocument — 全字匹配（#53 / ADR-0014 修订）', () => {
+  const paths = (doc: unknown, query: string, opts?: Parameters<typeof searchDocument>[2]): string[] =>
+    searchDocument(doc, query, opts).hits.map((hit) => hit.path);
+
+  it('默认关闭：仍是包含匹配', () => {
+    expect(paths({ myhotel: 1, hotel: 2, hotelx: 3 }, 'hotel')).toEqual(['$.myhotel', '$.hotel', '$.hotelx']);
+  });
+
+  it('打开：只留整词（键名 / 值 / 数字显示文本都按同一规则）', () => {
+    const doc = { myhotel: 1, hotel: 2, hotelx: 3, s: 'a hotel b', t: 'xhotel' };
+    expect(paths(doc, 'hotel', { wholeWord: true })).toEqual(['$.hotel', '$.s']);
+    expect(paths({ n: 100, m: 1000 }, '100', { wholeWord: true })).toEqual(['$.n']);
+  });
+
+  it('词字符含数字与下划线：item / item_1 / item1', () => {
+    const doc = { item: 1, item_1: 2, item1: 3 };
+    expect(paths(doc, 'item', { wholeWord: true })).toEqual(['$.item']);
+    expect(paths(doc, 'item_1', { wholeWord: true })).toEqual(['$.item_1']);
+  });
+
+  it('中文不是词字符：整词退化为包含匹配（不会零命中）', () => {
+    const doc = { a: '中文测试', b: '中文', c: 'x中文y' };
+    expect(paths(doc, '中文', { wholeWord: true })).toEqual(['$.a', '$.b', '$.c']);
+  });
+
+  it('中英混排：贴中文算整词', () => {
+    const doc = { a: '中文hotel中文', b: 'xhotel', c: 'hotelx' };
+    expect(paths(doc, 'hotel', { wholeWord: true })).toEqual(['$.a']);
+  });
+
+  it('keysOnly + 整词：只查键名', () => {
+    const doc = { hotel: 'x', myhotel: 'y', v: 'hotel' };
+    expect(paths(doc, 'hotel', { wholeWord: true, keysOnly: true })).toEqual(['$.hotel']);
+  });
+
+  it('路径模式忽略整词（仍按后缀命中）', () => {
+    const doc = { data: { hotel: 1 }, hotel: 2 };
+    // 查询含 `$` → 路径模式；`$.data` 的路径命中不受整词影响
+    expect(paths(doc, '$.data', { wholeWord: true })).toEqual(['$.data']);
+    expect(paths(doc, 'hotel_list[3]', { wholeWord: true, limit: 1 })).toEqual([]);
+  });
+
+  it('与正则叠加：匹配后置边界检查', () => {
+    const doc = { a: 'a hotel', b: 'myhotel', c: 'hotels' };
+    expect(paths(doc, 'h.tel', { wholeWord: true, regex: true })).toEqual(['$.a']);
+    // 正则源首/尾不是词字符 → 不额外加边界（括号只是分组），仍是包含匹配
+    expect(paths(doc, '(hotel)', { wholeWord: true, regex: true })).toEqual(['$.a', '$.b', '$.c']);
+    expect(paths(doc, 'hotel|motel', { wholeWord: true, regex: true })).toEqual(['$.a']);
+  });
+
+  it('与正则叠加：跳过空匹配（不当成命中、不死循环）', () => {
+    expect(paths({ a: 'b' }, 'x*', { wholeWord: true, regex: true })).toEqual([]);
+    expect(paths({ a: 'xx' }, 'x*', { wholeWord: true, regex: true })).toEqual(['$.a']);
+    expect(paths({ a: 'b' }, '^$', { wholeWord: true, regex: true })).toEqual([]);
+  });
+
+  it('与 Aa 叠加：大小写敏感仍按整词', () => {
+    const doc = { Hotel: 1, hotel: 2, myhotel: 3 };
+    expect(paths(doc, 'hotel', { wholeWord: true, caseSensitive: true })).toEqual(['$.hotel']);
+  });
+
+  it('折叠漂移兜底仍按字面量（含正则元字符的查询不会被当成正则）', () => {
+    // 'İstanbul' 折叠后比原串长 → 走兜底扫描；`a.b` 是字面量，不能命中 'axb'
+    expect(paths({ s: 'İstanbul a.b axb' }, 'a.b', { wholeWord: true })).toEqual(['$.s']);
+    expect(paths({ s: 'İstanbul axb' }, 'a.b', { wholeWord: true })).toEqual([]);
+  });
+
+  it('整词不改变正则的接受面（不加 u flag）', () => {
+    // `\a` 是非 u 模式下的 identity escape（等价 'a'）；开整词后仍应可用
+    expect(paths({ s: 'x a y' }, '\\a', { regex: true, wholeWord: true })).toEqual(['$.s']);
+    expect(searchDocument({ s: 'x a y' }, '\\a', { regex: true }).total).toBe(1);
+  });
+
+  it('一节点一条命中：键名整词命中优先于值', () => {
+    const doc = { hotel: 'myhotel' };
+    const hits = searchDocument(doc, 'hotel', { wholeWord: true }).hits;
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.field).toBe('key');
+  });
+});

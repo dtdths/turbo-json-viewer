@@ -79,6 +79,11 @@ export interface SearchOpts {
   caseSensitive?: boolean;
   /** 正则模式：query 按 ECMAScript RegExp 解释；`Aa` 只决定 `i` flag（ADR-0014） */
   regex?: boolean;
+  /**
+   * 全字匹配（#53 / ADR-0014 修订）：词 = ASCII `[A-Za-z0-9_]`，边界只在查询首/尾是词字符时
+   * 强制那一侧（中文查询退化为包含匹配）；与正则叠加走匹配后置边界检查；路径模式忽略。
+   */
+  wholeWord?: boolean;
   keysOnly?: boolean;
   /** 命中上限，默认 50,000（超过则 truncated） */
   limit?: number;

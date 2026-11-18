@@ -70,8 +70,8 @@ export function createMenu(config: MenuConfig): MenuController {
    * 下 CSS 把动画置 0ms，本类只多留一个无害的类名（关闭时清掉）。
    */
   const startEnter = (): void => {
+    // 关闭时已经摘过类，这里从「无」到「有」即可让动画重播；不需要强制同步布局
     element.classList.remove('is-entering');
-    void element.offsetWidth;
     element.classList.add('is-entering');
   };
 
@@ -85,9 +85,6 @@ export function createMenu(config: MenuConfig): MenuController {
     );
     element.style.left = `${placement.left}px`;
     element.style.top = `${placement.top}px`;
-    // 入场缩放从锚点侧展开（#52 / T4）：先量尺寸再定位，`transform` 不参与 rect 计算
-    const origin = menuTransformOrigin(anchor, placement, { width: rect.width, height: rect.height });
-    element.style.transformOrigin = `${origin.x}px ${origin.y}px`;
     if (placement.maxHeight === null) {
       element.style.maxHeight = '';
       element.style.overflowY = '';
@@ -95,6 +92,13 @@ export function createMenu(config: MenuConfig): MenuController {
       element.style.maxHeight = `${placement.maxHeight}px`;
       element.style.overflowY = 'auto';
     }
+    // 入场缩放从锚点侧展开（#52 / T4）：先量尺寸再定位，`transform` 不参与 rect 计算；
+    // 超高菜单会被 maxHeight 截短，origin 要按**截短后**的盒子算，否则可能落在盒外
+    const origin = menuTransformOrigin(anchor, placement, {
+      width: rect.width,
+      height: placement.maxHeight ?? rect.height,
+    });
+    element.style.transformOrigin = `${origin.x}px ${origin.y}px`;
   };
 
   const onClick = (event: MouseEvent): void => {

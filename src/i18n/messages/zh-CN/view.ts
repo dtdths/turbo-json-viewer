@@ -37,6 +37,8 @@ export const view: Record<keyof ViewMessages, Message> = {
   'view.search.case.title': '区分大小写（Aa）',
   'view.search.regex.label': '使用正则表达式',
   'view.search.regex.title': '使用正则表达式（.*）',
+  'view.search.wholeWord.label': '全字匹配',
+  'view.search.wholeWord.title': '全字匹配（\\b）：只匹配完整单词，中文按包含匹配',
   'view.search.prev.label': '上一个命中',
   'view.search.prev.title': '上一个命中（⇧⌘G / ⇧F3）',
   'view.search.next.label': '下一个命中',
@@ -53,6 +55,11 @@ export const view: Record<keyof ViewMessages, Message> = {
   'view.search.empty.noHits': '没有命中「{query}」',
   'view.search.truncated': '已截断（上限 {n}）',
   'view.search.foot.prefix': '虚拟滚动 · 已渲染 ',
+  'view.search.hide.title': '隐藏此条',
+  'view.search.hidden.count': '已隐藏 {n} 条',
+  'view.search.hidden.restore': '全部恢复',
+  'view.search.empty.allHidden': '全部命中已隐藏',
+  'view.search.empty.filteredHidden': '当前过滤下没有可见命中（已隐藏 {n} 条）',
 
   /* ---------------- 大纲面板（outline-panel） ---------------- */
   'view.outline.empty.idle': '导入文档后显示结构大纲',

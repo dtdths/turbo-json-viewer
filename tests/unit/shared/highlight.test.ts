@@ -115,3 +115,60 @@ describe('shared/highlight — hitRanges', () => {
     }
   });
 });
+
+describe('shared/highlight — 全字匹配（#53 / ADR-0014 修订）', () => {
+  const whole = (text: string, term: string) => hitRanges(text, term, { wholeWord: true });
+
+  it('只标整词命中：hotel 不标 myhotel / hotelx', () => {
+    expect(whole('hotel myhotel hotelx a hotel', 'hotel')).toEqual([
+      { start: 0, end: 5 },
+      { start: 23, end: 28 },
+    ]);
+  });
+
+  it('被拒绝的候选只前进一个码元，后面的真命中不丢', () => {
+    expect(whole('myhotel hotel', 'hotel')).toEqual([{ start: 8, end: 13 }]);
+    // 叠字：aaa 里没有整词 aa；只前进一个码元不会把后续误判成命中
+    expect(whole('aaa', 'aa')).toEqual([]);
+    expect(whole('aaaa', 'aa')).toEqual([]);
+  });
+
+  it('中文不是词字符：中文查询退化为包含匹配', () => {
+    expect(whole('中文测试中文', '中文')).toEqual([
+      { start: 0, end: 2 },
+      { start: 4, end: 6 },
+    ]);
+  });
+
+  it('中英混排：两侧非 ASCII 不强制，贴中文算整词', () => {
+    expect(whole('中文hotel中文', 'hotel')).toEqual([{ start: 2, end: 7 }]);
+    expect(whole('xhotel中文', 'hotel')).toEqual([]);
+  });
+
+  it('首/尾标点：只强制对应一侧', () => {
+    // 首 `$` 非词字符 → 左侧不查；尾 `l` 是词字符 → 右侧要查（hotelx 不命中）
+    expect(whole('($hotel) $hotelx', '$hotel')).toEqual([{ start: 1, end: 7 }]);
+    // 尾 `!` 非词字符 → 右侧不查；首 `h` 是词字符 → 左侧要查（xhotel! 不命中）
+    expect(whole('hotel!x hotel! xhotel!', 'hotel!')).toEqual([
+      { start: 0, end: 6 },
+      { start: 8, end: 14 },
+    ]);
+  });
+
+  it('大小写不敏感与整词叠加', () => {
+    expect(whole('HOTEL Hotel hotelX', 'hotel')).toEqual([
+      { start: 0, end: 5 },
+      { start: 6, end: 11 },
+    ]);
+  });
+
+  it('wholeWord 关闭 / 两侧都不强制时与普通命中一致', () => {
+    expect(hitRanges('myhotel', 'hotel')).toEqual([{ start: 2, end: 7 }]);
+    expect(whole('myhotel', '中文')).toEqual([]);
+    expect(whole('xhotel', 'hotel!')).toEqual([]);
+  });
+
+  it('非 ASCII 路径（İ）上的整词命中仍基于原串下标', () => {
+    expect(whole('İstanbul hotel xhotel', 'hotel')).toEqual([{ start: 9, end: 14 }]);
+  });
+});

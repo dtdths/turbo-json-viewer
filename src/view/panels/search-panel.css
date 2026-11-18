@@ -221,7 +221,8 @@
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-  padding: 0 12px 0 14px;
+  /* 右侧留出逐条隐藏 × 的位置（#53）：文字行以省略号收口，不压到按钮 */
+  padding: 0 34px 0 14px;
   overflow: hidden;
   text-align: left;
   border-left: 2px solid transparent;
@@ -274,6 +275,38 @@
   text-overflow: ellipsis;
   color: var(--text-2);
 }
+.result__hide {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--faint);
+  font-size: var(--text-body);
+  line-height: 1;
+  /* 只在行 hover / 聚焦时可见可点（#53）：不可见时不能抢走右缘的点击 */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast, 110ms) ease, background var(--dur-fast, 110ms) ease,
+    color var(--dur-fast, 110ms) ease;
+}
+.result:hover .result__hide,
+.result:focus .result__hide,
+/* 列表聚焦（行不可 Tab 聚焦）：当前命中行露出 ×，键盘用户能看到隐藏入口 */
+.results__scroll:focus .result.is-selected .result__hide {
+  opacity: 1;
+  pointer-events: auto;
+}
+.result__hide:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .result__kind {
   flex: 0 0 auto;
   padding: 0 3px;
@@ -328,6 +361,41 @@ mark.result__hit {
 }
 .results__foot span {
   font-variant-numeric: tabular-nums;
+}
+/* 渲染/总数信息可省略；「已隐藏」靠右（#53） */
+.results__footinfo {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.results__footinfo[hidden] {
+  display: none;
+}
+.results__hidden {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--faint);
+}
+.results__hidden[hidden] {
+  display: none;
+}
+.results__restore {
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-micro);
+  line-height: 1;
+  cursor: pointer;
+}
+.results__restore:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 .results__truncated {
   color: var(--warn);

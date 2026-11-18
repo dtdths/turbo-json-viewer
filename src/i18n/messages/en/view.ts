@@ -38,6 +38,8 @@ export const view = {
   'view.search.case.title': 'Match case (Aa)',
   'view.search.regex.label': 'Use regular expression',
   'view.search.regex.title': 'Use regular expression (.*)',
+  'view.search.wholeWord.label': 'Match whole word',
+  'view.search.wholeWord.title': 'Match whole word (\\b): complete words only; CJK matches as substring',
   'view.search.prev.label': 'Previous match',
   'view.search.prev.title': 'Previous match (⇧⌘G / ⇧F3)',
   'view.search.next.label': 'Next match',
@@ -54,6 +56,11 @@ export const view = {
   'view.search.empty.noHits': 'No matches for “{query}”',
   'view.search.truncated': 'Truncated (limit {n})',
   'view.search.foot.prefix': 'Virtual scrolling · rendered ',
+  'view.search.hide.title': 'Hide this match',
+  'view.search.hidden.count': '{n} hidden',
+  'view.search.hidden.restore': 'Restore all',
+  'view.search.empty.allHidden': 'All matches hidden',
+  'view.search.empty.filteredHidden': 'No visible matches in this filter ({n} hidden)',
 
   /* ---------------- 大纲面板（outline-panel） ---------------- */
   'view.outline.empty.idle': 'Import a document to see the structural outline',

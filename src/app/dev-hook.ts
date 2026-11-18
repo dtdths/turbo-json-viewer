@@ -130,6 +130,10 @@ export interface SearchDiagnostics {
   stale: boolean;
   caseSensitive: boolean;
   regex: boolean;
+  wholeWord: boolean;
+  hidden: number;
+  hiddenCounts: Record<string, number>;
+  visibleTotal: number;
   patternError: string | null;
   rendered: number;
   treeCurrentVisible: boolean;
@@ -341,6 +345,8 @@ export interface DevHook {
   searchJump(index: number): Promise<{ ms: number; index: number } & SearchDiagnostics>;
   searchMarkStale(): { changed: boolean } & SearchDiagnostics;
   setSearchFilter(filter: SearchFilter): SearchDiagnostics;
+  searchHide(path: string): { changed: boolean } & SearchDiagnostics;
+  searchRestoreHidden(): { changed: boolean } & SearchDiagnostics;
   searchPanel(): SearchDiagnostics;
   searchListScrollTo(px: number): SearchDiagnostics;
 
@@ -500,6 +506,10 @@ export interface DevHookDeps {
     searchPrev(): Promise<number>;
     gotoHit(index: number): Promise<number>;
     applyFilter(filter: SearchFilter): void;
+    /** 逐条隐藏一条命中（#53）；返回是否真的隐藏了 */
+    searchHide(path: string): boolean;
+    /** 恢复全部被隐藏的命中（#53） */
+    searchRestoreHidden(): boolean;
     /** 文档已修改：清空命中 + stale 提示；返回状态是否真的变了。 */
     markSearchStale(): boolean;
     setPanel(panel: PanelId): void;
@@ -635,6 +645,11 @@ export function createDevHook(deps: DevHookDeps): DevHook {
       // ADR-0014：Aa / 正则 / 内联错误（smoke 验收用）
       caseSensitive: view.caseSensitive,
       regex: view.regex,
+      wholeWord: view.wholeWord,
+      // 逐条隐藏（#53）：hidden = 已隐藏条数，visibleTotal = 可见命中总数（chips 的 all 档）
+      hidden: view.hiddenCount,
+      hiddenCounts: { ...view.hiddenCounts },
+      visibleTotal: view.visibleTotal,
       patternError: view.patternError,
       rendered: deps.searchPanel.renderedCount(),
       treeCurrentVisible: tree.currentRowRendered(),
@@ -848,6 +863,14 @@ export function createDevHook(deps: DevHookDeps): DevHook {
     setSearchFilter: (filter: SearchFilter) => {
       deps.entries.applyFilter(filter);
       return searchDiagnostics();
+    },
+    searchHide: (path: string) => {
+      const changed = deps.entries.searchHide(path);
+      return { changed, ...searchDiagnostics() };
+    },
+    searchRestoreHidden: () => {
+      const changed = deps.entries.searchRestoreHidden();
+      return { changed, ...searchDiagnostics() };
     },
     searchPanel: () => searchDiagnostics(),
     searchListScrollTo: (px: number) => {

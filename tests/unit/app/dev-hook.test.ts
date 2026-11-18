@@ -19,7 +19,7 @@ import { CoreError } from '../../../src/protocol/errors';
 const HOOK_MEMBERS = [
   'loadText', 'scrollToPx', 'togglePath', 'expandAll', 'collapseAll', 'state',
   'search', 'searchNext', 'searchPrev', 'searchJump', 'searchMarkStale', 'setSearchFilter',
-  'searchPanel', 'searchListScrollTo',
+  'searchHide', 'searchRestoreHidden', 'searchPanel', 'searchListScrollTo',
   'outlineState', 'outlineOpen', 'outlineToggle', 'outlineLoadMore', 'outlineJump',
   'editOpen', 'editText', 'editSetText', 'editClickApply', 'editApplyText', 'editClose',
   'undo', 'redo', 'resetEdits', 'exportDocText', 'editBadgeText',

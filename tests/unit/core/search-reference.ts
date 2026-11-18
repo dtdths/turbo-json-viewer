@@ -52,6 +52,8 @@ export interface ReferenceResult {
 export interface ReferenceOpts {
   caseSensitive?: boolean;
   regex?: boolean;
+  /** 全字匹配（#53）：参考实现用**环视**包裹，与 core 的「g 循环 + 命中后置边界检查」刻意不同构。 */
+  wholeWord?: boolean;
   keysOnly?: boolean;
   limit?: number;
 }
@@ -108,25 +110,69 @@ export function flattenDocument(value: unknown): ReferenceEntry[] {
   return out;
 }
 
-function compileMatcher(query: string, opts: ReferenceOpts): (text: string) => boolean {
+/** 词字符表（与 core / shared/word 同一口径，但参考实现独立写一份字面量）。 */
+const WORD_CLASS = 'A-Za-z0-9_';
+
+/**
+ * 整词环视包裹：只在查询首/尾是词字符时包对应一侧（中文查询不包 = 退化为包含匹配）。
+ * 用环视而非 `\b`：`\b` 只认 ASCII，且会改掉用户自己的锚点/分组语义。
+ */
+function wrapWholeWord(source: string, query: string): string {
+  const isWord = (ch: string | undefined): boolean =>
+    ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+  let wrapped = `(?:${source})`;
+  if (isWord(query[0])) wrapped = `(?<![${WORD_CLASS}])${wrapped}`;
+  if (isWord(query[query.length - 1])) wrapped = `${wrapped}(?![${WORD_CLASS}])`;
+  return wrapped;
+}
+
+function compileMatcher(query: string, opts: ReferenceOpts, wholeWord = false): (text: string) => boolean {
   const caseSensitive = opts.caseSensitive ?? false;
   if (opts.regex === true) {
     if (query.length > SEARCH_PATTERN_MAX) {
       throw new ReferencePatternError(`正则过长（上限 ${SEARCH_PATTERN_MAX} 字符）`);
     }
+    const source = wholeWord ? wrapWholeWord(query, query) : query;
+    const flags = caseSensitive ? '' : 'i';
     let regex: RegExp;
     try {
-      regex = new RegExp(query, caseSensitive ? '' : 'i');
+      regex = new RegExp(source, flags);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new ReferencePatternError(`正则语法错误：${reason}`);
     }
     // 不加 `g`：`RegExp.test` 因此无 lastIndex 状态，可在展平后的 entries 上反复调用。
+    // 整词 + 空匹配：core 跳过零长命中（`a*` 的收尾空匹配不算命中）；环视版同样要跳过，
+    // 否则 `--` 这类「空匹配两侧都非词字符」的串会与 core 分叉。
+    if (wholeWord) {
+      const global = new RegExp(source, flags + 'g');
+      return (text: string): boolean => {
+        for (const match of text.matchAll(global)) {
+          if (match[0].length > 0) return true;
+        }
+        return false;
+      };
+    }
     return (text: string): boolean => regex.test(text);
+  }
+  if (wholeWord) {
+    const source = wrapWholeWord(escapeRegExp(query), query);
+    const global = new RegExp(source, caseSensitive ? 'g' : 'gi');
+    return (text: string): boolean => {
+      for (const match of text.matchAll(global)) {
+        if (match[0].length > 0) return true;
+      }
+      return false;
+    };
   }
   const needle = caseSensitive ? query : query.toLowerCase();
   return (text: string): boolean =>
     caseSensitive ? text.includes(needle) : text.toLowerCase().includes(needle);
+}
+
+/** 参考实现里的正则元字符转义（独立一份，不复用 core）。 */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -150,13 +196,18 @@ export function referenceSearch(value: unknown, query: string, opts: ReferenceOp
   if (query.length === 0) return { hits: [], total: 0, truncated: false };
   if (!Number.isFinite(limit) || limit <= 0) return { hits: [], total: 0, truncated: false };
 
-  const matches = compileMatcher(query, opts);
+  // 整词只作用于键名/值：路径模式仍用**不加边界**的匹配器（与 core 同口径）。
+  const wholeWordActive =
+    opts.wholeWord === true &&
+    (/[A-Za-z0-9_]/.test(query[0] ?? '') || /[A-Za-z0-9_]/.test(query[query.length - 1] ?? ''));
+  const matches = compileMatcher(query, opts, wholeWordActive);
+  const plainMatches = compileMatcher(query, opts, false);
 
   // 路径模式（ADR-0023 §2）：查询含 `.` / `[` / `$` 才构造路径匹配器；引用同一条命中判定链。
   const pathMode = query.includes('.') || query.includes('[') || query.includes('$');
   let matchesPath: ((path: string) => boolean) | null = null;
   if (pathMode && !keysOnly) {
-    if (opts.regex === true) matchesPath = matches; // 整条路径 test()，用户可自行 `$` 锚定
+    if (opts.regex === true) matchesPath = plainMatches; // 整条路径 test()，用户可自行 `$` 锚定
     else {
       const caseSensitive = opts.caseSensitive ?? false;
       const needle = caseSensitive ? query : query.toLowerCase();

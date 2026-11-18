@@ -6,19 +6,20 @@
  * **禁 innerHTML**（ADR-0005）。mark 的 class 由调用方给（树行 `row__hit`、
  * 搜索结果 `result__hit`，smoke 按 class 断言）。
  */
-import { hitRanges } from '../shared/highlight';
+import { hitRanges, type HitRangeOptions } from '../shared/highlight';
 
 /**
  * 把 text 写进 el：命中片段包成 `<mark class="markClass">`，其余原样拼回。
- * 无命中（或 term 为空）时退回纯 `textContent`。
+ * 无命中（或 term 为空）时退回纯 `textContent`。`opts.wholeWord` 只标整词命中（#53）。
  */
 export function writeMarkedText(
   el: HTMLElement,
   text: string,
   term: string | undefined,
   markClass: string,
+  opts: HitRangeOptions = {},
 ): void {
-  const ranges = term ? hitRanges(text, term) : [];
+  const ranges = term ? hitRanges(text, term, opts) : [];
   if (ranges.length === 0) {
     el.textContent = text;
     return;

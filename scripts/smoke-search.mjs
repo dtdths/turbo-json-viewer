@@ -657,6 +657,7 @@ async function pageOptionsPhase(cfg) {
     ariaPressed: {
       case: toggle('searchCase')?.getAttribute('aria-pressed') ?? null,
       regex: toggle('searchRegex')?.getAttribute('aria-pressed') ?? null,
+      wholeWord: toggle('searchWholeWord')?.getAttribute('aria-pressed') ?? null,
     },
   });
 
@@ -701,10 +702,153 @@ async function pageOptionsPhase(cfg) {
   await setQuery(cfg.regex);
   out.recovered = snap();
 
-  // 8) 关正则、清空查询（两开关回默认、错误态与统计归零）
+  // 8) 全字匹配（#53）：关正则、开 \b、查 hotel → 5（键 4 + 值 HoTel 1；xhotelx 不算整词）
   await clickToggle('searchRegex');
+  await clickToggle('searchWholeWord');
+  await setQuery(cfg.term);
+  out.wholeWord = snap();
+  out.wholeWordMarks = (() => {
+    const rows = window.__smoke.visibleResults();
+    const marked = (cls) =>
+      rows.filter((row) => row.querySelector(`.result__${cls} mark.result__hit`)).length;
+    // xhotelx 不是整词 → 根本不进结果集（同时证明整词过滤生效）
+    const partial = rows.find((row) => (row.dataset.path || '') === '$.list[1]');
+    return {
+      pathMarks: marked('path'),
+      valueMarks: marked('value'),
+      partialMarked: Boolean(partial?.querySelector('mark.result__hit')),
+      partialVisible: Boolean(partial),
+    };
+  })();
+
+  // 9) 全字 + Aa → 1（只有键 hotel；xhotelx 本身就不是整词）
+  await clickToggle('searchCase');
+  out.wholeWordCase = snap();
+  await clickToggle('searchCase'); // Aa 回默认
+
+  // 10) 关全字、清空查询（三开关回默认、错误态与统计归零）
+  await clickToggle('searchWholeWord');
   await setQuery('');
   out.cleared = snap();
+  out.longTasks = window.__smoke.take();
+  return out;
+}
+
+/**
+ * 结果逐条隐藏（#53）：真实点击行尾 × + 行聚焦 Delete + 全部恢复 + 新搜索清空。
+ * 断言口径：隐藏按 path、计数「可见/总」、四档 chips 按可见集、树高亮与导航都跳过隐藏项。
+ */
+async function pageHidePhase(cfg) {
+  const out = {};
+  window.__smoke.reset();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const input = () => document.getElementById('searchInput');
+  const snap = () => ({ diag: window.__tjv.searchPanel(), dom: window.__smoke.dom() });
+  const rows = () => window.__smoke.visibleResults();
+  const hideSpan = (row) => row?.querySelector('.result__hide') ?? null;
+
+  await window.__tjv.loadText(JSON.stringify(cfg.doc), 'hide.json');
+  await sleep(300);
+  await window.__smoke.openSearchPanel();
+  const el = input();
+  el.focus();
+  el.value = 'hotel';
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(450);
+  out.before = snap();
+  out.openRowCount = rows().length;
+
+  // 1) 真实点击第一行的 ×（span，不是 button）→ 隐藏该 path
+  const first = rows()[0];
+  const firstPath = first?.dataset.path ?? null;
+  const span = hideSpan(first);
+  out.hideEl = span
+    ? {
+        tag: span.tagName,
+        ariaHidden: span.getAttribute('aria-hidden'),
+        title: span.title,
+        opacity: getComputedStyle(span).opacity,
+      }
+    : null;
+  span?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+  await sleep(120);
+  out.afterClick = snap();
+  out.afterClickPath = firstPath;
+  out.afterClickFocus = document.activeElement?.id ?? document.activeElement?.className ?? null;
+
+  // 2) 键盘等价：行聚焦时按 Delete → 隐藏该行
+  const target = rows()[0];
+  const deletePath = target?.dataset.path ?? null;
+  target?.focus();
+  target?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+  await sleep(120);
+  out.afterDelete = snap();
+  out.afterDeletePath = deletePath;
+
+  // 2b) 列表聚焦 + Delete = 隐藏当前命中（行不是 Tab 可达的，列表才是纯键盘入口）
+  const scroller = document.getElementById('resultsScroll');
+  scroller.focus();
+  const listDeletePath = window.__tjv.searchPanel().path;
+  scroller.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+  await sleep(120);
+  out.afterListDelete = snap();
+  out.afterListDeletePath = listDeletePath;
+
+  // 3) 导航跳过隐藏：跳到最后一个可见命中再 ⌘G 环回第一条
+  const size = window.__tjv.searchPanel().size;
+  out.lastJump = await window.__tjv.searchJump(Math.max(0, size - 1));
+  out.afterLastJump = { path: window.__tjv.searchPanel().path, index: window.__tjv.searchPanel().current };
+  out.nextAfterLast = await window.__tjv.searchNext();
+  out.nextPath = window.__tjv.searchPanel().path;
+
+  // 4) 全部恢复（底栏按钮）
+  document.getElementById('resultsRestore')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await sleep(120);
+  out.afterRestore = snap();
+
+  // 4b) 过滤档内全被隐藏：空态说明「当前过滤下没有可见命中」，不是「没有命中」
+  window.__tjv.searchHide('$.list[0]');
+  window.__tjv.searchHide('$.list[1]');
+  document.querySelector('.filter[data-filter="value"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await sleep(120);
+  out.filteredHidden = snap();
+  document.querySelector('.filter[data-filter="all"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  document.getElementById('resultsRestore')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await sleep(120);
+
+  // 4c) 隐藏的是别的档的命中 → 切到本来 0 命中的档，不能说「被隐藏光了」
+  window.__tjv.searchHide('$.list[0]');
+  document.querySelector('.filter[data-filter="path"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await sleep(120);
+  out.foreignHidden = snap();
+  document.querySelector('.filter[data-filter="all"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  document.getElementById('resultsRestore')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await sleep(120);
+
+  // 5) 隐藏全部 → 空态不是「没有命中」，而是「全部命中已隐藏」
+  // 每隐藏一条列表就重画（行池复用会让旧节点改指别的 path）→ 每轮重新取第一行
+  for (let guard = 0; guard < 10; guard += 1) {
+    const row = rows()[0];
+    if (!row || window.__tjv.searchPanel().size === 0) break;
+    window.__tjv.searchHide(row.dataset.path);
+    await sleep(20);
+  }
+  await sleep(80);
+  out.allHidden = snap();
+  document.getElementById('resultsRestore')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await sleep(120);
+  out.restoredAll = snap();
+
+  // 6) 新搜索清空隐藏集：隐藏一条 → 重新输入同一查询
+  window.__tjv.searchHide(rows()[0]?.dataset.path);
+  await sleep(80);
+  const again = input();
+  again.focus();
+  again.value = 'hotel';
+  again.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(450);
+  out.newSearch = snap();
+
   out.longTasks = window.__smoke.take();
   return out;
 }
@@ -1830,6 +1974,39 @@ try {
       rc.diag?.size === 1 && rc.diag?.regex === true && rc.diag?.caseSensitive === true,
       { size: rc.diag?.size, expect: 1, note: '/^hotel$/：只有键 hotel' },
     );
+    const ww = optionsPhase.wholeWord || {};
+    const wwc = optionsPhase.wholeWordCase || {};
+    const wwMarks = optionsPhase.wholeWordMarks || {};
+    check(
+      'options:whole-word',
+      ww.diag?.size === 5 &&
+        ww.diag?.wholeWord === true &&
+        ww.diag?.regex === false &&
+        ww.ariaPressed?.wholeWord === 'true' &&
+        ww.ariaPressed?.regex === 'false',
+      {
+        size: ww.diag?.size,
+        pressed: ww.ariaPressed,
+        expect: 5,
+        note: '键 Hotel/hotel/HOTEL/deep.Hotel 4 + 值 HoTel 1；xhotelx 不是整词',
+      },
+    );
+    check(
+      'options:whole-word-highlight',
+      wwMarks.partialVisible === false &&
+        wwMarks.partialMarked === false &&
+        wwMarks.valueMarks === 1 &&
+        wwMarks.pathMarks === 4,
+      { marks: wwMarks, note: '高亮只标整词命中：xhotelx 整条不命中，其余 4 键 + 1 值带 mark' },
+    );
+    check(
+      'options:whole-word+case',
+      wwc.diag?.size === 1 &&
+        wwc.diag?.wholeWord === true &&
+        wwc.diag?.caseSensitive === true &&
+        wwc.ariaPressed?.wholeWord === 'true',
+      { size: wwc.diag?.size, pressed: wwc.ariaPressed, expect: 1 },
+    );
     check(
       'options:bad-pattern-inline-error',
       typeof bad.diag?.patternError === 'string' &&
@@ -1864,7 +2041,7 @@ try {
     );
     check(
       'options:cleared',
-      clr.diag?.size === 0 && clr.diag?.phase === 'idle' && clr.ariaPressed?.case === 'false' && clr.ariaPressed?.regex === 'false' && clr.diag?.patternError === null,
+      clr.diag?.size === 0 && clr.diag?.phase === 'idle' && clr.ariaPressed?.case === 'false' && clr.ariaPressed?.regex === 'false' && clr.ariaPressed?.wholeWord === 'false' && clr.diag?.patternError === null,
       { size: clr.diag?.size, phase: clr.diag?.phase, pressed: clr.ariaPressed },
     );
     const optionLong = longTasksOf(optionsPhase);
@@ -1874,6 +2051,181 @@ try {
     });
     await page.screenshot(path.join(SHOTS, 'search-options.png'));
     report.screenshots = [...(report.screenshots || []), path.join(SHOTS, 'search-options.png')];
+  }
+
+  /* ---- 结果逐条隐藏（#53；真实 × 点击 / 行聚焦 Delete / 全部恢复 / 新搜索清空） ---- */
+  const hidePhase = statesPhase
+    ? await runPhase('hide', pageHidePhase, {
+        doc: { Hotel: 1, hotel: 2, HOTEL: 3, list: ['HoTel', 'xhotelx'], deep: { Hotel: 'v' } },
+      })
+    : null;
+  if (hidePhase) {
+    report.hide = hidePhase;
+    const before = hidePhase.before || {};
+    const clickSnap = hidePhase.afterClick || {};
+    const deleteSnap = hidePhase.afterDelete || {};
+    const restored = hidePhase.afterRestore || {};
+    const allHidden = hidePhase.allHidden || {};
+    const restoredAll = hidePhase.restoredAll || {};
+    const newSearch = hidePhase.newSearch || {};
+    const hiddenPaths = [hidePhase.afterClickPath, hidePhase.afterDeletePath].filter(Boolean);
+    const visiblePaths = (snap) => (snap.dom && snap.dom.resultPaths) || [];
+
+    metric('hide', {
+      panelOpen: before.diag?.phase,
+      beforeSize: before.diag?.size,
+      hidden: clickSnap.diag?.hidden,
+      visibleTotal: clickSnap.diag?.visibleTotal,
+      countText: clickSnap.dom?.countText,
+      footText: clickSnap.dom?.footText,
+    });
+    check(
+      'hide:before-baseline',
+      before.diag?.size === 6 &&
+        before.diag?.hidden === 0 &&
+        before.diag?.wholeWord === false &&
+        before.dom?.countText === '6' &&
+        before.dom?.footHidden === false,
+      { size: before.diag?.size, hidden: before.diag?.hidden, countText: before.dom?.countText },
+    );
+    check(
+      'hide:span-contract',
+      hidePhase.hideEl?.tag === 'SPAN' &&
+        hidePhase.hideEl?.ariaHidden === 'true' &&
+        hidePhase.hideEl?.opacity === '0' &&
+        typeof hidePhase.hideEl?.title === 'string' &&
+        hidePhase.hideEl.title.length > 0,
+      { hideEl: hidePhase.hideEl, note: '行是 <button>，× 只能是 aria-hidden 的 span；未 hover 时不可见' },
+    );
+    check(
+      'hide:click-hides-path',
+      clickSnap.diag?.hidden === 1 &&
+        clickSnap.diag?.size === 5 &&
+        clickSnap.diag?.visibleTotal === 5 &&
+        clickSnap.diag?.counts?.all === 5 &&
+        clickSnap.dom?.countText === '5/6' &&
+        !visiblePaths(clickSnap).includes(hidePhase.afterClickPath),
+      {
+        hidden: clickSnap.diag?.hidden,
+        size: clickSnap.diag?.size,
+        counts: clickSnap.diag?.counts,
+        countText: clickSnap.dom?.countText,
+        path: hidePhase.afterClickPath,
+      },
+    );
+    check(
+      'hide:footer-and-tree',
+      String(clickSnap.dom?.footText || '').includes('已隐藏') &&
+        String(clickSnap.dom?.footText || '').includes('1') &&
+        String(clickSnap.dom?.footText || '').includes('全部恢复') &&
+        clickSnap.dom?.treeHitRows === 5 &&
+        hidePhase.afterClickFocus === 'resultsScroll',
+      {
+        footText: clickSnap.dom?.footText,
+        treeHitRows: clickSnap.dom?.treeHitRows,
+        focus: hidePhase.afterClickFocus,
+      },
+    );
+    check(
+      'hide:delete-key-equivalent',
+      deleteSnap.diag?.hidden === 2 &&
+        deleteSnap.diag?.size === 4 &&
+        deleteSnap.dom?.treeHitRows === 4 &&
+        !visiblePaths(deleteSnap).includes(hidePhase.afterDeletePath),
+      { hidden: deleteSnap.diag?.hidden, size: deleteSnap.diag?.size, path: hidePhase.afterDeletePath },
+    );
+    check(
+      'hide:list-focused-delete',
+      deleteSnap.diag?.hidden === 2 &&
+        hidePhase.afterListDelete?.diag?.hidden === 3 &&
+        hidePhase.afterListDelete?.diag?.size === 3 &&
+        hidePhase.afterListDeletePath !== null &&
+        !visiblePaths(hidePhase.afterListDelete).includes(hidePhase.afterListDeletePath) &&
+        hidePhase.afterListDelete?.dom?.treeHitRows === 3,
+      {
+        hidden: hidePhase.afterListDelete?.diag?.hidden,
+        size: hidePhase.afterListDelete?.diag?.size,
+        path: hidePhase.afterListDeletePath,
+        note: '列表聚焦 + Delete 隐藏当前命中（行不可 Tab 聚焦时的键盘等价）',
+      },
+    );
+    check(
+      'hide:navigation-skips-hidden',
+      typeof hidePhase.nextAfterLast?.index === 'number' &&
+        hidePhase.nextAfterLast.index >= 0 &&
+        hidePhase.nextPath !== hidePhase.afterClickPath &&
+        hidePhase.nextPath !== hidePhase.afterDeletePath,
+      { index: hidePhase.nextAfterLast?.index, path: hidePhase.nextPath, hiddenPaths },
+    );
+    check(
+      'hide:restore-all',
+      restored.diag?.hidden === 0 &&
+        restored.diag?.size === 6 &&
+        restored.diag?.counts?.all === 6 &&
+        restored.dom?.countText === '6' &&
+        !String(restored.dom?.footText || '').includes('已隐藏'),
+      { hidden: restored.diag?.hidden, size: restored.diag?.size, footText: restored.dom?.footText },
+    );
+    check(
+      'hide:filtered-all-hidden-empty-state',
+      hidePhase.filteredHidden?.diag?.size === 0 &&
+        hidePhase.filteredHidden?.diag?.hidden === 2 &&
+        hidePhase.filteredHidden?.diag?.filter === 'value' &&
+        hidePhase.filteredHidden?.diag?.visibleTotal === 4 &&
+        String(hidePhase.filteredHidden?.dom?.emptyText || '').includes('已隐藏') &&
+        String(hidePhase.filteredHidden?.dom?.emptyText || '').includes('2'),
+      {
+        size: hidePhase.filteredHidden?.diag?.size,
+        hidden: hidePhase.filteredHidden?.diag?.hidden,
+        emptyText: hidePhase.filteredHidden?.dom?.emptyText,
+        note: 'value 档两条值命中全隐藏 → 过滤档内空态（不是「没有命中」/「全部命中已隐藏」）',
+      },
+    );
+    check(
+      'hide:empty-state-not-misattributed',
+      hidePhase.foreignHidden?.diag?.size === 0 &&
+        hidePhase.foreignHidden?.diag?.filter === 'path' &&
+        hidePhase.foreignHidden?.diag?.hiddenCounts?.path === 0 &&
+        String(hidePhase.foreignHidden?.dom?.emptyText || '').includes('没有命中') &&
+        !String(hidePhase.foreignHidden?.dom?.emptyText || '').includes('已隐藏'),
+      {
+        size: hidePhase.foreignHidden?.diag?.size,
+        emptyText: hidePhase.foreignHidden?.dom?.emptyText,
+        note: 'path 档本来就没有命中 → 仍说「没有命中」，不能把别的档的隐藏算到它头上',
+      },
+    );
+    check(
+      'hide:all-hidden-empty-state',
+      allHidden.diag?.hidden === 6 &&
+        allHidden.diag?.size === 0 &&
+        allHidden.diag?.visibleTotal === 0 &&
+        allHidden.dom?.emptyVisible === true &&
+        String(allHidden.dom?.emptyText || '').includes('全部命中已隐藏') &&
+        allHidden.dom?.footHidden === false,
+      {
+        hidden: allHidden.diag?.hidden,
+        size: allHidden.diag?.size,
+        emptyText: allHidden.dom?.emptyText,
+        footHidden: allHidden.dom?.footHidden,
+      },
+    );
+    check(
+      'hide:restore-from-all-hidden',
+      allHidden.diag?.size === 0 && restoredAll.diag?.hidden === 0 && restoredAll.diag?.size === 6,
+      { hidden: restoredAll.diag?.hidden, size: restoredAll.diag?.size },
+    );
+    check(
+      'hide:new-search-clears-hidden',
+      newSearch.diag?.hidden === 0 && newSearch.diag?.size === 6 && newSearch.dom?.countText === '6',
+      { hidden: newSearch.diag?.hidden, size: newSearch.diag?.size, countText: newSearch.dom?.countText },
+    );
+    const hideLong = longTasksOf(hidePhase);
+    check('hide:longtasks<=50ms', maxLongTask(hideLong) <= 50, {
+      count: hideLong.length,
+      maxMs: maxLongTask(hideLong),
+    });
+    await page.screenshot(path.join(SHOTS, 'search-hidden.png'));
+    report.screenshots = [...(report.screenshots || []), path.join(SHOTS, 'search-hidden.png')];
   }
 } catch (error) {
   fatal.push({ phase: 'main', error: String((error && error.stack) || error) });

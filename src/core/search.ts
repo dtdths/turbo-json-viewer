@@ -10,6 +10,10 @@
  * `297532588187238660` 能命中树里显示同串的大整数。布尔/null 同样按显示文本参与
  * （`true` / `false` / `null`，ADR-0023 §1），保持「搜到的 == 看到的」。
  *
+ * 全字匹配（`opts.wholeWord`，#53 / ADR-0014 修订）：词 = ASCII `[A-Za-z0-9_]`，边界只在查询
+ * 首/尾字符是词字符时强制那一侧（中文查询因此退化为包含匹配，**不用 `\b`**）；与正则叠加走
+ * 「`g` 循环 + 命中后置边界检查 + 跳过空匹配」；**路径模式忽略整词**（后缀匹配语义不变）。
+ *
  * 路径命中（ADR-0023 §2）：仅在查询串含 `.` / `[` / `$` 之一（**路径模式**）时启用，
  * 对 walk 帧上已有的规范路径做**后缀匹配**——字面量模式 `path` 以 query 结尾（大小写按
  * `Aa`），正则模式对整条 path 跑编译后的 `test()`（用户可自行 `$` 锚定）。普通词查询完全
@@ -26,6 +30,12 @@ import { CoreError } from '../protocol/errors';
 import { SEARCH_LIMIT, SEARCH_PATTERN_MAX } from '../protocol/versions';
 import type { Hit, Path, SearchOpts } from '../protocol/types';
 import { appendIndex, appendKey, ROOT_PATH } from '../shared/path';
+import {
+  isWholeWordMatch,
+  isWordBoundaryActive,
+  wordEdges,
+  type WordEdges,
+} from '../shared/word';
 import { isContainer, jsonKind, scalarPreview, shortPreview } from './row-model';
 
 export interface SearchWalkOpts extends SearchOpts {
@@ -216,6 +226,80 @@ export function compileRegexMatcher(query: string, caseSensitive: boolean): (tex
   return (text: string): boolean => regex.test(text);
 }
 
+// ---------------------------------------------------------------- 全字匹配（#53）
+
+/** 正则元字符转义（整词字面量模式要把查询当字面量扫描）。 */
+const REGEX_META = /[.*+?^${}()|[\]\\]/g;
+
+function escapeRegExp(text: string): string {
+  return text.replace(REGEX_META, '\\$&');
+}
+
+/**
+ * 字面量整词匹配器：`indexOf` 循环 + 命中后置边界检查。
+ *
+ * 大小写折叠不改变长度时（ASCII 常见路径）在折叠串上找、用原串下标做边界判断；
+ * 折叠改变长度（`İ` 之类）时退化为 `giu` 正则扫原串——与 `shared/highlight` 同一口径，
+ * 保证「搜到的」与「高亮到的」在常见输入上一致。
+ */
+function literalWholeWordMatcher(
+  query: string,
+  caseSensitive: boolean,
+  edges: WordEdges,
+): (text: string) => boolean {
+  const needle = caseSensitive ? query : query.toLowerCase();
+  // 折叠漂移兜底：**按字面量**（转义后的 query）扫原串，不能把 query 当正则
+  const fallback = createWholeWordRegex(escapeRegExp(query), caseSensitive, edges);
+  return (text: string): boolean => {
+    const haystack = caseSensitive ? text : text.toLowerCase();
+    if (haystack.length !== text.length) return fallback(text);
+    let from = 0;
+    for (;;) {
+      const at = haystack.indexOf(needle, from);
+      if (at < 0) return false;
+      if (isWholeWordMatch(text, at, at + needle.length, edges)) return true;
+      from = at + 1; // 被边界拒绝的候选只前进一个码元（重叠候选可能成立）
+    }
+  };
+}
+
+/**
+ * 正则整词匹配器：`g` 循环 + 命中后置边界检查 + **跳过空匹配**。
+ *
+ * 不用 `\b(?:...)` 包裹：`\b` 只认 ASCII、还会把用户的锚点/分组语义改掉；空匹配
+ * （`^$` / `a*`）不算命中，且必须手动推进 `lastIndex`，否则 `exec` 会原地死循环。
+ */
+/** 建一个带 `g` 的整词扫描器（`source` 已是用户正则或转义后的字面量）。 */
+function createWholeWordRegex(
+  source: string,
+  caseSensitive: boolean,
+  edges: WordEdges,
+): (text: string) => boolean {
+  // 不额外加 `u`：`compileRegexMatcher` 的接受面（合法模式集合）不能因为开了整词就变窄，
+  // 例如 `\a` 这类 identity escape 在 `u` 下会直接语法错误。
+  const regex = new RegExp(source, caseSensitive ? 'g' : 'gi');
+  return (text: string): boolean => {
+    regex.lastIndex = 0;
+    for (;;) {
+      const match = regex.exec(text);
+      if (match === null) return false;
+      if (match[0].length === 0) {
+        regex.lastIndex = match.index + 1;
+        continue;
+      }
+      if (isWholeWordMatch(text, match.index, match.index + match[0].length, edges)) return true;
+    }
+  };
+}
+
+function regexWholeWordMatcher(
+  query: string,
+  caseSensitive: boolean,
+  edges: WordEdges,
+): (text: string) => boolean {
+  return createWholeWordRegex(query, caseSensitive, edges);
+}
+
 // ---------------------------------------------------------------- 搜索
 
 export function searchDocument(value: unknown, query: string, opts: SearchWalkOpts = {}): SearchWalkResult {
@@ -236,15 +320,23 @@ export function searchDocument(value: unknown, query: string, opts: SearchWalkOp
   let matchesPath: ((path: string) => boolean) | null = null;
   // 路径模式（ADR-0023 §2）：查询含 `.` / `[` / `$` 之一才启用；普通词查询完全不碰路径。
   const pathMode = query.includes('.') || query.includes('[') || query.includes('$');
+  // 全字匹配（#53）：两侧都不需要边界（中文查询 / 首尾都是标点）→ 开关无效，退化为包含匹配；
+  // **路径模式忽略整词**（ADR-0023 的后缀匹配语义不变），只有键名 / 值走整词判定。
+  const edges = wordEdges(query);
+  const wholeWord = opts.wholeWord === true && isWordBoundaryActive(edges);
+
   if (regexMode) {
-    matches = compileRegexMatcher(query, caseSensitive);
-    // 正则模式对整条规范路径 test()（不做后缀约束，用户可自行用 `$` 锚定）
-    if (pathMode && !keysOnly) matchesPath = matches;
+    // 正则 + 整词：边界看正则源首/尾字符（`^hotel$` 用锚点表达意图，不再额外加边界）
+    const plain = compileRegexMatcher(query, caseSensitive);
+    matches = wholeWord ? regexWholeWordMatcher(query, caseSensitive, edges) : plain;
+    // 正则模式对整条规范路径 test()（不做后缀约束，用户可自行用 `$` 锚定）；整词不参与
+    if (pathMode && !keysOnly) matchesPath = plain;
   } else {
     const needle = caseSensitive ? query : query.toLowerCase();
-    matches = (text: string): boolean =>
+    const contains = (text: string): boolean =>
       caseSensitive ? text.includes(needle) : text.toLowerCase().includes(needle);
-    // 字面量模式 = 规范路径后缀匹配（大小写按 Aa）；`keysOnly` 不收路径
+    matches = wholeWord ? literalWholeWordMatcher(query, caseSensitive, edges) : contains;
+    // 字面量模式 = 规范路径后缀匹配（大小写按 Aa）；`keysOnly` 不收路径；整词不参与
     if (pathMode && !keysOnly) {
       matchesPath = (path: string): boolean =>
         (caseSensitive ? path : path.toLowerCase()).endsWith(needle);

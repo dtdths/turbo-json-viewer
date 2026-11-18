@@ -10,8 +10,12 @@
  *     （文档已变更，提示重搜）；
  *   - `markStale()` 用于文档变更时主动作废当前命中集。
  *
- * 本轮搜索选项（ADR-0014）：`begin(query, opts)` 把 `{caseSensitive, regex}` 快照下来供热
- * 渲染回填；正则错误由 app 层映射成文案后经 `markPatternError()` 写入，置错时清空结果回到 idle。
+ * 本轮搜索选项（ADR-0014）：`begin(query, opts)` 把 `{caseSensitive, regex, wholeWord}` 快照下来
+ * 供热渲染回填；正则错误由 app 层映射成文案后经 `markPatternError()` 写入，置错时清空结果回到 idle。
+ *
+ * 结果逐条隐藏（#53）：隐藏集按 **path** 记录（一个节点最多一条命中，所以条数 = path 数）、
+ * 不级联子树、**不落盘**、每标签（每个 SearchState 实例）独立；`begin()`（= 新一轮搜索）清空，
+ * filter 切换保留。计数（四档 chips / 可见总数）与树高亮都按**可见集**重算，导航只看可见集。
  *
  * 契约：docs/design/slice4-search-contract.md §2（权威）+ docs/adr/0014-search-options-case-and-regex.md §2.5–§2.6。
  */
@@ -49,6 +53,8 @@ export interface SearchQueryOpts {
   caseSensitive?: boolean;
   /** 查询串按 ECMAScript RegExp 解释（ADR-0014） */
   regex?: boolean;
+  /** 全字匹配（#53）：词 = ASCII `[A-Za-z0-9_]`，中文查询退化为包含匹配 */
+  wholeWord?: boolean;
 }
 
 export interface SearchWindow {
@@ -63,9 +69,15 @@ export interface SearchPanelView {
   /** 过滤后的命中（current 索引指向这个数组） */
   hits: readonly Hit[];
   counts: SearchCounts;
-  /** 回包 total（未过滤） */
+  /** 回包 total（未过滤；truncated 时可能大于 allHits.length） */
   total: number;
-  /** 过滤后数量 = hits.length */
+  /** 未被隐藏的命中总数（四档 counts 与「可见/总」用） */
+  visibleTotal: number;
+  /** 被用户逐条隐藏的条数（按 path 去重） */
+  hiddenCount: number;
+  /** 隐藏命中按 field 的分布（判断「当前过滤档的命中是否被隐藏光了」用） */
+  hiddenCounts: SearchCounts;
+  /** 过滤后且未隐藏的数量 = hits.length */
   size: number;
   /** -1 = 没有当前命中 */
   current: number;
@@ -75,6 +87,8 @@ export interface SearchPanelView {
   caseSensitive: boolean;
   /** 本轮是否正则模式（`.*` toggle 回填） */
   regex: boolean;
+  /** 本轮是否全字匹配（`\b` toggle 回填） */
+  wholeWord: boolean;
   /** 非空 = 正则不可用（语法错误/超长/被安全筛查拒绝）；置错时结果已清空 */
   patternError: string | null;
 }
@@ -120,6 +134,9 @@ export class SearchState {
   /** 本轮 begin() 的选项快照（渲染用；不持久化，ADR-0014 §2.5） */
   private caseSensitiveValue = false;
   private regexValue = false;
+  private wholeWordValue = false;
+  /** 用户逐条隐藏的命中 path（#53；每标签独立、begin() 清空、不落盘） */
+  private hiddenPathsValue = new Set<string>();
   /** 非空 = 正则错误文案；置错时 phase 回 idle、结果清空 */
   private patternErrorValue: string | null = null;
 
@@ -128,6 +145,7 @@ export class SearchState {
   /** 过滤后列表；同一批内引用稳定（面板据此判断是否回顶列表） */
   private hitsValue: readonly Hit[] = [];
   private countsValue: SearchCounts = EMPTY_COUNTS;
+  private hiddenCountsValue: SearchCounts = EMPTY_COUNTS;
   private totalValue = 0;
   private truncatedValue = false;
   /** 过滤后下标；-1 = 无当前命中 */
@@ -173,12 +191,27 @@ export class SearchState {
     return this.regexValue;
   }
 
+  /** 本轮选项快照：是否全字匹配 */
+  get wholeWord(): boolean {
+    return this.wholeWordValue;
+  }
+
+  /** 被隐藏的命中数（按 path 去重；一个节点最多一条命中） */
+  get hiddenCount(): number {
+    return this.hiddenPathsValue.size;
+  }
+
+  /** 未被隐藏的命中总数（回包命中集减去隐藏集） */
+  get visibleTotal(): number {
+    return Math.max(0, this.allHitsValue.length - this.hiddenPathsValue.size);
+  }
+
   /** 正则错误文案；null = 无错误 */
   get patternError(): string | null {
     return this.patternErrorValue;
   }
 
-  /** 过滤后命中（current 指向它） */
+  /** 过滤后且未隐藏的命中（current 指向它） */
   get hits(): readonly Hit[] {
     return this.hitsValue;
   }
@@ -213,11 +246,13 @@ export class SearchState {
     return this.currentValue >= 0 ? (this.hitsValue[this.currentValue] ?? null) : null;
   }
 
-  /** 全部命中（未过滤）的 path 集，树高亮用；同一批内返回同一 Set 实例。 */
+  /** 可见命中（未过滤、排除隐藏）的 path 集，树高亮用；同一批内返回同一 Set 实例。 */
   hitPaths(): ReadonlySet<string> {
     if (this.hitPathsCache === null) {
       const paths = new Set<string>();
-      for (const hit of this.allHitsValue) paths.add(hit.path);
+      for (const hit of this.allHitsValue) {
+        if (!this.hiddenPathsValue.has(hit.path)) paths.add(hit.path);
+      }
       this.hitPathsCache = paths;
     }
     return this.hitPathsCache;
@@ -239,13 +274,16 @@ export class SearchState {
   /**
    * 开始一次搜索：seq += 1、清空旧结果、pending=true；
    * query === '' 时 pending=false（idle，用于清空/重载）。
-   * 同时快照本轮选项（缺省 `{caseSensitive:false, regex:false}`）并清掉上一轮的正则错误。
+   * 同时快照本轮选项（缺省 `{caseSensitive:false, regex:false, wholeWord:false}`）并清掉上一轮的
+   * 正则错误与隐藏集（#53：「新搜索」= 隐藏集重来）。
    */
   begin(query: string, opts: SearchQueryOpts = {}): number {
     this.seqValue += 1;
     this.queryValue = query;
     this.caseSensitiveValue = opts.caseSensitive ?? false;
     this.regexValue = opts.regex ?? false;
+    this.wholeWordValue = opts.wholeWord ?? false;
+    this.hiddenPathsValue.clear();
     this.patternErrorValue = null;
     const idle = query === '';
     this.pendingValue = !idle;
@@ -309,6 +347,7 @@ export class SearchState {
    */
   markStale(): boolean {
     const changed = !this.staleValue || this.pendingValue || this.allHitsValue.length > 0;
+    this.hiddenPathsValue.clear();
     this.clearResults();
     this.pendingValue = false;
     this.staleValue = true;
@@ -320,18 +359,50 @@ export class SearchState {
   clear(): void {
     this.queryValue = '';
     this.patternErrorValue = null;
+    this.hiddenPathsValue.clear();
     this.pendingValue = false;
     this.staleValue = false;
     this.clearResults();
     this.phaseValue = 'idle';
   }
 
-  /** 切换过滤；重建过滤列表、current 夹到 [0, size-1]（空 → -1）。counts 与过滤无关，不重算。 */
+  /**
+   * 切换过滤；重建可见列表、current 夹到 [0, size-1]（空 → -1）。
+   * counts 只跟隐藏集有关（与 filter 无关），不重算；隐藏集跨过滤保留。
+   */
   setFilter(filter: SearchFilter): void {
     this.filterValue = filter;
     this.rebuildFiltered();
     this.currentValue =
       this.hitsValue.length === 0 ? -1 : clamp(this.currentValue, 0, this.hitsValue.length - 1);
+  }
+
+  /**
+   * 隐藏一条命中（#53，按 path、不级联子树）。返回是否真的隐藏了（重复 / 空 path → false）。
+   *
+   * 当前命中被隐藏 → 选中**下一条可见**（最后一条被隐藏则环回第一条，空 → -1）；
+   * 被隐藏项在当前位置之前 → current 跟着前移，保持「看着的还是同一条」。
+   */
+  hide(path: string): boolean {
+    // 只认当前命中集里的 path：隐藏集必须 ⊆ allHits，否则 `visibleTotal`（减法）与
+    // `counts.all`（逐条 counting）会分叉（dev hook 传任意 path 可复现）
+    if (path === '' || this.hiddenPathsValue.has(path) || this.indexOfPath(path) < 0) return false;
+    const currentPath = this.currentHit()?.path ?? null;
+    const currentIndex = this.currentValue;
+    this.hiddenPathsValue.add(path);
+    this.applyHiddenChange(currentPath, currentIndex);
+    return true;
+  }
+
+  /** 恢复全部被隐藏的命中（#53）；尽量保持当前命中（按 path），找不到回到首条。 */
+  restoreHidden(): boolean {
+    if (this.hiddenPathsValue.size === 0) return false;
+    const currentPath = this.currentHit()?.path ?? null;
+    this.hiddenPathsValue.clear();
+    this.applyHiddenChange(currentPath, this.currentValue);
+    if (this.currentValue < 0 && this.hitsValue.length > 0) this.currentValue = 0;
+    this.currentValue = this.hitsValue.length === 0 ? -1 : clamp(this.currentValue, 0, this.hitsValue.length - 1);
+    return true;
   }
 
   /** 选中过滤后下标（向下取整 + 夹紧）；返回 current；size 为 0 → -1。 */
@@ -375,12 +446,16 @@ export class SearchState {
       hits: this.hitsValue,
       counts: this.countsValue,
       total: this.totalValue,
+      visibleTotal: this.visibleTotal,
+      hiddenCount: this.hiddenPathsValue.size,
+      hiddenCounts: this.hiddenCountsValue,
       size: this.hitsValue.length,
       current: this.currentValue,
       filter: this.filterValue,
       truncated: this.truncatedValue,
       caseSensitive: this.caseSensitiveValue,
       regex: this.regexValue,
+      wholeWord: this.wholeWordValue,
       patternError: this.patternErrorValue,
     };
   }
@@ -398,10 +473,27 @@ export class SearchState {
 
   // ---------------------------------------------------------------- internal
 
+  /**
+   * 隐藏集变化后的统一收尾：重算可见计数 / 过滤列表 / 缓存，并按 path 把 current 跟到同一节点
+   * （原来那条不见了 → 同一下标的下一条可见；越界取最后一条，空 → -1）。
+   */
+  private applyHiddenChange(previousPath: string | null, previousIndex: number): void {
+    this.recomputeCounts();
+    this.rebuildFiltered();
+    this.hitPathsCache = null;
+    if (previousPath === null) return;
+    const next = this.hitsValue.findIndex((hit) => hit.path === previousPath);
+    if (next >= 0) this.currentValue = next;
+    else if (this.hitsValue.length === 0) this.currentValue = -1;
+    // 被隐藏的就是当前项：选「下一条可见」，到末尾则环回第一条（与 ⌘G 的环状口径一致）
+    else this.currentValue = previousIndex % this.hitsValue.length;
+  }
+
   private clearResults(): void {
     this.allHitsValue = [];
     this.hitsValue = [];
     this.countsValue = EMPTY_COUNTS;
+    this.hiddenCountsValue = EMPTY_COUNTS;
     this.totalValue = 0;
     this.truncatedValue = false;
     this.currentValue = -1;
@@ -410,26 +502,43 @@ export class SearchState {
   }
 
   /**
-   * counts 始终统计未过滤的 allHits（不依赖 key+value=all 的假设）。
-   * ADR-0023：path 命中独立计数，四档计数均从同一批 allHits 重算。
+   * counts 统计**可见集**（未过滤、排除隐藏；不依赖 key+value=all 的假设）。
+   * ADR-0023：path 命中独立计数，四档计数均从同一批可见命中重算。
+   * 同一趟顺带算出隐藏命中的 field 分布：面板据此区分「这个过滤档本来就没命中」与
+   * 「这个过滤档的命中被隐藏光了」。
    */
   private recomputeCounts(): void {
+    const hidden = this.hiddenPathsValue;
+    let all = 0;
     let key = 0;
     let value = 0;
     let path = 0;
+    let hiddenAll = 0;
+    let hiddenKey = 0;
+    let hiddenValue = 0;
+    let hiddenPath = 0;
     for (const hit of this.allHitsValue) {
+      if (hidden.size > 0 && hidden.has(hit.path)) {
+        hiddenAll += 1;
+        if (hit.field === 'key') hiddenKey += 1;
+        else if (hit.field === 'value') hiddenValue += 1;
+        else if (hit.field === 'path') hiddenPath += 1;
+        continue;
+      }
+      all += 1;
       if (hit.field === 'key') key += 1;
       else if (hit.field === 'value') value += 1;
       else if (hit.field === 'path') path += 1;
     }
-    this.countsValue = { all: this.allHitsValue.length, key, value, path };
+    this.countsValue = { all, key, value, path };
+    this.hiddenCountsValue = { all: hiddenAll, key: hiddenKey, value: hiddenValue, path: hiddenPath };
   }
 
-  /** filter === 'all' 返回未过滤原序；其它档按 `hit.field === filter` 过滤（含 'path'）。 */
+  /** filter === 'all' 返回未隐藏原序；其它档先按 `hit.field` 过滤，再排除隐藏 path。 */
   private rebuildFiltered(): void {
+    const hidden = this.hiddenPathsValue;
+    const visible = hidden.size === 0 ? this.allHitsValue : this.allHitsValue.filter((hit) => !hidden.has(hit.path));
     this.hitsValue =
-      this.filterValue === 'all'
-        ? this.allHitsValue
-        : this.allHitsValue.filter((hit) => hit.field === this.filterValue);
+      this.filterValue === 'all' ? visible : visible.filter((hit) => hit.field === this.filterValue);
   }
 }

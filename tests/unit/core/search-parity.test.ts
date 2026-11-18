@@ -138,6 +138,58 @@ const PARITY_CASES: ParityCase[] = [
   { name: 'options: Aa 2', doc: OPTIONS_DOC, query: 'hotel', opts: { caseSensitive: true } },
   { name: 'options: 正则 5', doc: OPTIONS_DOC, query: '^hotel$', opts: { regex: true } },
   { name: 'options: 正则+Aa 1', doc: OPTIONS_DOC, query: '^hotel$', opts: { regex: true, caseSensitive: true } },
+
+  // ---- 全字匹配（#53 / ADR-0014 修订） ----
+  {
+    name: 'wholeWord: 整词 vs 子串',
+    doc: { hotel: 1, myhotel: 2, hotelx: 3, s: 'a hotel b' },
+    query: 'hotel',
+    opts: { wholeWord: true },
+  },
+  {
+    name: 'wholeWord: 数字与下划线是词字符',
+    doc: { item: 1, item_1: 2, item1: 3 },
+    query: 'item_1',
+    opts: { wholeWord: true },
+  },
+  { name: 'wholeWord: 中文退化为包含匹配', doc: UNICODE_DOC, query: '中文', opts: { wholeWord: true } },
+  {
+    name: 'wholeWord: 中英混排贴中文算整词',
+    doc: { a: '中文hotel中文', b: 'xhotel', c: 'hotelx' },
+    query: 'hotel',
+    opts: { wholeWord: true },
+  },
+  {
+    name: 'wholeWord + regex: 命中后置边界检查',
+    doc: { a: 'a hotel', b: 'myhotel', c: 'hotels' },
+    query: 'h.tel',
+    opts: { wholeWord: true, regex: true },
+  },
+  {
+    name: 'wholeWord + regex: 跳过空匹配',
+    doc: { a: '--', b: 'x', c: 'aa' },
+    query: 'a*',
+    opts: { wholeWord: true, regex: true },
+  },
+  { name: 'wholeWord: 路径模式忽略整词', doc: PATH_DOC, query: '$.data', opts: { wholeWord: true } },
+  {
+    name: 'wholeWord + keysOnly',
+    doc: { hotel: 'x', myhotel: 'y', v: 'hotel' },
+    query: 'hotel',
+    opts: { wholeWord: true, keysOnly: true },
+  },
+  {
+    name: 'wholeWord: 尾部标点只强制一侧',
+    doc: { a: 'hotel!x', b: 'xhotel!', c: 'hotel!' },
+    query: 'hotel!',
+    opts: { wholeWord: true },
+  },
+  {
+    name: 'wholeWord + Aa',
+    doc: { Hotel: 1, hotel: 2, myhotel: 3 },
+    query: 'hotel',
+    opts: { wholeWord: true, caseSensitive: true },
+  },
 ];
 
 interface ProjectedHit {

@@ -44,6 +44,8 @@ export interface TreeViewOptions {
 
 export interface TreeSearchState {
   term?: string;
+  /** 全字匹配（#53）：高亮只标整词命中 */
+  wholeWord?: boolean;
   hitPaths?: Iterable<string>;
   /** 搜索的「当前命中」路径（可空） */
   currentPath?: string | null;
@@ -72,6 +74,7 @@ export class TreeView {
   private hitPaths = new Set<string>();
   private currentHitPath: string | null = null;
   private searchTerm: string | undefined;
+  private searchWholeWord = false;
   private typeColumn = false;
   private showActions = true;
   /** 行尾「在原文中定位」按钮（#30）：表达式结果根 / plain 模式由 app 关闭 */
@@ -247,6 +250,7 @@ export class TreeView {
         current: row.path === this.currentHitPath,
         // 只在命中行上渲染 <mark>：否则折叠容器摘要里的同词会被高亮成「无 is-hit 的 mark」
         searchTerm: this.hitPaths.has(row.path) ? this.searchTerm : undefined,
+        searchWholeWord: this.searchWholeWord,
         typeColumn: this.typeColumn,
         showActions: this.showActions,
         locateRaw: this.locateRawVisible,
@@ -296,10 +300,12 @@ export class TreeView {
   setSearch(state: TreeSearchState | null): void {
     if (!state) {
       this.searchTerm = undefined;
+      this.searchWholeWord = false;
       this.hitPaths = new Set();
       this.currentHitPath = null;
     } else {
       this.searchTerm = state.term;
+      this.searchWholeWord = state.wholeWord === true;
       // 命中集可能很大（50k）：viewmodel 已经持有 Set 时直接复用，避免每次导航重拷贝。
       const next = state.hitPaths;
       this.hitPaths = next instanceof Set ? (next as Set<string>) : new Set(next ?? []);
