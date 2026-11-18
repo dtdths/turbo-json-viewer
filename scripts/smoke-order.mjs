@@ -61,7 +61,9 @@ const DEFAULT_KEYS = [
   'adaptiveExpand',
   'advBudget',
   'escapeUnicode',
-  // 第 14 项（#45 / ADR-0026 §3）：界面语言
+  // 第 15 项（#47 #1）：导入位置（新标签 / 替换当前）
+  'importTarget',
+  // 第 16 项（#45 / ADR-0026 §3）：界面语言
   'locale',
 ];
 
@@ -540,8 +542,8 @@ const checks = {
     (report.raw?.copyBeta ?? '') === INDENT_2 &&
     (report.raw?.exportText ?? '').indexOf('"zeta"') < (report.raw?.exportText ?? '').indexOf('"Alpha"'),
 
-  // 2) 设置面板第 14 行（含界面语言，ADR-0026）+ 升序
-  'settings:14-rows-with-sort': eq(report.settingsRows, DEFAULT_KEYS),
+  // 2) 设置面板 15 行（含导入位置 #47 #1 与界面语言 ADR-0026）+ 升序
+  'settings:15-rows-with-sort': eq(report.settingsRows, DEFAULT_KEYS),
   'asc:natural-order':
     report.asc?.order === 'key-asc' &&
     eq(report.asc?.top, ROOT_ASC) &&
