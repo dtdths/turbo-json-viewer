@@ -112,6 +112,18 @@ try {
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       out.menu = h.exportMenuOpen();
+      // 菜单入场（#52）：定位之后才挂 .is-entering（scale 不污染 getBoundingClientRect），
+      // 起点朝锚点 = 右对齐按钮的右缘、下缘贴按钮（transform-origin）
+      const menuEl = document.getElementById('exportMenu');
+      const menuStyle = getComputedStyle(menuEl);
+      const originParts = menuEl.style.transformOrigin.split(' ').map((part) => parseFloat(part));
+      out.menuEnter = {
+        entering: menuEl.classList.contains('is-entering'),
+        name: menuStyle.animationName,
+        duration: menuStyle.animationDuration,
+        originX: originParts[0] ?? Number.NaN,
+        originY: originParts[1] ?? Number.NaN,
+      };
       await sleep(120);
       const items = [...document.querySelectorAll('#exportMenu [data-export-mode]')];
       out.menuFocus = {
@@ -520,6 +532,13 @@ const checks = {
     report.mainClipboard?.export?.mode === 'clipboard',
 
   // 文件方式
+  'menu:enter-motion':
+    report.menuEnter?.entering === true &&
+    report.menuEnter?.name === 'tjv-menu-in' &&
+    report.menuEnter?.duration === '0.11s' &&
+    report.menuEnter?.originX > 0 &&
+    report.menuEnter?.originY === 0,
+
   'file:action-recorded':
     report.file?.export?.mode === 'file' &&
     report.file?.export?.mainLabel === '导出 JSON 文件' &&

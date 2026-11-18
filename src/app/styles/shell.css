@@ -735,3 +735,58 @@ body[data-view="tree"] .raw-wrap { display: none; }
 .raw-head__meta { font-size: var(--text-micro); color: var(--faint); font-variant-numeric: tabular-nums; }
 .raw-head__copy { height: 22px; padding: 0 8px; font-size: var(--text-caption); }
 .raw { flex: 1 1 auto; min-height: 0; display: flex; position: relative; overflow: hidden; }
+
+/* ==========================================================================
+   弹层入场动效（#52 / T4，#47 #9）：只做入场、只动 `opacity` / `transform`
+   - 遮罩与卡片 `--dur`(160ms) + `--ease-out`；菜单 `--dur-fast`(110ms) + `scale(.98)`
+   - 卡片用 `translate` 长属性上浮 4px：`.empty__inner` 在左面板打开时带 `transform:
+     translateX(...)`（ADR-0016 §2.6），长属性与 `transform` 叠加，不会把它覆盖掉
+   - 菜单的 `.is-entering` 由 `view/menu.ts` 在**定位之后**挂上（scale 会改变量到的尺寸）
+   - 只入场、不出场（关闭仍是原来的 `hidden` 瞬切，键盘/焦点归还语义不变）
+   ========================================================================== */
+
+@keyframes tjv-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes tjv-rise-in {
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes tjv-menu-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tjv-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* 入口层 / 精简确认层：遮罩淡入 + 卡片淡入上浮 */
+.empty:not(.is-hidden) { animation: tjv-fade-in var(--dur) var(--ease-out) both; }
+.empty:not(.is-hidden) .empty__inner { animation: tjv-rise-in var(--dur) var(--ease-out) both; }
+
+/* 右键菜单 / 导出菜单：淡入 + scale(.98)→1，起点朝锚点（transform-origin 由 menu.ts 写入） */
+.ctxmenu.is-entering { animation: tjv-menu-in var(--dur-fast) var(--ease-out) both; }
+
+/* 子树编辑弹层：遮罩淡入 + 面板淡入上浮（与卡片同档） */
+.modal:not([hidden]) .modal__backdrop { animation: tjv-fade-in var(--dur) var(--ease-out) both; }
+.modal:not([hidden]) .modal__panel { animation: tjv-rise-in var(--dur) var(--ease-out) both; }
+
+/* toast：上滑 6px + 淡入（基态 transform 是居中 translateX(-50%)，关键帧里要带上） */
+.toast:not([hidden]) { animation: tjv-toast-in var(--dur) var(--ease-out) both; }
+
+/* 减少动态偏好（与 outline-panel / raw-view / tree 三处先例同口径）：全部 0ms */
+@media (prefers-reduced-motion: reduce) {
+  .empty:not(.is-hidden),
+  .empty:not(.is-hidden) .empty__inner,
+  .ctxmenu.is-entering,
+  .modal:not([hidden]) .modal__backdrop,
+  .modal:not([hidden]) .modal__panel,
+  .toast:not([hidden]) {
+    animation: none;
+  }
+}

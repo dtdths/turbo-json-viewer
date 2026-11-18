@@ -10,6 +10,7 @@ import {
   isMenuNavKey,
   MENU_ANCHOR_GAP,
   MENU_VIEWPORT_MARGIN,
+  menuTransformOrigin,
   nextMenuIndex,
   type MenuAnchor,
 } from '../../../src/shared/menu';
@@ -204,5 +205,53 @@ describe('isMenuNavKey', () => {
     for (const key of ['Tab', 'Enter', ' ', 'Escape', 'a', '']) {
       expect(isMenuNavKey(key)).toBe(false);
     }
+  });
+});
+
+describe('menuTransformOrigin — 入场缩放从锚点侧展开（#52）', () => {
+  const SIZE = { width: 200, height: 150 };
+
+  it('point 常规：菜单贴光标右下 → origin 在左上角', () => {
+    expect(menuTransformOrigin(point(100, 100), { left: 100, top: 100 }, SIZE)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('point 右边界翻转：origin 落在右缘', () => {
+    // 光标 1100 → 菜单翻到左侧（left 900），锚点在菜单内 x = 200
+    expect(menuTransformOrigin(point(1100, 100), { left: 900, top: 100 }, SIZE)).toEqual({ x: 200, y: 0 });
+  });
+
+  it('point 下边界翻转：origin 落在下缘', () => {
+    expect(menuTransformOrigin(point(100, 750), { left: 100, top: 600 }, SIZE)).toEqual({ x: 0, y: 150 });
+  });
+
+  it('point 贴边被 clamp：锚点在盒外 → origin 收进边缘', () => {
+    // margin 8：光标 (5,5) 的菜单左上角 clamp 到 (8,8)，锚点相对坐标为负
+    expect(menuTransformOrigin(point(5, 5), { left: 8, top: 8 }, SIZE)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('rect 右对齐：origin 在触发按钮下方的右缘', () => {
+    // 按钮 rect(800,20,900,44) → 菜单 left 700、top 48（gap 4）
+    const anchor = rect(800, 20, 900, 44);
+    expect(menuTransformOrigin(anchor, { left: 700, top: 48 }, SIZE)).toEqual({ x: 200, y: 0 });
+  });
+
+  it('rect 左对齐：origin 在按钮下方的左缘', () => {
+    const anchor = rect(100, 20, 200, 44, 'start');
+    expect(menuTransformOrigin(anchor, { left: 100, top: 48 }, SIZE)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('rect 翻到上方：锚点落到下缘（盒外的 gap 被 clamp）', () => {
+    // 按钮底 724 → 上方 top = 700 - 4 - 150 = 546，锚点 y = 724 - 546 = 178 → clamp 150
+    const anchor = rect(800, 700, 900, 724);
+    expect(menuTransformOrigin(anchor, { left: 700, top: 546 }, SIZE)).toEqual({ x: 200, y: 150 });
+  });
+
+  it('尺寸非有限：origin 收成 0（不产出 NaN 内联样式）', () => {
+    const origin = menuTransformOrigin(point(100, 100), { left: 100, top: 100 }, {
+      width: Number.NaN,
+      height: Number.POSITIVE_INFINITY,
+    });
+    expect(origin.x).toBe(0);
+    expect(Number.isFinite(origin.y)).toBe(true);
   });
 });

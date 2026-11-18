@@ -48,6 +48,14 @@ try {
     const opened = await window.__tjv.editOpen('$.b');
     out.open = opened;
     out.modalHidden = document.getElementById('editModal')?.hidden ?? null;
+    // 子树编辑弹层入场（#52）：遮罩淡入 + 面板淡入上浮（160ms / --dur）
+    const backdrop = getComputedStyle(document.querySelector('#editModal .modal__backdrop'));
+    const panel = getComputedStyle(document.querySelector('#editModal .modal__panel'));
+    out.modalMotion = {
+      backdrop: backdrop.animationName,
+      panel: panel.animationName,
+      duration: panel.animationDuration,
+    };
     out.applyDisabled = document.getElementById('editApply')?.disabled ?? null;
     out.kindText = window.__smoke.text('editKind');
     out.pathText = window.__smoke.text('editPath');
@@ -222,6 +230,10 @@ const canon = JSON.stringify({ a: 1, b: [1, 2, 3], c: { d: true } }, null, 2);
 
 const checks = {
   'load:small-doc': report.loaded?.totalRows === baseRows,
+  'editor:enter-motion':
+    report.modalMotion?.backdrop === 'tjv-fade-in' &&
+    report.modalMotion?.panel === 'tjv-rise-in' &&
+    report.modalMotion?.duration === '0.16s',
   'editor:opens-with-canonical-json':
     report.open?.open === true &&
     report.modalHidden === false &&

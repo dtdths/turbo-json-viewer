@@ -70,10 +70,35 @@ try {
       out.bootState = h.state();
       out.bootLayerVisible = !document.getElementById('empty').classList.contains('is-hidden');
       out.bootStripHiddenAttr = document.getElementById('tabStrip').hidden;
+      // 弹层入场动效（#52）：入口层 = 遮罩淡入 + 卡片淡入上浮（160ms / --dur）
+      const scrim = getComputedStyle(document.getElementById('empty'));
+      const card = getComputedStyle(document.getElementById('emptyInner'));
+      out.bootMotion = {
+        scrimName: scrim.animationName,
+        scrimDuration: scrim.animationDuration,
+        cardName: card.animationName,
+        cardDuration: card.animationDuration,
+      };
       return out;
     })()`,
   );
   await page.screenshot(path.join(SHOTS, 'workspace-empty.png'));
+
+  /* 减少动态偏好（#52）：`prefers-reduced-motion: reduce` 下入场全部 0ms（animation: none） */
+  try {
+    await chrome.browser.send(
+      'Emulation.setEmulatedMedia',
+      { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] },
+      page.sessionId,
+    );
+    report.reducedMotion = await page.eval(`(() => {
+      const scrim = getComputedStyle(document.getElementById('empty'));
+      const card = getComputedStyle(document.getElementById('emptyInner'));
+      return { scrim: scrim.animationName, card: card.animationName };
+    })()`);
+  } finally {
+    await chrome.browser.send('Emulation.setEmulatedMedia', { features: [] }, page.sessionId);
+  }
 
   /* ---- phase 1：单文档（标签条必须隐藏、零视觉变化）---- */
   await runPhase(
@@ -665,6 +690,13 @@ const checks = {
     report.boot?.hidden === true,
   'boot:empty-layer': report.bootLayerVisible === true && report.bootStripHiddenAttr === true,
   'boot:no-doc': report.bootState?.rootId === null,
+  'entry:layer-motion':
+    report.bootMotion?.scrimName === 'tjv-fade-in' &&
+    report.bootMotion?.scrimDuration === '0.16s' &&
+    report.bootMotion?.cardName === 'tjv-rise-in' &&
+    report.bootMotion?.cardDuration === '0.16s',
+  'entry:reduced-motion':
+    report.reducedMotion?.scrim === 'none' && report.reducedMotion?.card === 'none',
 
   // 单文档：标签条必须隐藏、零视觉变化
   'single:one-tab':

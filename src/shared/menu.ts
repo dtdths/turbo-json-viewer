@@ -119,6 +119,40 @@ export function computeMenuPosition(
   return { left: clampX(left), top: clampY(top), maxHeight };
 }
 
+/** 菜单入场动效的 `transform-origin`（相对菜单左上角的像素坐标；#52 / T4）。 */
+export interface MenuOrigin {
+  x: number;
+  y: number;
+}
+
+/**
+ * 入场缩放 `scale(.98)` 的起点：**锚点在自己盒子里的位置**（clamp 进菜单矩形）。
+ *
+ * 右键菜单（point）从光标处展开；导出菜单（rect，右对齐）从触发按钮的下缘展开。
+ * 翻转（下方放不下 → 翻到上方）时锚点位置随之落到下缘，同样由「锚点 − 菜单左上角」
+ * 得到，无需知道是否翻转；clamp 把「间距 gap」这类盒外坐标收进边缘。
+ */
+export function menuTransformOrigin(
+  anchor: MenuAnchor,
+  placement: Pick<MenuPlacement, 'left' | 'top'>,
+  size: MenuSize,
+): MenuOrigin {
+  const anchorX =
+    anchor.kind === 'point'
+      ? anchor.x
+      : anchor.align === 'start'
+        ? anchor.rect.left
+        : anchor.rect.right;
+  const anchorY = anchor.kind === 'point' ? anchor.y : anchor.rect.bottom;
+  const width = Math.max(0, finiteOr(size.width, 0));
+  const height = Math.max(0, finiteOr(size.height, 0));
+  const clamp = (value: number, max: number): number => Math.min(Math.max(value, 0), max);
+  return {
+    x: clamp(finiteOr(anchorX - placement.left, 0), width),
+    y: clamp(finiteOr(anchorY - placement.top, 0), height),
+  };
+}
+
 export type MenuNavKey = 'ArrowDown' | 'ArrowUp' | 'Home' | 'End';
 
 /** 键盘导航键判定（`Enter` / `Space` 走按钮原生激活，不在此列）。 */

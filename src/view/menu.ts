@@ -14,6 +14,7 @@ import {
   MENU_VIEWPORT_MARGIN,
   computeMenuPosition,
   isMenuNavKey,
+  menuTransformOrigin,
   nextMenuIndex,
   type MenuAnchor,
 } from '../shared/menu';
@@ -62,6 +63,18 @@ export function createMenu(config: MenuConfig): MenuController {
     config.trigger?.setAttribute('aria-expanded', String(expanded));
   };
 
+  /**
+   * 入场动效（#52 / T4）：**定位之后**才挂 `.is-entering`，动画里的 `scale(.98)`
+   * 因此不会污染 `place()` 的 `getBoundingClientRect`（缩放会改变量到的尺寸）。
+   * 先移除 + 强制一次布局，保证「关掉又立刻开」也能重播；`prefers-reduced-motion`
+   * 下 CSS 把动画置 0ms，本类只多留一个无害的类名（关闭时清掉）。
+   */
+  const startEnter = (): void => {
+    element.classList.remove('is-entering');
+    void element.offsetWidth;
+    element.classList.add('is-entering');
+  };
+
   const place = (anchor: MenuAnchor): void => {
     const rect = element.getBoundingClientRect();
     const placement = computeMenuPosition(
@@ -72,6 +85,9 @@ export function createMenu(config: MenuConfig): MenuController {
     );
     element.style.left = `${placement.left}px`;
     element.style.top = `${placement.top}px`;
+    // 入场缩放从锚点侧展开（#52 / T4）：先量尺寸再定位，`transform` 不参与 rect 计算
+    const origin = menuTransformOrigin(anchor, placement, { width: rect.width, height: rect.height });
+    element.style.transformOrigin = `${origin.x}px ${origin.y}px`;
     if (placement.maxHeight === null) {
       element.style.maxHeight = '';
       element.style.overflowY = '';
@@ -141,6 +157,11 @@ export function createMenu(config: MenuConfig): MenuController {
     controller.close('blur');
   };
 
+  /** 入场动画播完就摘掉类（只认菜单自身；子项将来若有动画不误删）。 */
+  const onAnimationEnd = (event: AnimationEvent): void => {
+    if (event.target === element) element.classList.remove('is-entering');
+  };
+
   const controller: MenuController = {
     get isOpen(): boolean {
       return open;
@@ -153,6 +174,7 @@ export function createMenu(config: MenuConfig): MenuController {
       open = true;
       syncExpanded(true);
       place(anchor);
+      startEnter();
       const list = enabledItems();
       const target = preferredItem && list.includes(preferredItem) ? preferredItem : (list[0] ?? null);
       target?.focus();
@@ -164,6 +186,7 @@ export function createMenu(config: MenuConfig): MenuController {
       element.hidden = true;
       element.style.maxHeight = '';
       element.style.overflowY = '';
+      element.classList.remove('is-entering');
       syncExpanded(false);
       if (activeMenu === controller) activeMenu = null;
       const wantsFocus =
@@ -181,6 +204,7 @@ export function createMenu(config: MenuConfig): MenuController {
   window.addEventListener('resize', onWindowResize);
   if (config.closeOnScroll === true) document.addEventListener('scroll', onDocumentScroll, true);
   element.addEventListener('focusout', onFocusOut);
+  element.addEventListener('animationend', onAnimationEnd);
 
   return controller;
 }

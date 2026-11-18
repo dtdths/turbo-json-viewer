@@ -296,7 +296,13 @@ try {
         const res = await h.ctxClick(act);
         await sleep(120); // 等剪贴板写入 / toast 落定
         const toast = typeof h.toastText === 'function' ? h.toastText() : '';
-        return { menuHidden: menu?.hidden ?? null, res, toast, clipboard: await clip() };
+        // toast 入场（#52）：上滑 6px + 淡入（160ms / --dur）；基态 transform 居中不被覆盖
+        const toastEl = document.getElementById('toast');
+        const toastMotion =
+          toastEl && !toastEl.hidden
+            ? { name: getComputedStyle(toastEl).animationName, duration: getComputedStyle(toastEl).animationDuration }
+            : null;
+        return { menuHidden: menu?.hidden ?? null, res, toast, toastMotion, clipboard: await clip() };
       };
       out.copiesStart = h.state();
       out.pathClick = await click(P.arr1k, 'copy-path');
@@ -705,6 +711,10 @@ const checks = {
   'row-action:copy-scalar':
     report.rowActionCopyScalar?.clicked === true &&
     (report.rowActionCopyScalar?.clipboard == null || report.rowActionCopyScalar?.clipboard === '10'),
+  'toast:enter-motion':
+    [report.pathClick, report.subtreeClick, report.valueClick, report.keyClick].some(
+      (copy) => copy?.toastMotion?.name === 'tjv-toast-in' && copy?.toastMotion?.duration === '0.16s',
+    ),
   'row-action:edit-modal':
     report.rowActionEdit?.clicked === true &&
     report.rowActionEdit?.modalOpen === true &&
