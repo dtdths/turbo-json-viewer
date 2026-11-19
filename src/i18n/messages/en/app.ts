@@ -149,7 +149,7 @@ export const app = {
 
   /* ---------------- 选中节点提示 ---------------- */
   'app.sel.hint.expr': 'Click a row to jump back to the source document',
-  'app.sel.hint.edit': 'F2 / double-click to edit',
+  'app.sel.hint.edit': 'F2 / right-click to edit',
 
   /* ---------------- 确认 / toast（main.ts） ---------------- */
   'app.confirm.closeTab': '“{name}” has temporary edits that are not exported; closing will discard them. Close anyway?',

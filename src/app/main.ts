@@ -1953,7 +1953,7 @@ function markSearchStale(): boolean {
 }
 
 async function openEditor(path: string): Promise<void> {
-  // 表达式结果只读（ADR-0018 §1）：结果根不是文档，禁编辑入口（F2 / 双击 / 右键「编辑」）
+  // 表达式结果只读（ADR-0018 §1）：结果根不是文档，禁编辑入口（F2 / 右键「编辑」）
   if (exprViewActive) {
     showToast(EXPR_COPY.readonly, 2000, 'error');
     return;

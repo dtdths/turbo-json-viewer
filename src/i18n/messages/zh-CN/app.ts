@@ -143,7 +143,7 @@ export const app: Record<keyof AppMessages, Message> = {
 
   /* ---------------- 选中节点提示 ---------------- */
   'app.sel.hint.expr': '点击行跳回原文档',
-  'app.sel.hint.edit': 'F2 / 双击编辑',
+  'app.sel.hint.edit': 'F2 / 右键编辑',
 
   /* ---------------- 确认 / toast（main.ts） ---------------- */
   'app.confirm.closeTab': '「{name}」有未导出的临时修改，关闭后将丢弃。确认关闭？',
