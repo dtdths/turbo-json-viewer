@@ -142,3 +142,39 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    冒烟验收）。体积：`page.js` 31.9 → **33.0KB gz**（+1.1：hook 工厂与依赖表；预算 45 未动）。
    **已知可优化**：hook 仍静态打进生产 `page.js`（运行时 `isExtension` 守卫），后续可用动态 import
    拆成仅 HTTP harness 加载的 chunk。
+
+## 修订（2026-11-19）：导入入口层收成一个状态机 + 一个 adapter
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-19，候选 1）+ `grilling` 拍板（Q1–Q12）。
+> §1「app 是唯一装配点」不变——本修订把 app 内的入口层从「16 个共享 DOM 常量的函数」收成一个
+> 纯状态机 + 一个 adapter，外部输入路由（paste / 拖放 / 文件选择 / 快捷键）仍留在 app。
+
+1. **一个纯状态机**：`src/app/import/layer-state.ts`——四形态（initial / replace / new-tab / pending）、
+   落点解析（设置默认 / 显式覆盖 / 默认新标签满 8 自动降为替换 / 显式新标签满 8 拒绝）、替换前的
+   「丢弃临时修改」确认、pending 两个落点、busy / error 生命周期、`close()` → `settle()` 两个时点。
+   零 DOM、零 i18n：输出 `LayerView`（文案是 key）+ `OpenResult` / `ChooseResult`。
+2. **副作用出栈为意图**：满 8 的显式拒绝、替换前的确认都作为结果返回，由 app 执行
+   （`showToast` / `window.confirm`）；状态机自己不调外部动作——这是它能被 node 单测的前提。
+3. **一个 DOM adapter**：`src/app/import/layer.ts`——把 `LayerView` 写成 DOM（文案 key → 当前语言、
+   可见性、禁用态、aria、待确认条目）、管 110ms 出场（`.is-leaving` + `inert` + 计时器 /
+   `animationend` 兜底）与焦点（打开进卡片 / pending 进非破坏性按钮 / 关闭归还工具栏），
+   并接线层内交互（关闭 / 遮罩点击 / 落点 radio / pending 两按钮）。外部输入路由不搬：它们还要管
+   「初始空态直接导入」「标签条空白 = 新标签」这些不属于层的事。
+4. **待确认载荷归状态机**：`File` / 粘贴文本是「待确认的导入」这个概念的一部分；留在 app 的会话态里
+   会造出第二个「哪份 pending」真相源（与 §3「一个概念一个 module」冲突）。
+5. **依赖形态**：adapter 的 deps 分三组——`dom`（元素引用）/ `env`（`t` / `formatBytes` /
+   `formatError` / 打开时的环境快照 `context()`）/ `actions`（`onImport` / `confirmDiscard` /
+   `onLimitDenied` / `onBeforeClose`）。否决「adapter 自己 `document.getElementById`」：
+   违背 §2「accept dependencies, don't create them」，也让 iframe / 测试复用变脆。
+6. **兼容（硬约束）**：`#empty` 的 id / class / `data-mode` / `aria-*` 一个不改；17 套冒烟断言零改动；
+   `dev-hook` 的 `layer` 快照 5 个字段名与取值逐字不变（改读 `hookState()`）；出场 110ms 时序不变。
+7. **测试面**：`tests/unit/app/import-layer-state.test.ts` 29 例（node env）——落点矩阵、满 8 降级与拒绝、
+   丢弃确认、pending 两落点、busy 清载荷、关闭与收尾时点。DOM 形状 / 动效 / 焦点仍归真机冒烟。
+   入口层的策略改动第一次不再只靠 17 套 HTTP 冒烟兜底。
+8. **代价与预算**：`main.ts` 4197 → 3914 行；单测 1385 → 1414。**`page.js` 53.8 → 55.0KB gz（+1.2：
+   状态机 seam +0.8、adapter 拆分 +0.4），预算 54 → 56，经用户 2026-11-19 拍板。**
+   被否决的更便宜方案：只抽纯策略（`resolveTarget`）——60 行、省 1KB，但 7 个入口的规则仍散在 main.ts，
+   且 DOM 与策略继续同函数（深度是假的）。
+9. **已知可优化（未做）**：`app/dev-hook.ts` 仍静态打进生产 `page.js`（12.5KB raw，运行时
+   `isExtension` 守卫）。改成动态 import 可回收数 KB，但它会落进**懒加载**预算（145.9 / 146，余 0.1），
+   需要同时处理两个预算口径；本修订只记录，不并入。

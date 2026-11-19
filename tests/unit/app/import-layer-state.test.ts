@@ -253,6 +253,16 @@ describe('ImportLayerState — 落点切换 / busy / error / 关闭时点', () =
     expect(state.isBusy()).toBe(false);
   });
 
+  it('busy：开始解析即清掉待确认条目（层内立即导入时）', () => {
+    const state = closedLayer();
+    state.openPending(ctx(), FILE_ENTRY);
+    const view = state.setBusy(true);
+    expect(view.busy).toBe(true);
+    expect(view.pending).toBeNull();
+    expect(state.pendingImport()).toBeNull();
+    expect(state.state().pendingName).toBeNull();
+  });
+
   it('error：保留结构化错误（切语言重画同一 view 不重新格式化）', () => {
     const state = closedLayer();
     state.open(ctx());

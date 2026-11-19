@@ -77,10 +77,9 @@ export type ChooseResult =
   | { kind: 'needs-discard-confirm'; target: ImportTarget }
   | { kind: 'noop' };
 
-/** 覆盖警示的固定文案 key（与 `app.empty.warnCurrent` 一起用）。 */
+/** 覆盖警示的前后缀文案 key（中间是活动文档「名称（大小）」，由 adapter 渲染成 <b>）。 */
 export const WARN_BEFORE_KEY = 'app.empty.warn.before' as const;
 export const WARN_AFTER_KEY = 'app.empty.warn.after' as const;
-export const WARN_CURRENT_KEY = 'app.empty.warnCurrent' as const;
 /** 「标签已满、本次自动降为替换」的说明文案 key。 */
 export const LIMIT_HINT_KEY = 'app.empty.limitNotice' as const;
 
@@ -275,15 +274,11 @@ export class ImportLayerState {
     return this.view();
   }
 
-  /** 解析中（busy 期间禁用输入与层内控件）。 */
+  /** 解析中（busy 期间禁用输入与层内控件；开始解析即清掉待确认条目）。 */
   setBusy(busy: boolean): LayerView {
     this.busy = busy;
+    if (busy) this.pending = null;
     return this.view();
-  }
-
-  /** 开始解析：清掉待确认载荷（层内立即导入时；层形态 / busy 不变）。 */
-  clearPending(): void {
-    this.pending = null;
   }
 
   /** 结构化错误（adapter 按当前语言格式化；切语言后重画即可）。 */
