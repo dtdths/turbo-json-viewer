@@ -236,20 +236,24 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    `reset(tab)`（换文档）/ `clear()`（回空态：没有标签可存档，但镜像必须复位）。
 4. **一张 accessor 表**：`VIEW_FIELD_KEYS` + `TabViewAccessors`（`get`/`set` 闭包由 `main.ts` 注入，
    因为 `scrollTopPx` 要读 DOM）。`capture`/`restore`/`clear` 全循环这张表。加一个 per-tab 字段 =
-   `TabViewData` 1 行 + `VIEW_FIELD_KEYS` 1 行 + 表 1 行 + 镜像 `let` 1 行（相邻块）。编译期守卫
-   `UnclassifiedViewField`（`Exclude<keyof TabViewData, 已归类>` 必须为 `never`）保证新增字段**不可能**
-   悄悄漏掉归类——这是本轮唯一「类型能替人守纪律」的地方。
+   `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + 表 1 行 + 镜像 `let` 1 行
+   ——**4–5 处，但都在两个文件的相邻块里**（对照：改前是 6–7 处、散在 4 个函数 + 类型 + 默认值）。
+   编译期守卫 `VIEW_FIELDS_ALL_CLASSIFIED: UnclassifiedViewField extends never ? true : false = true`：
+   新增字段忘了归类时该类型不再是 `never`，这行就赋不过去 → **构建直接红**（实测：加一个探针字段，
+   `tsc` 报 `Type 'true' is not assignable to type 'false'`）。这是本轮唯一「类型能替人守纪律」的地方。
 5. **两个滚动位置没有镜像**：`scrollTopPx` / `rawScrollTopPx` 只存在于存档里，`restoreActiveTabView`
    从 `tabView.active()` 直读。给它们造镜像会多两个 `let` 且没有第二个读者；accessor 表里把它们归为
    `DirectReadViewField`，并由同一个守卫检查。
 6. **版本扇出的归属**：活状态问 `DocSession`（`syncRootVersion`），存档问 `TabViewState.syncVersions`。
    `applyRootVersions` 从「一个循环喂 5 类持有者」缩成两处调用，与 §7 的「根死亡只有一个 owner」同构。
-7. **顺带修的 5 个真串味**（行为变化，独立成一提交，可单独回滚）：`exprLastText`（tab B 的「重新执行」
-   会跑 tab A 的表达式）、`exprErrorState` / `exprStatusState`（切换后行内错误与状态行残留）、
-   `searchPatternCore`（正则解析错误贴到新标签的 `SearchState`）、`fidelityIndex`（两标签都 ≥2 命中时
-   `1/N` 下标串）、`rawTreeAnchor`（关掉最后一个标签后空态仍能读到旧锚点——由 `clear()` 收口）。
-   前三者在 `restoreActiveTabView` 里追加一次「先清后填」的 `resetExpressionInlineText()`，因为面板是
-   单实例，光恢复镜像不会重画那一行。
+7. **顺带修 5 个串味**（行为变化，独立成一提交，可单独回滚）：`exprErrorState` / `exprStatusState`
+   （切换后行内错误与状态行残留）、`searchPatternCore`（正则解析错误贴到新标签的 `SearchState`）、
+   `fidelityIndex`（两标签都 ≥2 命中时 `1/N` 下标串）、`rawTreeAnchor`（关掉最后一个标签后空态仍能读到
+   旧锚点——由 `clear()` 收口）、`exprLastText`（「重新执行」的回退文本）。前两者在
+   `restoreActiveTabView` 里追加一次「先清后填」（面板是单实例，光恢复镜像不会重画那一行）。
+   **`exprLastText` 只是部分修复**：文本本身按标签存档了，但表达式面板的**草稿文本**仍是单实例、
+   切标签不清空，而 `rerun` 用的是 `panelText || exprLastText`——草稿非空时仍会跑上一个标签留在框里的
+   文本。草稿文本归 `ExpressionPanel`（见「未做」），不在本修订范围，别把这条读成「rerun 已完全隔离」。
 8. **被否决**：(a) **把 `let` 全删、读点改 `view.xxx`**（真·单份表示）——`session.` 104 处 + 读点数百处
    全要动，等于把一次可回滚的重构变成全文件迁移，「冒烟断言零改动」几乎不可能同时成立；
    (b) **新建第二张以 tabId 为键的 map**（`app/tab-view-state.ts` 自己存）——`TabState.docRevision` 与
@@ -258,12 +262,15 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    不持有存档，解决不了四份表示；(e) **`let` 数强压到 ≤30**——与 (a) 同义，读点迁移换来的只是数字好看。
 9. **兼容（硬约束）**：`h.state()` 仍取活动实时会话（`bindTab` 后更新）；`workspaceHookState()` 的
    `live ? session.docRevision : tab.docRevision` / `totalRows` 口径与 `TabHookState` 8 个字段名**逐字不变**；
-   `exprViewActive` 仍让 `live=false`；**`smoke-workspace` 62/62 断言零改动**（新增的 `clear()` 走单测，
-   没有新增冒烟断言）。
+   `exprViewActive` 仍让 `live=false`；**`smoke-workspace` 62/62 断言零改动**，17 套冒烟全绿。
+   **本轮没有新增冒烟断言**：5 个修复的「存档语义」由 binder 单测覆盖（每类一条「A 有 / B 没有」矩阵），
+   但 `restoreActiveTabView` 的面板重画与 `enterEmptyState` 的 `clear()` 调用属于 DOM 路径，
+   要断言就得改 `smoke-workspace` 的阶段驱动（加一个锚点/错误状态的前置动作）；先记为测试缺口。
 10. **测试面**：`tests/unit/app/tab-view-state.test.ts` **24 例**（node env，假 workspace + 假 accessor）：
     字段归类守卫、capture/restore 往返、滚动位置由注入读法决定、版本扇出、换文档复位、回空态全复位、
     以及 5 个串味字段各自「A 有 / B 没有」的矩阵。DOM 形状 / 焦点 / 动效仍归真机冒烟。
-11. **代价**：单测 1432 → **1456**（+24）；`page.js` 54.9 → **55.4KB gz**（+0.5：存档类型与默认值 +0.1、
+11. **代价**：单测 1432 → **1456**（+24）；`page.js` 54.9 → **55.3KB gz**（+0.5：存档类型与默认值 +0.1、
     访问器表与绑定器 +0.4；预算仍 56 未动）；懒加载 145.9 / 语言包 / `worker.js` 不变；`main.ts`
-    3914 → **3856 行**（管道区净减，但 ③ 的行内反馈重画 + 空态收口 + 5 行表又把数字抬回去——
-    **比 Q9 定的 ≤3830 多 26 行**，验收口径以「加字段 3 处」为主，行数只是旁证）；`^let ` 仍 **51**。
+    3914 → **3850 行**（管道区净减，但 accessor 表 + ③ 的行内反馈重画又把数字抬回去——
+   **比 Q9 定的 ≤3830 多 20 行**；验收口径以「加字段 4–5 处且相邻、漏了编译不过」为主，行数只是旁证）；
+   `^let ` 仍 **51**。

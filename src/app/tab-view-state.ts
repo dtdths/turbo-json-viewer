@@ -49,11 +49,16 @@ export type MirroredViewField = (typeof VIEW_FIELD_KEYS)[number];
 type DirectReadViewField = 'scrollTopPx' | 'rawScrollTopPx';
 
 /**
- * 编译期守卫：必须为空。给 `TabViewData` 加字段时，进 `VIEW_FIELD_KEYS`（有镜像）
- * 或加进 `DirectReadViewField`（无镜像），否则这个类型变成那个字段名、下面的 `[]` 赋不过去。
+ * 没被归类的字段名。给 `TabViewData` 加字段时，进 `VIEW_FIELD_KEYS`（有镜像）或加进
+ * `DirectReadViewField`（无镜像），否则这个类型不再是 `never`。
  */
 export type UnclassifiedViewField = Exclude<keyof TabViewData, MirroredViewField | DirectReadViewField>;
-export const UNCLASSIFIED_VIEW_FIELDS: readonly UnclassifiedViewField[] = [];
+
+/**
+ * 编译期守卫：只要上面那个类型不是 `never`，这行的类型就变成 `false`、`true` 赋不过去 →
+ * 新增字段忘了归类 = **编译失败**，而不是悄悄不进存档。
+ */
+export const VIEW_FIELDS_ALL_CLASSIFIED: UnclassifiedViewField extends never ? true : false = true;
 
 /** 镜像字段的读 / 写访问器（`main.ts` 注入；闭包里就是那 5 个模块级 `let`）。 */
 export type TabViewAccessors = {

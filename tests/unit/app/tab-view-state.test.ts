@@ -4,7 +4,7 @@ import type { DocumentMeta } from '../../../src/protocol/types';
 import {
   TabViewState,
   VIEW_FIELD_KEYS,
-  UNCLASSIFIED_VIEW_FIELDS,
+  VIEW_FIELDS_ALL_CLASSIFIED,
   type TabViewAccessors,
   type TabViewLive,
 } from '../../../src/app/tab-view-state';
@@ -135,7 +135,8 @@ function makeHarness(max?: number): Harness {
 
 describe('TabViewData 字段归类', () => {
   it('每个 TabViewData 字段都被显式归类（无遗漏）', () => {
-    expect(UNCLASSIFIED_VIEW_FIELDS).toEqual([]);
+    // 编译期守卫：漏归类会让这个常量的类型变成 false（构建就红），这里再钉一次运行时值
+    expect(VIEW_FIELDS_ALL_CLASSIFIED).toBe(true);
   });
 
   it('镜像字段表覆盖 10 个非滚动字段', () => {

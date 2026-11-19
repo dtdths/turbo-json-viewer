@@ -576,8 +576,11 @@ function restoreActiveTabView(): void {
   renderTabChrome();
   // 表达式结果条：新标签没有激活的结果视图 → 隐藏（结果本体按标签保留在存档）
   renderExpressionBar();
-  // 表达式行内反馈随标签（#58）：按本标签存档重画（先清掉上一个标签的错误/状态行）
-  resetExpressionInlineText();
+  // 表达式行内反馈随标签（#58）：先抹掉上一个标签的错误/状态行，再按本标签存档回填
+  // （面板是单实例，光恢复镜像不会重画这一行；切语言路径仍只走 applyExpressionInlineText）
+  expressionPanel.setError(null);
+  expressionPanel.setStatus('');
+  applyExpressionInlineText();
   // 原文视图：正看原文 → 为该标签重新 open（本标签已有索引元信息时 open 会复用 worker 侧索引）
   if (isRawView()) {
     const savedRaw = view.rawScrollTopPx;
@@ -669,8 +672,6 @@ function enterEmptyState(): void {
   docSessionBeforeExpr = null;
   // 视图存档的镜像一并复位（#58：对照锚点 / 表达式反馈 / 搜索解析错误 / 保真下标）
   tabView.clear();
-  expressionPanel.setError(null);
-  expressionPanel.setStatus('');
   cancelInFlightExpression();
   editingPath = null;
   subtreeEditor.close();
@@ -1046,13 +1047,6 @@ function applyExpressionInlineText(): void {
   if (exprStatusState) {
     expressionPanel.setStatus(EXPR_COPY.status(exprStatusState.count, exprStatusState.ms));
   }
-}
-
-/** 表达式行内反馈按当前标签重画：先抹掉错误/状态行，再按镜像回填（切标签 / 切语言共用）。 */
-function resetExpressionInlineText(): void {
-  expressionPanel.setError(null);
-  expressionPanel.setStatus('');
-  applyExpressionInlineText();
 }
 
 function showExpressionError(error: ExprError): void {
@@ -1605,7 +1599,7 @@ function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
   };
   const active = workspace.active();
   const replaceTarget = target === 'replace' ? active : null;
-  // 0) 表达式结果视图是临时换根：先回文档树，否则下面 saveActiveSession 会把 expr 根的
+  // 0) 表达式结果视图是临时换根：先回文档树，否则下面 tabView.capture() 会把 expr 根的
   //    rowVersion/totalRows/selected 当成文档版本存进标签（切回来 STALE_ROOT + 行数错）
   if (exprViewActive) backToDocTree({ silent: true });
   // 1) 切走前存档当前活动标签（版本字段 / 选中 / 滚动）
@@ -3448,7 +3442,7 @@ function rerenderChrome(): void {
   renderEditBadge();
   renderProfile();
   renderInitialChrome();
-  resetExpressionInlineText();
+  applyExpressionInlineText();
   if (searchPatternCore && searchState.view().patternError) {
     searchState.markPatternError(patternErrorText(searchPatternCore));
     renderSearch();

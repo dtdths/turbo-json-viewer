@@ -326,7 +326,7 @@ export class TabViewState {
 ```
 
 **不变式**
-- 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的 `let`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + 表 1 行 + 镜像 `let` 1 行，`UnclassifiedViewField` 编译期守卫防漏。
+- 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的 `let`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + accessor 1 行 + 镜像 `let` 1 行（都在相邻块）；`VIEW_FIELDS_ALL_CLASSIFIED` 是编译期守卫——漏归类会构建失败。
 - 归属：**活状态问 `DocSession`，存档问 `TabViewState`**。所以 `syncVersions` 只碰标签与非活动标签的表达式结果视图；活动会话与活动 `exprView` 由 `main.ts` 自己同步。
 - 版本字段 / `selected` / `meta` 不进 `view`：它们本就住在 `TabState` 顶层，`capture()` 走 `workspace.update` 写，别再存第二份。
 - 两个滚动位置**没有镜像**：`restoreActiveTabView` 从 `active()` 直读；给它们造镜像会多两个 `let` 且没有第二个读者。
