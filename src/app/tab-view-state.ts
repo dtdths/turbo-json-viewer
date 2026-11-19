@@ -7,7 +7,7 @@
  * `bindTab` / `resetTabStateForNewDoc`）各自抄一遍字段名，加一个 per-tab 字段要改 6–7 处。
  *
  * 本模块：字段名只出现在一张 `VIEW_FIELD_KEYS` / `TabViewAccessors` 表里，
- * `capture` / `restore` / `reset` / `syncVersions` 循环这张表。
+ * `capture` / `restore` / `clear` 循环这张表（`syncVersions` 走版本扇出）。
  * 加字段 = 类型 1 行（`TabViewData`）+ 表 1 行（`VIEW_FIELD_KEYS`）+ 镜像 `let` 1 行，
  * 全在两个文件的相邻块。
  *
@@ -25,7 +25,7 @@ import {
 import type { TabState, WorkspaceState } from '../viewmodel/workspace-state';
 
 /**
- * 有模块级镜像的字段（`capture` / `restore` 循环的就是这 10 个）。
+ * 有模块级镜像的字段（`capture` / `restore` / `clear` 循环的就是这 10 个）。
  * 滚动位置刻意不在表内：它们没有镜像，`restoreActiveTabView` 直接从存档读（见 `active()`）。
  * `UnclassifiedViewField` 是编译期守卫——`TabViewData` 新增字段忘了归类会在这里报错。
  */
@@ -108,15 +108,6 @@ export class TabViewState {
     this.deps = deps;
   }
 
-  /**
-   * 活动标签的视图存档（空工作区 → null）。
-   * 只用于**没有镜像**的字段（两个滚动位置）；其余字段以模块级镜像为准，
-   * 它们的存档值在 `capture()` 之前是上一次切走时的快照。
-   */
-  active(): TabViewData | null {
-    return this.deps.workspace.active()?.view ?? null;
-  }
-
   /** 切走前存档：镜像 → 活动标签（版本 / 选中走 `workspace.update`，其余写 `view`）。 */
   capture(): void {
     const tab = this.deps.workspace.active();
@@ -133,11 +124,6 @@ export class TabViewState {
     this.deps.resetTransient();
   }
 
-  /** 换文档（复用标签与 runtime）：存档就地复位成默认值，保持 `view` 引用稳定。 */
-  reset(tab: TabState): void {
-    Object.assign(tab.view, defaultTabViewData());
-  }
-
   /**
    * 回空态（关掉最后一个标签）：没有标签可存档，存档随标签一起没了，但**镜像还在**——
    * 全部复位成默认值，否则空态仍能读到上一个文档的对照锚点 / 表达式反馈 / 搜索解析错误。
@@ -149,9 +135,12 @@ export class TabViewState {
   }
 
   /**
-   * 子键排序回包（#40 / ADR-0024 §6）的**存档侧**扇出：同一根的新版本要落到
-   * 标签字段与非活动标签的表达式结果视图。活动会话（`DocSession`）与活动 `exprView`
-   * 由 `app` 侧自己同步——那是「活状态」，不归本模块。
+   * 子键排序回包（#40 / ADR-0024 §6）的**存档侧**扇出：同一根的新版本要落到标签字段与
+   * 各标签存档的表达式结果视图。活动会话（`DocSession`）不归本模块。
+   *
+   * 注意一处**刻意的别名**：`capture()` 存的是 `exprView` 的引用，所以活动标签的存档
+   * `view.exprView` 与活动镜像**是同一个对象**，这里改它等于同时改了活状态。`main.ts`
+   * 仍保留一次显式分支，覆盖「新建的 `exprView` 还没 capture」那一拍。
    */
   syncVersions(roots: readonly RootVersion[]): void {
     for (const entry of roots) {

@@ -55,7 +55,8 @@ export interface TabSearchOpts {
 }
 
 /**
- * 一个标签的视图存档。字段顺序 = `TabExtras`（`app/main.ts`）的原顺序，便于对照。
+ * 一个标签的视图存档。前 7 个字段的顺序与已被删除的 `TabExtras`（原 `app/main.ts`）一致，
+ * 便于对照；后 5 个是 2026-11-19 修串味时补进来的。
  * 版本字段（`docRevision` / `rowVersion` / `totalRows`）与 `selected` 不在这里：
  * 它们本来就住在 `TabState` 顶层，`capture` 走 `workspace.update` 写，别再存一份。
  */
@@ -68,10 +69,10 @@ export interface TabViewData {
   exprView: ExprViewState | null;
   /** 树的滚动位置（切回来时恢复，ADR-0009 §3「滚动锚点」） */
   scrollTopPx: number;
-  /** 原文视图的滚动位置（切回来时恢复） */
-  rawScrollTopPx: number;
   /** 搜索开关快照：切标签不串味（ADR-0014 §2.5） */
   searchOpts: TabSearchOpts;
+  /** 原文视图的滚动位置（切回来时恢复） */
+  rawScrollTopPx: number;
   /** 双向定位的上次对照锚点（#30 / ADR-0019 §5） */
   anchor: ViewAnchor | null;
   /** 最近一次成功执行的表达式文本（「重新执行」用；面板被改过则以面板当前文本为准） */

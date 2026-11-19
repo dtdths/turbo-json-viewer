@@ -319,9 +319,8 @@ export type TabViewAccessors = { readonly [K in MirroredViewField]: {
   get(): TabViewData[K]; set(value: TabViewData[K]): void } };
 export class TabViewState {
   constructor(deps: TabViewDeps);   // workspace + 字段表 + live() + 两个滚动读法 + resetTransient
-  active(): TabViewData | null;      // 活动标签存档（只给没有镜像的滚动位置用）
-  capture(): void;  restore(tab: TabState): void;  reset(tab: TabState): void;
-  clear(): void;    syncVersions(roots: readonly RootVersion[]): void;
+  capture(): void;  restore(tab: TabState): void;  clear(): void;
+  syncVersions(roots: readonly RootVersion[]): void;
 }
 ```
 
@@ -329,7 +328,8 @@ export class TabViewState {
 - 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的 `let`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + accessor 1 行 + 镜像 `let` 1 行（都在相邻块）；`VIEW_FIELDS_ALL_CLASSIFIED` 是编译期守卫——漏归类会构建失败。
 - 归属：**活状态问 `DocSession`，存档问 `TabViewState`**。所以 `syncVersions` 只碰标签与非活动标签的表达式结果视图；活动会话与活动 `exprView` 由 `main.ts` 自己同步。
 - 版本字段 / `selected` / `meta` 不进 `view`：它们本就住在 `TabState` 顶层，`capture()` 走 `workspace.update` 写，别再存第二份。
-- 两个滚动位置**没有镜像**：`restoreActiveTabView` 从 `active()` 直读；给它们造镜像会多两个 `let` 且没有第二个读者。
+- 两个滚动位置**没有镜像**：`restoreActiveTabView` 从 `tab.view` 直读；给它们造镜像会多两个 `let` 且没有第二个读者。
+- 换文档的存档复位归 `WorkspaceState.replace`（单一 owner），不是本模块的方法。
 - `restore(tab)` 顺带复位表达式视图的瞬时状态（`exprViewActive=false` / `docSessionBeforeExpr=null`）——表达式结果不跨标签自动激活。
 - dev hook 兼容：`h.state()` 仍取活动实时会话；`workspaceHookState()` 的 `live ? session.docRevision : tab.docRevision` / `totalRows` 口径与 `TabHookState` 字段名逐字不变。
 

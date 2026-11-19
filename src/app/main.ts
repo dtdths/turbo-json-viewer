@@ -440,7 +440,7 @@ let ctxOriginPath: string | null = null;
 /* ---------------- 工作区接线（#18 / ADR-0009）：活动标签 ↔ 模块级视图态 ---------------- */
 
 /**
- * 每标签视图态的搬运点（#58 / ADR-0008 修订）：`TabViewData` 的 5 个镜像字段只在这张表里
+ * 每标签视图态的搬运点（#58 / ADR-0008 修订）：`TabViewData` 的 10 个镜像字段只在这张表里
  * 出现一次（一行一个字段），`capture` / `restore` / `reset` / `syncVersions` 都循环它。
  * 加字段 = 类型 1 行 + `VIEW_FIELD_KEYS` 1 行 + 这里 1 行。
  */
@@ -1573,7 +1573,7 @@ function resetTabStateForNewDoc(tab: TabState): void {
   tab.runtime.searchState.begin('', searchOpts);
   tab.runtime.editState.clear();
   tab.runtime.rawSource.clear();
-  tabView.reset(tab);
+  // 视图存档已由 `workspace.replace` 就地复位（换文档 = 上一份作废，见 WorkspaceState.replace）
   rawOpenSeq += 1;
   fidelitySeq += 1;
   fidelityPending = false;

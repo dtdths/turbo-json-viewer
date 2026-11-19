@@ -189,7 +189,7 @@ describe('capture：镜像 → 存档', () => {
     expect(h.mirrors.calls.get).toEqual([]);
   });
 
-  it('把 5 个镜像字段经由访问器写进活动标签', () => {
+  it('把 10 个镜像字段经由访问器写进活动标签', () => {
     const h = makeHarness();
     const tab = h.ws.add(tabInput())!;
     h.mirrors.data.rawMetaInfo = { lines: 9 } as never;
@@ -235,7 +235,7 @@ describe('capture：镜像 → 存档', () => {
 });
 
 describe('restore：存档 → 镜像', () => {
-  it('把 5 个字段写回镜像，并每次都复位瞬时状态', () => {
+  it('把 10 个字段写回镜像，并每次都复位瞬时状态', () => {
     const h = makeHarness();
     const tab = h.ws.add(tabInput())!;
     tab.view.rawMetaInfo = { lines: 9 } as never;
@@ -250,7 +250,7 @@ describe('restore：存档 → 镜像', () => {
     expect(h.counters.transientResets).toBe(1);
   });
 
-  it('capture → restore 往返一致（5 个镜像字段逐字回来）', () => {
+  it('capture → restore 往返一致（镜像字段逐字回来）', () => {
     const h = makeHarness();
     const tab = h.ws.add(tabInput())!;
     h.counters.treeScroll = 88;
@@ -277,19 +277,6 @@ describe('restore：存档 → 镜像', () => {
       anchor: { path: '$.x', line: 3 },
       searchOpts: { caseSensitive: true, regex: false, wholeWord: true },
     });
-  });
-});
-
-describe('reset：存档复位', () => {
-  it('就地复位并保持 view 引用稳定', () => {
-    const h = makeHarness();
-    const tab = h.ws.add(tabInput())!;
-    const ref = tab.view;
-    tab.view.scrollTopPx = 50;
-    tab.view.anchor = { path: '$', line: 1 };
-    h.tabView.reset(tab);
-    expect(tab.view).toBe(ref);
-    expect(tab.view).toEqual(defaultTabViewData());
   });
 });
 
@@ -329,19 +316,6 @@ describe('syncVersions：存档侧版本扇出', () => {
   });
 });
 
-describe('active：活动标签存档', () => {
-  it('返回活动标签的存档对象', () => {
-    const h = makeHarness();
-    const a = h.ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }))!;
-    expect(h.tabView.active()).toBe(a.view);
-  });
-
-  it('空工作区返回 null', () => {
-    const h = makeHarness();
-    expect(h.tabView.active()).toBeNull();
-  });
-});
-
 describe('切标签互不串味', () => {
   it('A 的存档不会落到 B 上，切回来又能拿回 A 的', () => {
     const h = makeHarness();
@@ -354,12 +328,12 @@ describe('切标签互不串味', () => {
     h.mirrors.data = defaultTabViewData();
     h.tabView.restore(b);
     expect(h.mirrors.data.fidelity).toBeNull();
-    expect(h.tabView.active()?.scrollTopPx).toBe(0);
+    expect(h.ws.active()?.view.scrollTopPx).toBe(0);
 
     h.ws.activate(a.id);
     h.tabView.restore(a);
     expect(h.mirrors.data.fidelity).toEqual({ hits: [{ path: '$.a' }] });
-    expect(h.tabView.active()?.scrollTopPx).toBe(300);
+    expect(h.ws.active()?.view.scrollTopPx).toBe(300);
   });
 });
 

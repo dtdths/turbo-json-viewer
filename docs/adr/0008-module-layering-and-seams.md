@@ -233,7 +233,9 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
 3. **镜像留在 app**：51 个模块级 `let` 继续当活动标签的实时镜像，**读点零改动**（这是与「句柄式全量迁移」
    的关键取舍，见第 9 条）。镜像由 `app/tab-view-state.ts` 的 `TabViewState` 管理，**四个方法**：
    `capture()`（切走：镜像→存档）/ `restore(tab)`（切回：存档→镜像，顺带表达式视图瞬时复位）/
-   `reset(tab)`（换文档）/ `clear()`（回空态：没有标签可存档，但镜像必须复位）。
+   `clear()`（回空态：没有标签可存档，但镜像必须复位）+ `syncVersions(roots)`。
+   **换文档的存档复位不归它**：`WorkspaceState.replace` 就地写默认值，单一 owner（曾写过一个
+   `reset(tab)` 薄包装，与 `replace` 重复，双轴审查时删掉）。
 4. **一张 accessor 表**：`VIEW_FIELD_KEYS` + `TabViewAccessors`（`get`/`set` 闭包由 `main.ts` 注入，
    因为 `scrollTopPx` 要读 DOM）。`capture`/`restore`/`clear` 全循环这张表。加一个 per-tab 字段 =
    `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + 表 1 行 + 镜像 `let` 1 行
@@ -242,7 +244,7 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    新增字段忘了归类时该类型不再是 `never`，这行就赋不过去 → **构建直接红**（实测：加一个探针字段，
    `tsc` 报 `Type 'true' is not assignable to type 'false'`）。这是本轮唯一「类型能替人守纪律」的地方。
 5. **两个滚动位置没有镜像**：`scrollTopPx` / `rawScrollTopPx` 只存在于存档里，`restoreActiveTabView`
-   从 `tabView.active()` 直读。给它们造镜像会多两个 `let` 且没有第二个读者；accessor 表里把它们归为
+   从 `tab.view` 直读。给它们造镜像会多两个 `let` 且没有第二个读者；accessor 表里把它们归为
    `DirectReadViewField`，并由同一个守卫检查。
 6. **版本扇出的归属**：活状态问 `DocSession`（`syncRootVersion`），存档问 `TabViewState.syncVersions`。
    `applyRootVersions` 从「一个循环喂 5 类持有者」缩成两处调用，与 §7 的「根死亡只有一个 owner」同构。
@@ -266,10 +268,10 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    **本轮没有新增冒烟断言**：5 个修复的「存档语义」由 binder 单测覆盖（每类一条「A 有 / B 没有」矩阵），
    但 `restoreActiveTabView` 的面板重画与 `enterEmptyState` 的 `clear()` 调用属于 DOM 路径，
    要断言就得改 `smoke-workspace` 的阶段驱动（加一个锚点/错误状态的前置动作）；先记为测试缺口。
-10. **测试面**：`tests/unit/app/tab-view-state.test.ts` **24 例**（node env，假 workspace + 假 accessor）：
+10. **测试面**：`tests/unit/app/tab-view-state.test.ts` **21 例**（node env，假 workspace + 假 accessor）：
     字段归类守卫、capture/restore 往返、滚动位置由注入读法决定、版本扇出、换文档复位、回空态全复位、
     以及 5 个串味字段各自「A 有 / B 没有」的矩阵。DOM 形状 / 焦点 / 动效仍归真机冒烟。
-11. **代价**：单测 1432 → **1456**（+24）；`page.js` 54.9 → **55.3KB gz**（+0.5：存档类型与默认值 +0.1、
+11. **代价**：单测 1432 → **1453**（+21）；`page.js` 54.9 → **55.3KB gz**（+0.5：存档类型与默认值 +0.1、
     访问器表与绑定器 +0.4；预算仍 56 未动）；懒加载 145.9 / 语言包 / `worker.js` 不变；`main.ts`
     3914 → **3850 行**（管道区净减，但 accessor 表 + ③ 的行内反馈重画又把数字抬回去——
    **比 Q9 定的 ≤3830 多 20 行**；验收口径以「加字段 4–5 处且相邻、漏了编译不过」为主，行数只是旁证）；
