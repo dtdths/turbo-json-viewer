@@ -72,7 +72,8 @@ import type {
 } from '../protocol/types';
 import type { EditReply, LoadReply, RootVersion } from '../protocol/messages';
 import { DocSession, type LandingPlan, type SessionState } from './doc-session';
-import type { ExprViewState } from '../viewmodel/tab-view-data';
+import type { ExprViewState, ViewAnchor } from '../viewmodel/tab-view-data';
+import { TabViewState } from './tab-view-state';
 import {
   installDevHook,
   type DevHookDeps,
@@ -247,41 +248,8 @@ let rawSource: RawWindowSource = emptyRuntime.rawSource;
 let searchState: SearchState = emptyRuntime.searchState;
 let editState: EditState = emptyRuntime.editState;
 
-/** 每标签的非 adapter 视图态（原文索引元信息 / 保真报告 / 表达式结果视图 / 滚动位置）。 */
-interface TabExtras {
-  rawMetaInfo: RawMeta | null;
-  fidelity: FidelityReport | null;
-  /** 最近一次成功的表达式结果（会话内保留；换文档即清） */
-  exprView: ExprViewState | null;
-  /** 树的滚动位置（切回来时恢复，ADR-0009 §3「滚动锚点」） */
-  scrollTopPx: number;
-  /** 搜索选项（Aa / .* / 全字）：与每标签 SearchState 的选项快照同源，切标签不串味（ADR-0014 §2.5） */
-  searchOpts: { caseSensitive: boolean; regex: boolean; wholeWord: boolean };
-  /** 原文视图的滚动位置（切回来时恢复） */
-  rawScrollTopPx: number;
-  /** 双向定位的上次对照锚点（#30 / ADR-0019 §5）：内存、per-tab、不持久化 */
-  anchor: { path: string; line: number } | null;
-}
-const tabExtras = new Map<string, TabExtras>();
-/** 活动标签的对照锚点（切标签时随 TabExtras 存取；#30 / ADR-0019 §5） */
-let rawTreeAnchor: { path: string; line: number } | null = null;
-
-function extrasOf(tabId: string): TabExtras {
-  let extras = tabExtras.get(tabId);
-  if (!extras) {
-    extras = {
-      rawMetaInfo: null,
-      fidelity: null,
-      exprView: null,
-      scrollTopPx: 0,
-      rawScrollTopPx: 0,
-      searchOpts: { caseSensitive: false, regex: false, wholeWord: false },
-      anchor: null,
-    };
-    tabExtras.set(tabId, extras);
-  }
-  return extras;
-}
+/** 活动标签的对照锚点镜像（存档走 `TabViewData.anchor`；#30 / ADR-0019 §5） */
+let rawTreeAnchor: ViewAnchor | null = null;
 
 const tree = new TreeView(treeHost, {
   rowHeight: settings.get('rowHeight'),
@@ -471,6 +439,31 @@ let ctxOriginPath: string | null = null;
 
 /* ---------------- 工作区接线（#18 / ADR-0009）：活动标签 ↔ 模块级视图态 ---------------- */
 
+/**
+ * 每标签视图态的搬运点（#58 / ADR-0008 修订）：`TabViewData` 的 5 个镜像字段只在这张表里
+ * 出现一次（一行一个字段），`capture` / `restore` / `reset` / `syncVersions` 都循环它。
+ * 加字段 = 类型 1 行 + `VIEW_FIELD_KEYS` 1 行 + 这里 1 行。
+ */
+const tabView = new TabViewState({
+  workspace,
+  fields: {
+    rawMetaInfo: { get: () => rawMetaInfo, set: (value) => { rawMetaInfo = value; } },
+    fidelity: { get: () => fidelity, set: (value) => { fidelity = value; } },
+    exprView: { get: () => exprView, set: (value) => { exprView = value; } },
+    // 搜索开关是唯一被就地改过的嵌套字段：存取都拷一份，存档 / 镜像不共享可变对象
+    searchOpts: { get: () => ({ ...searchOpts }), set: (value) => { searchOpts = { ...value }; } },
+    anchor: { get: () => rawTreeAnchor, set: (value) => { rawTreeAnchor = value; } },
+  },
+  live: () => ({ docRevision: session.docRevision, rowVersion: session.rowVersion, totalRows: session.totalRows, selected }),
+  treeScrollTopPx: () => tree.scrollTopPx(),
+  rawScrollTopPx: () => rawView.scrollTopPx(),
+  // 表达式结果视图不跨标签自动激活（重进表达式模式由 setPanel('expression') 的既有链路决定）
+  resetTransient: () => {
+    exprViewActive = false;
+    docSessionBeforeExpr = null;
+  },
+});
+
 let unbindRowSource: (() => void) | null = null;
 let unbindRawSource: (() => void) | null = null;
 let unbindEditState: (() => void) | null = null;
@@ -496,32 +489,11 @@ function activeTab(): TabState | null {
   return workspace.active();
 }
 
-/** 把会话字段 / 选中 / 滚动位置存回当前活动标签（切走前调用；不在热路径上，不制造额外重绘）。 */
-function saveActiveSession(): void {
-  const tab = activeTab();
-  if (!tab) return;
-  const extras = extrasOf(tab.id);
-  extras.rawMetaInfo = rawMetaInfo;
-  extras.fidelity = fidelity;
-  extras.exprView = exprView;
-  extras.scrollTopPx = tree.scrollTopPx();
-  extras.rawScrollTopPx = rawView.scrollTopPx();
-  extras.searchOpts = { ...searchOpts };
-  extras.anchor = rawTreeAnchor;
-  workspace.update(tab.id, {
-    docRevision: session.docRevision,
-    rowVersion: session.rowVersion,
-    totalRows: session.totalRows,
-    selected,
-  });
-}
-
 /**
  * 绑定一个标签：换 adapter 引用 + 重挂订阅 + 恢复该标签的会话/选中/非 adapter 视图态。
  * 不取窗口、不重画面板（那部分在 `restoreActiveTabView`，加载路径用 applyLanding 自己推）。
  */
 function bindTab(tab: TabState): void {
-  const extras = extrasOf(tab.id);
   rowSource = tab.runtime.rowSource;
   rawSource = tab.runtime.rawSource;
   searchState = tab.runtime.searchState;
@@ -535,16 +507,9 @@ function bindTab(tab: TabState): void {
   });
   meta = tab.meta;
   selected = tab.selected;
-  rawMetaInfo = extras.rawMetaInfo;
-  fidelity = extras.fidelity;
-  exprView = extras.exprView;
-  searchOpts = { ...extras.searchOpts };
-  rawTreeAnchor = extras.anchor;
+  // 5 个视图字段 + 表达式视图的瞬时复位都在这里（accessor 表驱动，见 tabView 装配处）
+  tabView.restore(tab);
   clearStatusHint();
-  // 表达式结果视图不跨标签自动激活：切回来时若左面板是表达式，由 setPanel('expression') 的
-  // 既有恢复链路决定（见 switchTab）；这里一律先按「文档树」绑定会话。
-  exprViewActive = false;
-  docSessionBeforeExpr = null;
   refreshHookDeps();
 }
 
@@ -582,14 +547,15 @@ function renderTabChrome(): void {
 function restoreActiveTabView(): void {
   const tab = activeTab();
   if (!tab) return;
-  const extras = extrasOf(tab.id);
+  // 滚动位置没有模块级镜像：直接从该标签的存档读（唯一的两处「存档直读」）
+  const view = tab.view;
   // 树：同根同版本时 WindowMachine 保留上一帧（切回不闪白），滚动位置按标签恢复
   rowSource.setMetrics(metrics());
   rowSource.setRoot(
     { rootId: tab.rootId, rowVersion: tab.rowVersion, totalRows: tab.totalRows },
-    { scrollTopPx: extras.scrollTopPx },
+    { scrollTopPx: view.scrollTopPx },
   );
-  tree.scrollToPx(extras.scrollTopPx);
+  tree.scrollToPx(view.scrollTopPx);
   setSelection(selected);
   rowSource.requestWindow();
   // 搜索：命中集 / 面板输入框都换成本标签的（SearchPanel.render 会在输入框未聚焦时同步值）
@@ -603,11 +569,11 @@ function restoreActiveTabView(): void {
     if (workspace.activeId === tab.id) setSelection(selected);
   });
   renderTabChrome();
-  // 表达式结果条：新标签没有激活的结果视图 → 隐藏（结果本体按标签保留在 extras）
+  // 表达式结果条：新标签没有激活的结果视图 → 隐藏（结果本体按标签保留在存档）
   renderExpressionBar();
   // 原文视图：正看原文 → 为该标签重新 open（本标签已有索引元信息时 open 会复用 worker 侧索引）
   if (isRawView()) {
-    const savedRaw = extras.rawScrollTopPx;
+    const savedRaw = view.rawScrollTopPx;
     void setViewMode('raw', { persist: false }).then(() => {
       // 切标签期间别把滚动写到别的标签上；savedRaw=0 就是回顶（无需额外动作）
       if (workspace.activeId !== tab.id || !isRawView() || savedRaw <= 0) return;
@@ -625,10 +591,10 @@ function restoreActiveTabView(): void {
 function switchTab(id: string): void {
   if (id === workspace.activeId) return;
   if (activeTab()) {
-    // 表达式结果视图是文档级临时视图：切走先回文档树（结果保留在本标签 extras，重进可恢复）
+    // 表达式结果视图是文档级临时视图：切走先回文档树（结果保留在本标签存档，重进可恢复）
     if (exprViewActive) backToDocTree({ silent: true });
     cancelInFlightExpression();
-    saveActiveSession();
+    tabView.capture();
   }
   if (!workspace.activate(id)) return;
   // 编辑器是文档级会话：切标签即关闭（半开的 Apply 不得落到新标签）
@@ -661,7 +627,6 @@ async function closeTab(id: string, opts: { force?: boolean } = {}): Promise<voi
   const wasActive = workspace.activeId === id;
   const result = workspace.remove(id);
   if (!result) return;
-  tabExtras.delete(id);
   // closeRoot 幂等（未知根回 closed:false）；失败不阻断关闭
   void core.closeRoot(result.removed.rootId).catch(() => undefined);
   // 关到只剩 1 个 → 标签条隐藏：焦点必须离开被移除的标签，回树（a11y）
@@ -857,7 +822,7 @@ function captureOrderAnchor(activeRoot: string | null): { path: string; offsetPx
 
 /**
  * 把 `setOrder` 回包的多根版本快照回填到所有持有者（#40 / ADR-0024 §6）：
- * 活动会话（唯一入口 `DocSession.syncRootVersion`）、标签、文档/表达式视图坐标与 TabExtras。
+ * 活动会话（唯一入口 `DocSession.syncRootVersion`）与活动表达式视图；存档侧统一交 `tabView.syncVersions`。
  */
 function applyRootVersions(roots: readonly RootVersion[]): void {
   for (const entry of roots) {
@@ -869,21 +834,9 @@ function applyRootVersions(roots: readonly RootVersion[]): void {
       exprView.rowVersion = entry.rowVersion;
       exprView.totalRows = entry.totalRows;
     }
-    // 非活动标签存档的表达式结果（TabExtras 持引用；重进表达式面板会按它恢复版本）
-    for (const extras of tabExtras.values()) {
-      const view = extras.exprView;
-      if (view?.rootId === entry.rootId) {
-        view.rowVersion = entry.rowVersion;
-        view.totalRows = entry.totalRows;
-      }
-    }
-    for (const id of workspace.ids) {
-      const tab = workspace.get(id);
-      if (tab?.rootId === entry.rootId) {
-        workspace.update(id, { rowVersion: entry.rowVersion, totalRows: entry.totalRows });
-      }
-    }
   }
+  // 存档侧（标签版本 + 非活动标签的表达式结果）统一由搬运模块扇出（#58 / ADR-0008 修订）
+  tabView.syncVersions(roots);
 }
 
 /**
@@ -1602,20 +1555,13 @@ async function importFile(file: File, target?: 'replace' | 'new-tab'): Promise<v
 
 /**
  * 替换标签前的状态复位（复用 runtime，但上一份文档的搜索/编辑/原文/反馈都要清干净）。
- * 新标签不需要（runtime 是新建的），只清 extras。
+ * 新标签不需要（runtime 是新建的，存档由 `WorkspaceState.add` 初始化）。
  */
 function resetTabStateForNewDoc(tab: TabState): void {
   tab.runtime.searchState.begin('', searchOpts);
   tab.runtime.editState.clear();
   tab.runtime.rawSource.clear();
-  const extras = extrasOf(tab.id);
-  extras.rawMetaInfo = null;
-  extras.fidelity = null;
-  extras.exprView = null;
-  extras.scrollTopPx = 0;
-  extras.rawScrollTopPx = 0;
-  extras.searchOpts = { caseSensitive: false, regex: false, wholeWord: false };
-  extras.anchor = null;
+  tabView.reset(tab);
   rawOpenSeq += 1;
   fidelitySeq += 1;
   fidelityPending = false;
@@ -1645,7 +1591,7 @@ function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
   //    rowVersion/totalRows/selected 当成文档版本存进标签（切回来 STALE_ROOT + 行数错）
   if (exprViewActive) backToDocTree({ silent: true });
   // 1) 切走前存档当前活动标签（版本字段 / 选中 / 滚动）
-  if (active) saveActiveSession();
+  if (active) tabView.capture();
   const oldRootId = replaceTarget?.rootId ?? null;
 
   // 2) 会话落地（document 意图：换版本 + 回顶 + 清选中）
@@ -1663,7 +1609,6 @@ function onLoaded(reply: LoadReply, target: 'replace' | 'new-tab'): void {
   workspace.activate(tab.id);
   // 4) 替换场景：复用 runtime，但必须清掉上一份文档的全部状态
   if (replaceTarget) resetTabStateForNewDoc(tab);
-  else tabExtras.delete(tab.id);
   bindTab(tab);
   editingPath = null;
   subtreeEditor.close();
