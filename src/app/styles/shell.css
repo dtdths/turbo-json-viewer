@@ -335,6 +335,8 @@ body.rail-collapsed .rail { display: none; }
   font-family: var(--font-mono); font-size: var(--text-micro); line-height: 1.6; color: var(--text-2);
 }
 .sel__meta { margin-top: 8px; font-size: var(--text-caption); color: var(--faint); min-height: 14px; }
+/* 未选中节点时这一行没有内容：不占位（否则 min-height + margin 会被读成一条空白）*/
+.sel__meta:empty { display: none; }
 .placeholder { color: var(--faint); font-size: var(--text-caption); line-height: 1.6; }
 
 /* ---------------- status bar ---------------- */
