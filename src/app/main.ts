@@ -453,6 +453,11 @@ const tabView = new TabViewState({
     // 搜索开关是唯一被就地改过的嵌套字段：存取都拷一份，存档 / 镜像不共享可变对象
     searchOpts: { get: () => ({ ...searchOpts }), set: (value) => { searchOpts = { ...value }; } },
     anchor: { get: () => rawTreeAnchor, set: (value) => { rawTreeAnchor = value; } },
+    exprLastText: { get: () => exprLastText, set: (value) => { exprLastText = value; } },
+    exprErrorState: { get: () => exprErrorState, set: (value) => { exprErrorState = value; } },
+    exprStatusState: { get: () => exprStatusState, set: (value) => { exprStatusState = value; } },
+    searchPatternCore: { get: () => searchPatternCore, set: (value) => { searchPatternCore = value; } },
+    fidelityIndex: { get: () => fidelityIndex, set: (value) => { fidelityIndex = value; } },
   },
   live: () => ({ docRevision: session.docRevision, rowVersion: session.rowVersion, totalRows: session.totalRows, selected }),
   treeScrollTopPx: () => tree.scrollTopPx(),
@@ -571,6 +576,8 @@ function restoreActiveTabView(): void {
   renderTabChrome();
   // 表达式结果条：新标签没有激活的结果视图 → 隐藏（结果本体按标签保留在存档）
   renderExpressionBar();
+  // 表达式行内反馈随标签（#58）：按本标签存档重画（先清掉上一个标签的错误/状态行）
+  resetExpressionInlineText();
   // 原文视图：正看原文 → 为该标签重新 open（本标签已有索引元信息时 open 会复用 worker 侧索引）
   if (isRawView()) {
     const savedRaw = view.rawScrollTopPx;
@@ -660,6 +667,10 @@ function enterEmptyState(): void {
   exprView = null;
   exprViewActive = false;
   docSessionBeforeExpr = null;
+  // 视图存档的镜像一并复位（#58：对照锚点 / 表达式反馈 / 搜索解析错误 / 保真下标）
+  tabView.clear();
+  expressionPanel.setError(null);
+  expressionPanel.setStatus('');
   cancelInFlightExpression();
   editingPath = null;
   subtreeEditor.close();
@@ -1035,6 +1046,13 @@ function applyExpressionInlineText(): void {
   if (exprStatusState) {
     expressionPanel.setStatus(EXPR_COPY.status(exprStatusState.count, exprStatusState.ms));
   }
+}
+
+/** 表达式行内反馈按当前标签重画：先抹掉错误/状态行，再按镜像回填（切标签 / 切语言共用）。 */
+function resetExpressionInlineText(): void {
+  expressionPanel.setError(null);
+  expressionPanel.setStatus('');
+  applyExpressionInlineText();
 }
 
 function showExpressionError(error: ExprError): void {
@@ -3430,7 +3448,7 @@ function rerenderChrome(): void {
   renderEditBadge();
   renderProfile();
   renderInitialChrome();
-  applyExpressionInlineText();
+  resetExpressionInlineText();
   if (searchPatternCore && searchState.view().patternError) {
     searchState.markPatternError(patternErrorText(searchPatternCore));
     renderSearch();

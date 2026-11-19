@@ -7,7 +7,8 @@
  *
  * 分层：只 import `protocol/*` 的 **type**（依赖方向 app → view → viewmodel → protocol）。
  */
-import type { ExprBudgetLevel, FidelityReport, JsonKind, RawMeta } from '../protocol/types';
+import type { CoreError } from '../protocol/errors';
+import type { ExprBudgetLevel, ExprError, FidelityReport, JsonKind, RawMeta } from '../protocol/types';
 
 /**
  * 表达式结果视图态。`exprView` = **最近一次成功结果**的元信息（会话内保留，换文档即清）；
@@ -30,6 +31,12 @@ export interface ExprViewState {
   strict: boolean;
   budget: ExprBudgetLevel;
   seq: number;
+}
+
+/** 表达式状态行（命中数 / 耗时 ms）；切标签不串味，切换语言时按新语言重新格式化。 */
+export interface ExprStatusLine {
+  count: number;
+  ms: number;
 }
 
 /** 双向定位的对照锚点（#30 / ADR-0019 §5）：内存、per-tab、不持久化。 */
@@ -67,6 +74,16 @@ export interface TabViewData {
   searchOpts: TabSearchOpts;
   /** 双向定位的上次对照锚点（#30 / ADR-0019 §5） */
   anchor: ViewAnchor | null;
+  /** 最近一次成功执行的表达式文本（「重新执行」用；面板被改过则以面板当前文本为准） */
+  exprLastText: string;
+  /** 表达式行内错误（结构化；切语言按新语言重新格式化） */
+  exprErrorState: ExprError | null;
+  /** 表达式状态行（count / ms） */
+  exprStatusState: ExprStatusLine | null;
+  /** 搜索正则的引擎侧解析错误：切标签不串到另一个标签的 `SearchState`（ADR-0014 §2.3） */
+  searchPatternCore: CoreError | null;
+  /** 保真报告里的当前命中下标（`1/N` 的 N 按标签各算各的） */
+  fidelityIndex: number;
 }
 
 /**
@@ -82,5 +99,10 @@ export function defaultTabViewData(): TabViewData {
     rawScrollTopPx: 0,
     searchOpts: { caseSensitive: false, regex: false, wholeWord: false },
     anchor: null,
+    exprLastText: '',
+    exprErrorState: null,
+    exprStatusState: null,
+    searchPatternCore: null,
+    fidelityIndex: 0,
   };
 }

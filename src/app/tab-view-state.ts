@@ -25,11 +25,22 @@ import {
 import type { TabState, WorkspaceState } from '../viewmodel/workspace-state';
 
 /**
- * 有模块级镜像的字段（`capture` / `restore` 循环的就是这 5 个）。
+ * 有模块级镜像的字段（`capture` / `restore` 循环的就是这 10 个）。
  * 滚动位置刻意不在表内：它们没有镜像，`restoreActiveTabView` 直接从存档读（见 `active()`）。
  * `UnclassifiedViewField` 是编译期守卫——`TabViewData` 新增字段忘了归类会在这里报错。
  */
-export const VIEW_FIELD_KEYS = ['rawMetaInfo', 'fidelity', 'exprView', 'searchOpts', 'anchor'] as const;
+export const VIEW_FIELD_KEYS = [
+  'rawMetaInfo',
+  'fidelity',
+  'exprView',
+  'searchOpts',
+  'anchor',
+  'exprLastText',
+  'exprErrorState',
+  'exprStatusState',
+  'searchPatternCore',
+  'fidelityIndex',
+] as const;
 
 /** 有镜像的视图字段名。 */
 export type MirroredViewField = (typeof VIEW_FIELD_KEYS)[number];
@@ -120,6 +131,16 @@ export class TabViewState {
   /** 换文档（复用标签与 runtime）：存档就地复位成默认值，保持 `view` 引用稳定。 */
   reset(tab: TabState): void {
     Object.assign(tab.view, defaultTabViewData());
+  }
+
+  /**
+   * 回空态（关掉最后一个标签）：没有标签可存档，存档随标签一起没了，但**镜像还在**——
+   * 全部复位成默认值，否则空态仍能读到上一个文档的对照锚点 / 表达式反馈 / 搜索解析错误。
+   */
+  clear(): void {
+    const blank = defaultTabViewData();
+    for (const key of VIEW_FIELD_KEYS) pushFrom(this.deps, key, blank);
+    this.deps.resetTransient();
   }
 
   /**

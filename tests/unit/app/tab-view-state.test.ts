@@ -8,6 +8,7 @@ import {
   type TabViewAccessors,
   type TabViewLive,
 } from '../../../src/app/tab-view-state';
+import { CoreError } from '../../../src/protocol/errors';
 import { defaultTabViewData, type ExprViewState, type TabViewData } from '../../../src/viewmodel/tab-view-data';
 import {
   WorkspaceState,
@@ -82,6 +83,13 @@ function mirrors(): Mirrors {
   return { data: defaultTabViewData(), calls: { get: [], set: [] } };
 }
 
+/** 只取有镜像的字段（滚动位置没有镜像，不能参与镜像侧的 deep equal）。 */
+function mirroredOnly(data: TabViewData): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of VIEW_FIELD_KEYS) out[key] = data[key];
+  return out;
+}
+
 function accessorsFor(m: Mirrors): TabViewAccessors {
   const table = {} as Record<string, { get(): unknown; set(value: unknown): void }>;
   for (const key of VIEW_FIELD_KEYS) {
@@ -130,8 +138,19 @@ describe('TabViewData 字段归类', () => {
     expect(UNCLASSIFIED_VIEW_FIELDS).toEqual([]);
   });
 
-  it('镜像字段表覆盖 5 个非滚动字段', () => {
-    expect([...VIEW_FIELD_KEYS].sort()).toEqual(['anchor', 'exprView', 'fidelity', 'rawMetaInfo', 'searchOpts']);
+  it('镜像字段表覆盖 10 个非滚动字段', () => {
+    expect([...VIEW_FIELD_KEYS].sort()).toEqual([
+      'anchor',
+      'exprErrorState',
+      'exprLastText',
+      'exprStatusState',
+      'exprView',
+      'fidelity',
+      'fidelityIndex',
+      'rawMetaInfo',
+      'searchOpts',
+      'searchPatternCore',
+    ]);
   });
 });
 
@@ -340,5 +359,110 @@ describe('切标签互不串味', () => {
     h.tabView.restore(a);
     expect(h.mirrors.data.fidelity).toEqual({ hits: [{ path: '$.a' }] });
     expect(h.tabView.active()?.scrollTopPx).toBe(300);
+  });
+});
+
+describe('串味修复：镜像字段按标签存档（#58 ③）', () => {
+  it('新标签的 5 个补充字段取默认值', () => {
+    const h = makeHarness();
+    const tab = h.ws.add(tabInput())!;
+    expect(tab.view.exprLastText).toBe('');
+    expect(tab.view.exprErrorState).toBeNull();
+    expect(tab.view.exprStatusState).toBeNull();
+    expect(tab.view.searchPatternCore).toBeNull();
+    expect(tab.view.fidelityIndex).toBe(0);
+  });
+
+  it('exprLastText 跟着标签走：切到 B 不会拿 A 的表达式来「重新执行」', () => {
+    const h = makeHarness();
+    const a = h.ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }))!;
+    h.mirrors.data.exprLastText = '$.items[0]';
+    h.tabView.capture();
+
+    const b = h.ws.add(tabInput({ rootId: 'doc:2', name: 'b.json' }))!;
+    h.mirrors.data = defaultTabViewData();
+    h.tabView.restore(b);
+    expect(h.mirrors.data.exprLastText).toBe('');
+
+    h.ws.activate(a.id);
+    h.tabView.restore(a);
+    expect(h.mirrors.data.exprLastText).toBe('$.items[0]');
+  });
+
+  it('表达式行内错误 / 状态行不串到另一个标签', () => {
+    const h = makeHarness();
+    const a = h.ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }))!;
+    h.mirrors.data.exprErrorState = { code: 'PARSE_ERR_SYNTAX', line: 1, column: 3 };
+    h.mirrors.data.exprStatusState = { count: 4, ms: 12 };
+    h.tabView.capture();
+
+    const b = h.ws.add(tabInput({ rootId: 'doc:2', name: 'b.json' }))!;
+    h.mirrors.data = defaultTabViewData();
+    h.tabView.restore(b);
+    expect(h.mirrors.data.exprErrorState).toBeNull();
+    expect(h.mirrors.data.exprStatusState).toBeNull();
+
+    h.ws.activate(a.id);
+    h.tabView.restore(a);
+    expect(h.mirrors.data.exprErrorState).toEqual({ code: 'PARSE_ERR_SYNTAX', line: 1, column: 3 });
+    expect(h.mirrors.data.exprStatusState).toEqual({ count: 4, ms: 12 });
+  });
+
+  it('搜索正则解析错误不贴到新标签的 SearchState', () => {
+    const h = makeHarness();
+    const a = h.ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }))!;
+    h.mirrors.data.searchPatternCore = new CoreError({ code: 'BAD_PATTERN', message: 'bad' });
+    h.tabView.capture();
+
+    const b = h.ws.add(tabInput({ rootId: 'doc:2', name: 'b.json' }))!;
+    h.mirrors.data = defaultTabViewData();
+    h.tabView.restore(b);
+    expect(h.mirrors.data.searchPatternCore).toBeNull();
+
+    h.ws.activate(a.id);
+    h.tabView.restore(a);
+    expect(h.mirrors.data.searchPatternCore?.code).toBe('BAD_PATTERN');
+  });
+
+  it('保真报告命中下标按标签各算各的', () => {
+    const h = makeHarness();
+    const a = h.ws.add(tabInput({ rootId: 'doc:1', name: 'a.json' }))!;
+    h.mirrors.data.fidelityIndex = 3;
+    h.tabView.capture();
+
+    const b = h.ws.add(tabInput({ rootId: 'doc:2', name: 'b.json' }))!;
+    h.mirrors.data = defaultTabViewData();
+    h.tabView.restore(b);
+    expect(h.mirrors.data.fidelityIndex).toBe(0);
+
+    h.ws.activate(a.id);
+    h.tabView.restore(a);
+    expect(h.mirrors.data.fidelityIndex).toBe(3);
+  });
+});
+
+describe('clear：回空态复位镜像', () => {
+  it('没有标签时也能把全部镜像复位成默认值', () => {
+    const h = makeHarness();
+    h.mirrors.data = {
+      ...defaultTabViewData(),
+      rawMetaInfo: { lines: 3 } as never,
+      fidelity: { hits: [] } as never,
+      exprView: exprView('expr:1'),
+      scrollTopPx: 120,
+      rawScrollTopPx: 40,
+      searchOpts: { caseSensitive: true, regex: true, wholeWord: true },
+      anchor: { path: '$.a', line: 2 },
+      exprLastText: '$.items',
+      exprErrorState: { code: 'PARSE_ERR_SYNTAX' },
+      exprStatusState: { count: 2, ms: 3 },
+      searchPatternCore: new CoreError({ code: 'BAD_PATTERN', message: 'bad' }),
+      fidelityIndex: 2,
+    };
+
+    h.tabView.clear();
+
+    expect(mirroredOnly(h.mirrors.data)).toEqual(mirroredOnly(defaultTabViewData()));
+    expect(h.counters.transientResets).toBe(1);
   });
 });
