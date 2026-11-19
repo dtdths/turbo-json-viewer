@@ -172,3 +172,41 @@
 6. **否决**：(a) 保留公开 Set、只加方法（两种问法并存，身份断言继续扩散）；(b) 返回内部 Set 的只读副本
    （仍是对象身份口径）；(c) `openPaths()` 只遍历 open 子树（会漏掉折叠祖先下的惰性标记，语义不完整）。
 7. **净行为**：用户可见行为零变化；`worker.js` 15.2 → **15.3KB gz**（+0.1）。
+
+## 修订（2026-11-19）：值图解析归位 `core/json-graph`；`identity` 的 id/句柄半边确认不落地
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-19，候选 4）+ `grilling` 两拍板（Q1–Q9），
+> 实现票 **#59**。决策 1/2 不变——值图仍是唯一真相源、行模型仍按 per-open 容器 Fenwick 定位；
+> 本修订只把「值图**读**」与「行**几何**」分成两个 module。
+
+1. **问题**：`core/row-model.ts`（1000 行）一个文件三种身份——可见行几何（Fenwick / 窗口下潜 /
+   toggle / 预算）、显示序（`keysOf` / `setOrder` / `setNodeOrder`）、值图句柄与 IR 原语
+   （`valueAt` / `jsonKind` / 预览 / 全展开计数）。后果：`search` / `outline` / `profile` /
+   `doc-service` 只为了几个纯函数 import 整个行模型；`valueAt` 解析对象路径走
+   `keysOf(container).indexOf(key)`——**读一个节点要先有显示序的键表**（返回值本身顺序无关，
+   依赖是真的）。
+2. **一个纯函数模块**：`src/core/json-graph.ts`——`walkPath(root, path)` / `valueAt(root, path)` /
+   `isContainer` / `jsonKind` / `childCountOf` / 预览五件（`scalarPreview` / `inlinePreview` /
+   `summarizeContainer` / `previewOf` / `shortPreview`）/ `countAllExpandedRows`。只 import
+   `protocol/*` 与 `shared/path`，**不 import `core/order`**：显示序一行都不进值图。
+3. **路径语法只有一份**：`walkPath` 是顺序无关的解析器（对象 `hasOwnProperty` 直取；数组沿用
+   既有下标规则——`Number` 强制、负/非整数/越界拒绝、`[]`→0、`[-0]`→0、未闭合 `[1` 仍解析出 1），
+   缺失段与越界抛 `BAD_COMMAND`（文案与历史一致），畸形路径串仍抛普通 `Error`（由 Worker 边界折算）。
+   行模型需要的**显示 slot** 由 `RowModel.displaySlotOf` 自己按 `keysOf` 换算——几何本来就该知道显示序。
+4. **行为等价有守门人**：`tests/unit/core/json-graph.test.ts` 留了一份**只存在于测试**的旧口径参考实现
+   （`Object.keys().indexOf`），对 45 条路径语料逐条比对返回值与抛错码；外加与 `RowModel.valueAt`
+   在三种显示序下交叉验证、以及 `walkPath` 每步 `key`/`parent` 对齐。`RowModel.valueAt` 现在是一行委托。
+5. **接口收窄**：`row-model.ts` 不再导出任何图函数（`isArrayContainer` 这个零引用死导出一并删除）；
+   `search` / `outline` / `profile` / `doc-service` 只 import `json-graph`。行模型 1000 → 851 行。
+6. **`identity` 这笔债确认不还**：决策 3 的「运行期懒 id + `(parent, slot)` 标量句柄」是**有意未落地**
+   ——运行期一律走**路径**口径（`isOpenAt(path)` / `openPaths()` / 选中 path，见本 ADR「改：展开态只用
+   path 口径」修订），标量没有对象身份这件事用路径直接绕开了。README §3.2 的 `identity` 行因此标注
+   「未实现」；下一轮别再把「补 identity」当成候选。
+7. **被否决**：(a) 有状态的 `JsonGraph` 实例（`new JsonGraph(root)`）——四个消费者本来就吃 `unknown`，
+   实例只是把同一个根再存一份，且根替换要三处同步；(b) 只搬纯函数、`valueAt` 留在行模型——
+   「路径→值」这条最该归位的规则继续被几何绑架；(c) 把 `setOrder` / `setNodeOrder` / `displayOrderAt`
+   也搬走——它们本质是「重排 → 重建 Fenwick」，搬走等于把几何拆成两半；(d) 让 `json-graph` import
+   `core/order` 以便复用 `keysOf`——显示序重新渗进值图。
+8. **代价**：单测 1453 → **1514**（+61，全部在新文件）；`worker.js` 66.2 → **66.3KB gz**（+0.1；
+   无硬预算、只记录）；`page.js` 55.3 / 懒加载 145.9 / `page.css` 9.2 / 语言包 6.4·7.2 **零变化**
+   （`core/*` 只进 worker）；17 套冒烟断言零改动。

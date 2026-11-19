@@ -167,6 +167,28 @@ export interface WindowAdapter<P, Reply> {
 **性能约束**：单行窗口 p95 0.1ms；端到端含 rAF ≈2ms；overscan 8 下平滑滚动空白率 0。
 **删除测试**：删掉 machine → row/raw 各自复制单飞/合并/版本/重试/锚点，S2 语义分叉、两套测试复现；删掉 adapter → `view` 越过 S2 直接依赖传输形状，换数据源要改 `TreeView`/`RawView`。
 
+### 3.1 值图读（`core/json-graph`）——不是 seam，是 S2 下面的数据边界
+
+**位置**：`src/core/json-graph.ts`（Worker 内，纯函数、零状态）。ADR-0002 修订 2026-11-19，票 #59。
+
+```ts
+export function walkPath(root: unknown, path: Path): { parent: Container; key: string; node: unknown }[];
+export function valueAt(root: unknown, path: Path): unknown;   // 缺失段 → BAD_COMMAND
+export function jsonKind(node: unknown): JsonKind;
+export function isContainer(node: unknown): node is Container;
+export function childCountOf(container: Container): number;
+export function previewOf(node: unknown, open: boolean): string; // + scalarPreview / inlinePreview / summarizeContainer / shortPreview
+export function countAllExpandedRows(value: unknown, limit: number): number;
+```
+
+**不变式**
+- 只 import `protocol/*` 与 `shared/path`；**不 import `core/order`**——显示序一行都不进值图。
+- 路径解析**顺序无关**：对象问自有属性，数组按下标规则；`RowModel` 需要的显示 slot 由它自己按 `keysOf` 换算（几何本来就该知道显示序）。
+- `RowModel.valueAt` 是一行委托；`row-model.ts` **不 re-export** 任何图函数（单入口）。
+- 行为等价由 `tests/unit/core/json-graph.test.ts` 的旧口径参考实现守着（参考实现只存在于测试）。
+
+**删除测试**：删掉 → `search` / `outline` / `profile` / `doc-service` 重新 import 1000 行行模型；路径语法回到「几何与数据读共用一份实现」，读一个节点要先有显示序的键表。
+
 ## 4. S3 · 行渲染器
 
 **位置**：`view` 内，`TreeView` 与「一行 DOM」之间——**这是「逻辑不动调渲染」的唯一开关**。
