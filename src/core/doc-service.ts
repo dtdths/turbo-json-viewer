@@ -30,6 +30,7 @@
  * `profile`（#43 / ADR-0025）已实装：两遍采样 + 按 (rootId, docRevision) 缓存 + 回填 nodeCountCache。
  */
 import { CoreError } from '../protocol/errors';
+import { RootDerived } from './root-derived';
 import type {
   CloseRootReply,
   Command,
@@ -54,7 +55,6 @@ import type {
   EvalReply,
   ExprCompletion,
   ExprLocateReply,
-  FidelityReport,
   JsonKind,
   OutlineReply,
   Path,
@@ -68,7 +68,7 @@ import type {
   RowWindow,
   SortOrder,
 } from '../protocol/types';
-import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget, RAW_PATH_CACHE_SIZE } from '../protocol/versions';
+import { ADAPTIVE_EXPAND_ROWS, EDIT_MAX_BYTES, exprBudget } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { copyNodeText } from './copy';
 import {
@@ -130,17 +130,10 @@ export class DocService {
   private readonly pendingLoads = new Map<number, { cancelled: boolean }>();
   private readonly cancelledSearches = new Set<number>();
   /**
-   * 保真报告缓存（#23）：按**根对象身份**缓存——源文本不变就不重扫（编辑不重扫，ADR 修订 §1）。
-   * 用 WeakMap 而不是 Root 字段：文档替换 = 旧根被丢弃 → 缓存随根一起可回收，无需清理代码。
+   * 根级派生状态（保真报告 / path↔offset 索引 / 单路径偏移 / 节点数 / 文档概要）：
+   * 失效键与释放纪律见 `core/root-derived`。根死亡时由 `releaseRootState` 统一 `release`。
    */
-  private readonly fidelityCache = new WeakMap<Root, FidelityReport>();
-  /**
-   * 双向定位（#30 / ADR-0019）：源文本 path↔offset 索引按**根对象身份**惰性构建。
-   * WeakMap → 文档替换 / 关闭即随旧根回收，无需显式清理；只依赖源文本、不受临时编辑影响。
-   */
-  private readonly pathIndexCache = new WeakMap<Root, SourcePathIndex>();
-  /** 树→原文（path→offset）结果缓存：每根 LRU(RAW_PATH_CACHE_SIZE)；null 也缓存（避免反复全扫） */
-  private readonly offsetCache = new WeakMap<Root, Map<Path, number | null>>();
+  private readonly derived = new RootDerived();
   /** 表达式根 id 序号（`expr:1`、`expr:2`…；LRU 由 RootStore 收口） */
   private nextExprId = 0;
   /**
@@ -148,16 +141,6 @@ export class DocService {
    * 迟到的窗口/搜索回包因此不可能命中新根（ADR-0009 §2 / §后果）。
    */
   private nextDocId = 0;
-  /**
-   * 文档节点数缓存（表达式步数预算用，ADR-0018 §3）：键 = doc 根 id，
-   * 值 = { docRevision, count }——编辑推进 docRevision 后自动失效重算；首求值才计算（不拖慢导入）。
-   */
-  private readonly nodeCountCache = new Map<RootId, { docRevision: number; count: number }>();
-  /**
-   * 文档概要采样缓存（#43 / ADR-0025 §3）：键 = doc 根 id，值 = { docRevision, profile }。
-   * 编辑推进 docRevision 后自动失效（不自动重采）；`closeRoot` 随根释放；不持久化。
-   */
-  private readonly profileCache = new Map<RootId, { docRevision: number; profile: DocumentProfile }>();
   private latestLoadId = -1;
   /**
    * 搜索抢占 seq：**按根各自单调**（`Map<rootId, seq>`）。
@@ -193,8 +176,7 @@ export class DocService {
     this.latestSearchSeq.clear();
     this.roots.clear();
     this.histories.clear();
-    this.nodeCountCache.clear();
-    this.profileCache.clear();
+    this.derived.clear();
   }
 
   /* ------------------------------ dispatch ------------------------------ */
@@ -386,11 +368,10 @@ export class DocService {
     return { rootId: root.rootId, closed: true };
   }
 
-  /** 释放一个根的旁路状态（编辑历史 / 节点数缓存 / 搜索抢占 seq）；不负责从 RootStore 删根。 */
+  /** 释放一个根的旁路状态（派生缓存 / 编辑历史 / 搜索抢占 seq）；不负责从 RootStore 删根。 */
   private dropRootState(rootId: RootId): void {
     this.histories.delete(rootId);
-    this.nodeCountCache.delete(rootId);
-    this.profileCache.delete(rootId);
+    this.derived.release(rootId);
     this.latestSearchSeq.delete(rootId);
   }
 
@@ -819,12 +800,7 @@ export class DocService {
 
   /** 源文本结构索引（path↔offset）：首次双向定位命令才构建（50MB ≈ 一次词法扫描 + 检查点）。 */
   private pathIndexOf(root: Root): SourcePathIndex {
-    let index = this.pathIndexCache.get(root);
-    if (!index) {
-      index = new SourcePathIndex(this.requireSource(root).text);
-      this.pathIndexCache.set(root, index);
-    }
-    return index;
+    return this.derived.get(root, 'pathIndex', () => new SourcePathIndex(this.requireSource(root).text));
   }
 
   /**
@@ -855,26 +831,9 @@ export class DocService {
     if (index.mode === 'plain') {
       return { rootId: root.rootId, path: cmd.path, offset: null, line: null };
     }
-    let cache = this.offsetCache.get(root);
-    if (!cache) {
-      cache = new Map<Path, number | null>();
-      this.offsetCache.set(root, cache);
-    }
-    const cached = cache.get(cmd.path);
-    let offset: number | null;
-    if (cached !== undefined || cache.has(cmd.path)) {
-      offset = cached as number | null;
-      // LRU：命中挪到队尾
-      cache.delete(cmd.path);
-      cache.set(cmd.path, offset);
-    } else {
-      offset = this.pathIndexOf(root).offsetOfPath(cmd.path);
-      cache.set(cmd.path, offset);
-      if (cache.size > RAW_PATH_CACHE_SIZE) {
-        const oldest = cache.keys().next().value;
-        if (oldest !== undefined) cache.delete(oldest);
-      }
-    }
+    const offset = this.derived.getAt(root, 'offset', cmd.path, () =>
+      this.pathIndexOf(root).offsetOfPath(cmd.path),
+    );
     if (offset === null) return { rootId: root.rootId, path: cmd.path, offset: null, line: null };
     return { rootId: root.rootId, path: cmd.path, offset, line: index.locate(offset) };
   }
@@ -893,7 +852,7 @@ export class DocService {
    */
   private async fidelity(cmd: Cmd<'fidelity'>): Promise<FidelityReply> {
     const root = this.roots.require(cmd.rootId);
-    const cached = this.fidelityCache.get(root);
+    const cached = this.derived.peek(root, 'fidelity');
     if (cached !== undefined) {
       return { rootId: root.rootId, docRevision: root.docRevision, report: cached };
     }
@@ -908,7 +867,7 @@ export class DocService {
         message: `fidelity scan for root ${cmd.rootId} cancelled`,
       });
     }
-    this.fidelityCache.set(root, report);
+    this.derived.set(root, 'fidelity', report);
     return { rootId: root.rootId, docRevision: root.docRevision, report };
   }
 
@@ -931,11 +890,7 @@ export class DocService {
    * 编辑推进 docRevision 后自动失效。50MB ≈3M 节点，估 30–60ms（ADR-0018 §3 已知差距）。
    */
   private docNodeCount(root: Root): number {
-    const cached = this.nodeCountCache.get(root.rootId);
-    if (cached !== undefined && cached.docRevision === root.docRevision) return cached.count;
-    const count = countDocumentNodes(root.rowModel.value);
-    this.nodeCountCache.set(root.rootId, { docRevision: root.docRevision, count });
-    return count;
+    return this.derived.get(root, 'nodeCount', () => countDocumentNodes(root.rowModel.value));
   }
 
   /**
@@ -1005,20 +960,19 @@ export class DocService {
    */
   private profile(cmd: Cmd<'profile'>): DocumentProfile {
     const docRoot = this.requireDocRoot(cmd.rootId);
-    const cached = this.profileCache.get(docRoot.rootId);
-    if (cached !== undefined && cached.docRevision === docRoot.docRevision) return cached.profile;
+    const cached = this.derived.peek(docRoot, 'profile');
+    if (cached !== undefined) return cached;
 
     const profile = buildDocumentProfile(docRoot.rowModel.value);
-    this.profileCache.set(docRoot.rootId, { docRevision: docRoot.docRevision, profile });
+    this.derived.set(docRoot, 'profile', profile);
     // 回填节点数缓存（ADR-0025 §3）：profile 已走过全图，表达式预算不需要再数一遍
-    this.nodeCountCache.set(docRoot.rootId, { docRevision: docRoot.docRevision, count: profile.nodeCount });
+    this.derived.set(docRoot, 'nodeCount', profile.nodeCount);
     return profile;
   }
 
   /** 取与当前 docRevision 一致的缓存 profile（**不触发采样**）；未就绪 → undefined。 */
   private cachedProfile(root: Root): DocumentProfile | undefined {
-    const cached = this.profileCache.get(root.rootId);
-    return cached !== undefined && cached.docRevision === root.docRevision ? cached.profile : undefined;
+    return this.derived.peek(root, 'profile');
   }
 
   /**

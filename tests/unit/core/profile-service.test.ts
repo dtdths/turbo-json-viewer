@@ -131,20 +131,21 @@ describe('DocService.profile — 契约（ADR-0025 §3/§5）', () => {
     expect((await errorOf(profileOf(svc, 'doc:999'))).code).toBe('NO_ROOT');
   });
 
-  it('closeRoot 清缓存条目（白盒：旁路缓存随根释放）', async () => {
+  it('closeRoot 释放派生缓存条目（release 纪律）', async () => {
     const svc = new DocService();
     const loaded = await load(svc);
     await profileOf(svc, loaded.rootId);
 
-    // 白盒访问：profile 缓存是 doc-service 的旁路状态，与 nodeCountCache 同处清理（ADR-0025 §8）
-    const internals = svc as unknown as { profileCache: Map<string, unknown> };
-    expect(internals.profileCache.size).toBe(1);
+    // 派生缓存已收进 RootDerived（ADR-0008 修订 2026-11-19）：这里只断言「根关闭触发释放」，
+    // 缓存本体的失效矩阵由 root-derived 自己的单测覆盖。
+    const internals = svc as unknown as { derived: { release(rootId: string): void } };
+    const release = vi.spyOn(internals.derived, 'release');
 
     expect(await svc.dispatch({ t: 'closeRoot', rootId: loaded.rootId })).toEqual({
       rootId: loaded.rootId,
       closed: true,
     });
-    expect(internals.profileCache.size).toBe(0);
+    expect(release).toHaveBeenCalledWith(loaded.rootId);
     expect((await errorOf(profileOf(svc, loaded.rootId))).code).toBe('NO_ROOT');
   });
 });
