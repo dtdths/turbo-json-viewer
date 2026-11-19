@@ -72,6 +72,7 @@ import type {
 } from '../protocol/types';
 import type { EditReply, LoadReply, RootVersion } from '../protocol/messages';
 import { DocSession, type LandingPlan, type SessionState } from './doc-session';
+import type { ExprViewState } from '../viewmodel/tab-view-data';
 import {
   installDevHook,
   type DevHookDeps,
@@ -996,28 +997,6 @@ settings.subscribe(() => applySettings());
 applySettings();
 
 /* ---------------- 表达式视图（#12 / #27 / ADR-0018） ---------------- */
-
-/**
- * 表达式结果视图态。`exprView` = **最近一次成功结果**的元信息（会话内保留，换文档即清）；
- * `exprViewActive` = 树区当前是否显示该结果根（「切文档树模式即回」后仍保留，重进表达式模式可恢复）。
- * 结果根本体在 worker 的 RootStore 里（LRU 3），页面只持坐标，不持文档。
- */
-interface ExprViewState {
-  rootId: string;
-  docRevision: number;
-  rowVersion: number;
-  totalRows: number;
-  count: number;
-  kind: JsonKind;
-  ms: number;
-  steps: number;
-  truncated: boolean;
-  skipped: number;
-  text: string;
-  strict: boolean;
-  budget: ExprBudgetLevel;
-  seq: number;
-}
 
 let exprView: ExprViewState | null = null;
 let exprViewActive = false;

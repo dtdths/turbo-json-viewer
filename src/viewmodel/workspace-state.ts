@@ -22,6 +22,7 @@ import type { RowWindowSource } from './row-window-source';
 import type { RawWindowSource } from './raw-window-source';
 import type { SearchState } from './search-state';
 import type { EditState } from './edit-state';
+import { defaultTabViewData, type TabViewData } from './tab-view-data';
 
 /** 每个标签私有的四份 runtime adapter；切标签时整组替换（ADR-0009 §3）。 */
 export interface TabRuntime {
@@ -48,6 +49,12 @@ export interface TabState extends TabInput {
   runtime: TabRuntime;
   /** 选中节点 path（每标签独立，ADR-0009 §3） */
   selected: string | null;
+  /**
+   * 视图存档（候选 2 / ADR-0008 修订 2026-11-19）：原文元信息 / 保真报告 / 表达式结果 /
+   * 滚动位置 / 搜索开关 / 对照锚点。切标签时的搬运由 `app/tab-view-state.ts` 独占，
+   * 本模块只当它是「每标签一份、随标签一起生灭」的纯数据。
+   */
+  view: TabViewData;
 }
 
 export interface TabView {
@@ -139,6 +146,7 @@ export class WorkspaceState {
       totalRows: input.totalRows,
       runtime: this.makeRuntime(),
       selected: null,
+      view: defaultTabViewData(),
     };
     this.tabs.push(tab);
     this.activeIdValue = tab.id;
@@ -188,6 +196,8 @@ export class WorkspaceState {
     tab.rowVersion = input.rowVersion;
     tab.totalRows = input.totalRows;
     tab.selected = null;
+    // 换文档 = 上一份文档的视图态全部作废（就地复位，保持 `view` 引用稳定）
+    Object.assign(tab.view, defaultTabViewData());
     this.emit();
     return tab;
   }
