@@ -70,10 +70,23 @@ export interface Root {
   lastUsedAt: number;
 }
 
+export interface RootStoreOptions {
+  /**
+   * 根被**释放**时回调（`close` / LRU 淘汰 / `clear` 三处都触发，同一根只触发一次）。
+   * `DocService` 用它把「旁路状态随根释放」收在一处（派生缓存 / 编辑历史 / 搜索抢占 seq）。
+   */
+  onRelease?: (rootId: RootId) => void;
+}
+
 export class RootStore {
   private readonly roots = new Map<RootId, Root>();
   /** 非 doc 根的 LRU 顺序，最久未用在最前 */
   private readonly lru: RootId[] = [];
+  private readonly onRelease?: (rootId: RootId) => void;
+
+  constructor(options: RootStoreOptions = {}) {
+    this.onRelease = options.onRelease;
+  }
 
   get size(): number {
     return this.roots.size;
@@ -112,7 +125,11 @@ export class RootStore {
       const victimId = this.lru.shift() as RootId;
       const victim = this.roots.get(victimId);
       this.roots.delete(victimId);
-      if (victim) evicted.push(victim);
+      if (victim) {
+        evicted.push(victim);
+        // 淘汰也是「根死亡」：旁路状态必须一起释放（此前只 emit stale，旁路状态会残留）
+        this.onRelease?.(victimId);
+      }
     }
     return evicted;
   }
@@ -131,14 +148,16 @@ export class RootStore {
   delete(rootId: RootId): boolean {
     const at = this.lru.indexOf(rootId);
     if (at >= 0) this.lru.splice(at, 1);
-    return this.roots.delete(rootId);
+    const deleted = this.roots.delete(rootId);
+    if (deleted) this.onRelease?.(rootId);
+    return deleted;
   }
 
   /**
    * 关闭根（#18 / ADR-0009 §2）：从根表删除并清掉 LRU 邻接，返回被删的根（未知根 → undefined）。
    *
-   * 只负责 RootStore 自身状态（`roots` + `lru`）；历史 / 节点数缓存 / 在途回包等旁路状态
-   * 由 `DocService.closeRoot` 一并释放。**幂等**：删两次第二次返回 undefined（不抛）。
+   * 只负责 RootStore 自身状态（`roots` + `lru`）；旁路状态（派生缓存 / 编辑历史 / 搜索抢占 seq）
+   * 由 `onRelease` 回调方统一释放。**幂等**：删两次第二次返回 undefined（不抛），也不会重复回调。
    */
   close(rootId: RootId): Root | undefined {
     const root = this.roots.get(rootId);
@@ -148,6 +167,7 @@ export class RootStore {
   }
 
   clear(): void {
+    for (const rootId of this.roots.keys()) this.onRelease?.(rootId);
     this.roots.clear();
     this.lru.length = 0;
   }

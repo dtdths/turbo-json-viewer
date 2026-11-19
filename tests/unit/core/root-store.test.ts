@@ -135,3 +135,39 @@ describe('RootStore — close（#18 / ADR-0009 §2）', () => {
     expect(store.ids()).toEqual(['expr:2', 'expr:3', 'expr:4']);
   });
 });
+
+describe('RootStore — onRelease（根死亡统一回调，ADR-0008 修订 2026-11-19）', () => {
+  it('close 触发一次；重复 close 不再触发（幂等）', () => {
+    const released: RootId[] = [];
+    const store = new RootStore({ onRelease: (id) => released.push(id) });
+    store.put(makeRoot('doc:1', 'doc'));
+    expect(store.close('doc:1')?.rootId).toBe('doc:1');
+    expect(store.close('doc:1')).toBeUndefined();
+    expect(released).toEqual(['doc:1']);
+  });
+
+  it('LRU 淘汰触发被淘汰根的回调（此前只 emit stale，旁路状态会残留）', () => {
+    const released: RootId[] = [];
+    const store = new RootStore({ onRelease: (id) => released.push(id) });
+    putAll(store, ['expr:1', 'expr:2', 'expr:3']);
+    expect(released).toEqual([]);
+    store.put(makeRoot('expr:4', 'expression'));
+    expect(released).toEqual(['expr:1']);
+  });
+
+  it('clear 对每个存活根各触发一次（含 doc 根）', () => {
+    const released: RootId[] = [];
+    const store = new RootStore({ onRelease: (id) => released.push(id) });
+    store.put(makeRoot('doc:1', 'doc'));
+    putAll(store, ['expr:1', 'expr:2']);
+    store.clear();
+    expect(released.sort()).toEqual(['doc:1', 'expr:1', 'expr:2']);
+    expect(store.size).toBe(0);
+  });
+
+  it('未注册回调时行为不变（close 返回被删根）', () => {
+    const store = new RootStore();
+    store.put(makeRoot('doc:1', 'doc'));
+    expect(store.close('doc:1')?.rootId).toBe('doc:1');
+  });
+});

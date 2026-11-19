@@ -3,6 +3,7 @@ import { CoreError } from '../../../src/protocol/errors';
 import { DocService } from '../../../src/core/doc-service';
 import type { Command, CoreEvent, LoadReply } from '../../../src/protocol/messages';
 import { EDIT_MAX_BYTES, OUTLINE_PAGE_MAX } from '../../../src/protocol/versions';
+import { MAX_EXPRESSION_ROOTS } from '../../../src/core/root-store';
 
 const DOC = { a: 1, b: { c: 2 } };
 const JSON_TEXT = JSON.stringify(DOC);
@@ -1847,5 +1848,33 @@ describe('DocService — 表达式行窗口的原文档路径（#47 #8）', () =
     const doc = await load(svc, '{"a":1}');
     const win = await svc.dispatch({ t: 'window', rootId: doc.rootId, rowVersion: 1, seq: 1, start: 0, count: 5 });
     expect(rowsOf(win).every((row) => !('originPath' in row))).toBe(true);
+  });
+});
+
+describe('DocService — 根死亡统一释放旁路状态（ADR-0008 修订 2026-11-19）', () => {
+  it('表达式根被 LRU 淘汰时，它的搜索抢占 seq 不残留', async () => {
+    const svc = new DocService();
+    const doc = await load(svc, '{"items":[1,2,3]}');
+    const exprIds: string[] = [];
+    for (let i = 0; i <= MAX_EXPRESSION_ROOTS; i += 1) {
+      const evaled = await svc.dispatch({
+        t: 'eval',
+        rootId: doc.rootId,
+        seq: i + 1,
+        text: '$.items',
+        strict: false,
+        budget: 'standard',
+      });
+      expect(evaled.ok).toBe(true);
+      if (evaled.ok !== true) return;
+      exprIds.push(evaled.rootId);
+      // 在表达式根上搜一次 → 该根在 latestSearchSeq 里留一条
+      await svc.dispatch({ t: 'search', rootId: evaled.rootId, seq: 1, query: '1' });
+    }
+    const internals = svc as unknown as { latestSearchSeq: Map<string, number> };
+    // 第 4 个表达式根把第 1 个挤出 LRU：RootStore.onRelease → releaseRootState 必须一起清掉
+    expect(exprIds).toHaveLength(MAX_EXPRESSION_ROOTS + 1);
+    expect(internals.latestSearchSeq.has(exprIds[0])).toBe(false);
+    for (const id of exprIds.slice(1)) expect(internals.latestSearchSeq.has(id)).toBe(true);
   });
 });

@@ -123,7 +123,11 @@ interface RootMutation {
 
 /** 把 start/count/offset 夹到 [min, max] 的整数（非有限值 → min）。 */
 export class DocService {
-  private readonly roots = new RootStore();
+  /**
+   * 根表：**根死亡只有这一个 owner**——`close` / LRU 淘汰 / `clear` 都会回调 `releaseRootState`，
+   * 旁路状态（派生缓存 / 编辑历史 / 搜索抢占 seq）因此只在一处释放。
+   */
+  private readonly roots = new RootStore({ onRelease: (rootId) => this.releaseRootState(rootId) });
   /** 每根一份编辑历史（多文档标签按 rootId 隔离；closeRoot 时随根释放，ADR-0009 §2） */
   private readonly histories = new Map<RootId, EditHistory>();
   private readonly listeners = new Set<(event: CoreEvent) => void>();
@@ -356,20 +360,22 @@ export class DocService {
     const root = this.roots.get(cmd.rootId);
     if (root === undefined) return { rootId: cmd.rootId, closed: false };
 
-    // 连带丢弃直接子根（当前只有 expression 用 parentRootId；本轮 id 快照避免边遍历边改）
+    // 连带丢弃直接子根（当前只有 expression 用 parentRootId；本轮 id 快照避免边遍历边改）。
+    // 旁路状态由 RootStore.onRelease 统一释放，这里只删根。
     for (const rootId of this.roots.ids()) {
       if (rootId !== root.rootId && this.roots.get(rootId)?.parentRootId === root.rootId) {
         this.roots.close(rootId);
-        this.dropRootState(rootId);
       }
     }
     this.roots.close(root.rootId);
-    this.dropRootState(root.rootId);
     return { rootId: root.rootId, closed: true };
   }
 
-  /** 释放一个根的旁路状态（派生缓存 / 编辑历史 / 搜索抢占 seq）；不负责从 RootStore 删根。 */
-  private dropRootState(rootId: RootId): void {
+  /**
+   * 释放一个根的旁路状态（派生缓存 / 编辑历史 / 搜索抢占 seq）。
+   * **唯一调用方是 `RootStore.onRelease`**（close / LRU 淘汰 / clear 三处根死亡都过这里）。
+   */
+  private releaseRootState(rootId: RootId): void {
     this.histories.delete(rootId);
     this.derived.release(rootId);
     this.latestSearchSeq.delete(rootId);
