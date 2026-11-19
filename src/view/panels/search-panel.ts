@@ -5,7 +5,7 @@
  *   - 自建 DOM；page.html 只留 `<div class="panel panel--search" id="searchPanel">` 挂载点。
  *   - 只读 `SearchPanelView` 快照渲染；不发请求、不 import core、不读全局时钟。
  *   - 结果列表虚拟化：固定 44px 行、spacer = size × 44、窗口由 viewmodel 的
- *     `computeResultWindow` 计算；行节点池复用，滚动只重画窗口。
+ *     `VirtualList` 计算；行节点池复用，滚动只重画窗口。
  *
  * 搜索选项（ADR-0014 §2.1）：查询框右侧三个真实 `<button>`——`Aa`（区分大小写）、`.*`（正则）、
  * `\b`（全字匹配， #53），`aria-pressed` 反映状态、Tab 顺序在查询框之后；点击只回调
@@ -20,11 +20,11 @@
  * DOM 契约（§3.1）的 class / id 由 app 与 smoke 脚本依赖，不要改名。
  */
 import { writeMarkedText } from '../highlight';
+import { VirtualList, type VirtualPaint } from '../virtual-list';
 import type { SearchFilter, SearchPanelView } from '../../viewmodel/search-state';
 import {
   SEARCH_RESULT_OVERSCAN,
   SEARCH_RESULT_ROW_HEIGHT,
-  computeResultWindow,
 } from '../../viewmodel/search-state';
 import { SEARCH_LIMIT } from '../../protocol/versions';
 import type { Hit } from '../../protocol/types';
@@ -177,7 +177,8 @@ export class SearchPanel {
 
   private mounted = false;
   private view: SearchPanelView | null = null;
-  private rendered = 0;
+  /** 虚拟列表：spacer / 槽位池 / 隐藏与复用清理（seams S3b） */
+  private list: VirtualList | null = null;
 
   private input!: HTMLInputElement;
   private optsEl!: HTMLElement;
@@ -217,8 +218,10 @@ export class SearchPanel {
   /** 底栏前缀文本节点（`虚拟滚动 · 已渲染 `），relabel 时改文本 */
   private footPrefixNode: Text | null = null;
 
-  private readonly slots: ResultSlot[] = [];
-  private resizeObserver: ResizeObserver | null = null;
+  /** 槽位元素 → 内部引用（池由 VirtualList 持有，这里只认元素） */
+  private readonly slotRefs = new WeakMap<HTMLElement, ResultSlot>();
+  /** 已创建的槽位元素（relabel / destroy 用；池只增不缩，所以与池等长） */
+  private readonly slotNodes: HTMLElement[] = [];
 
   constructor(host: HTMLElement, opts: SearchPanelOptions) {
     this.host = host;
@@ -407,7 +410,6 @@ export class SearchPanel {
     this.prevBtn.addEventListener('click', this.handlePrev);
     this.nextBtn.addEventListener('click', this.handleNext);
     this.optsEl.addEventListener('click', this.handleOptionsClick);
-    this.scroller.addEventListener('scroll', this.handleScroll, { passive: true });
     this.filtersEl.addEventListener('click', this.handleFiltersClick);
     this.windowEl.addEventListener('click', this.handleRowClick);
     this.windowEl.addEventListener('dblclick', this.handleRowDblClick);
@@ -415,8 +417,16 @@ export class SearchPanel {
     this.scroller.addEventListener('keydown', this.handleRowKeydown);
     this.footRestore.addEventListener('click', this.handleRestoreHidden);
 
-    this.resizeObserver = new ResizeObserver(() => this.drawWindow());
-    this.resizeObserver.observe(this.scroller);
+    this.list = new VirtualList({
+      scroller: this.scroller,
+      spacer: this.spacer,
+      host: this.windowEl,
+      rowHeight: this.rowHeight,
+      overscan: this.overscan,
+      createSlot: () => this.createSlot(),
+      paint: (ctx) => this.paintSlot(ctx),
+      clearSlot: (el) => this.clearSlot(el),
+    });
   }
 
   /**
@@ -442,7 +452,9 @@ export class SearchPanel {
     this.filtersEl.setAttribute('aria-label', t('view.search.filters.label'));
     this.scroller.setAttribute('aria-label', t('view.search.list.label'));
     for (const [filter, node] of this.filterLabelNodes) node.textContent = filterLabel(filter);
-    for (const slot of this.slots) {
+    for (const node of this.slotNodes) {
+      const slot = this.slotRefs.get(node);
+      if (!slot) continue;
       slot.hideEl.title = t('view.search.hide.title');
       slot.el.setAttribute('aria-keyshortcuts', 'Delete');
     }
@@ -464,11 +476,11 @@ export class SearchPanel {
     this.updateFilters(view);
     this.updateEmptyState(view);
 
-    this.spacer.style.height = `${Math.max(0, view.size) * this.rowHeight}px`;
-    if (hitsChanged) this.scroller.scrollTop = 0;
-
-    // drawWindow 内部同步更新 rendered 与 foot（滚动重画时 foot 也保持准确）
-    this.drawWindow();
+    // 命中集换了 → 回顶；setSize 内部同步 spacer 并重画窗口
+    if (hitsChanged && this.list) this.list.scrollTop = 0;
+    this.list?.setSize(view.size);
+    // 滚动重画时 foot 也保持准确（paint 只负责行内容）
+    this.updateFoot(view);
   }
 
   focusInput(): void {
@@ -492,8 +504,8 @@ export class SearchPanel {
 
     const target = clamp(Math.trunc(index), 0, view.size - 1);
     const top = target * this.rowHeight;
-    const height = this.scroller.clientHeight;
-    const currentTop = this.scroller.scrollTop;
+    const height = this.list?.viewportPx() ?? 0;
+    const currentTop = this.list?.scrollTop ?? 0;
 
     let nextTop = currentTop;
     if (height <= 0) {
@@ -504,30 +516,29 @@ export class SearchPanel {
       nextTop = top + this.rowHeight - height;
     }
 
-    if (nextTop !== currentTop) this.scroller.scrollTop = Math.max(0, nextTop);
-    this.drawWindow();
+    if (nextTop !== currentTop && this.list) this.list.scrollTop = Math.max(0, nextTop);
+    this.list?.draw();
   }
 
   resetScroll(): void {
-    if (!this.mounted) return;
-    this.scroller.scrollTop = 0;
-    this.drawWindow();
+    if (!this.mounted || !this.list) return;
+    this.list.scrollTop = 0;
+    this.list.draw();
   }
 
   /** 当前可见（非 hidden）结果行数。 */
   renderedCount(): number {
-    return this.rendered;
+    return this.list?.rendered ?? 0;
   }
 
   listScrollTop(): number {
-    return this.mounted ? this.scroller.scrollTop : 0;
+    return this.mounted && this.list ? this.list.scrollTop : 0;
   }
 
   scrollListTo(px: number): void {
-    if (!this.mounted) return;
-    const top = Number.isFinite(px) ? Math.max(0, px) : 0;
-    this.scroller.scrollTop = top;
-    this.drawWindow();
+    if (!this.mounted || !this.list) return;
+    this.list.scrollTop = Number.isFinite(px) ? Math.max(0, px) : 0;
+    this.list.draw();
   }
 
   /** 面板自报的状态快照（dev hook 用）：渲染数 / 滚动几何 / 计数与页脚文本。 */
@@ -540,7 +551,7 @@ export class SearchPanel {
     footText: string;
   } {
     return {
-      rendered: this.rendered,
+      rendered: this.list?.rendered ?? 0,
       listScrollTop: this.scroller?.scrollTop ?? 0,
       listScrollHeight: this.scroller?.scrollHeight ?? 0,
       countText: this.countValue?.textContent ?? '',
@@ -556,21 +567,19 @@ export class SearchPanel {
     this.optsEl.removeEventListener('click', this.handleOptionsClick);
     this.prevBtn.removeEventListener('click', this.handlePrev);
     this.nextBtn.removeEventListener('click', this.handleNext);
-    this.scroller.removeEventListener('scroll', this.handleScroll);
+    this.list?.destroy();
+    this.list = null;
     this.filtersEl.removeEventListener('click', this.handleFiltersClick);
     this.windowEl.removeEventListener('click', this.handleRowClick);
     this.windowEl.removeEventListener('dblclick', this.handleRowDblClick);
     this.scroller.removeEventListener('keydown', this.handleRowKeydown);
     this.footRestore.removeEventListener('click', this.handleRestoreHidden);
-    this.resizeObserver?.disconnect();
-    this.resizeObserver = null;
-    this.slots.length = 0;
+    this.slotNodes.length = 0;
     this.filterButtons.clear();
     this.filterLabelNodes.clear();
     this.footPrefixNode = null;
     this.host.replaceChildren();
     this.view = null;
-    this.rendered = 0;
     this.mounted = false;
   }
 
@@ -672,7 +681,7 @@ export class SearchPanel {
       this.footTruncated.hidden = true;
       this.footTruncated.textContent = '';
     } else {
-      this.footRendered.textContent = formatCount(this.rendered);
+      this.footRendered.textContent = formatCount(this.list?.rendered ?? 0);
       this.footTotal.textContent = formatCount(view.size);
       this.footTruncated.hidden = !view.truncated;
       // 带前导空格直接写进 truncate span，保证未截断时 foot.textContent 以数字结尾（无尾随空格）
@@ -697,98 +706,71 @@ export class SearchPanel {
     this.footHidden.hidden = false;
   }
 
-  /** 只重画可见窗口：spacer 撑出总高度，窗口内行节点池复用。 */
-  private drawWindow(): void {
+  /** 造一个结果行（池由 VirtualList 持有；这里只负责 DOM 形状与内部引用表）。 */
+  private createSlot(): HTMLElement {
+    const elBtn = el('button', 'result');
+    elBtn.type = 'button';
+    elBtn.setAttribute('role', 'option');
+    elBtn.tabIndex = -1;
+    elBtn.hidden = true;
+    elBtn.style.height = `${this.rowHeight}px`;
+
+    const pathEl = el('span', 'result__path');
+    const meta = el('span', 'result__meta');
+    const fieldEl = el('span', 'result__field');
+    const valueEl = el('span', 'result__value');
+    const kindEl = el('span', 'result__kind');
+    meta.append(fieldEl, valueEl, kindEl);
+    // 行尾 ×（#53）：行本身是 <button>，这里只能是 span（aria-hidden）+ 行聚焦 Delete 等价
+    const hideEl = el('span', 'result__hide');
+    hideEl.setAttribute('aria-hidden', 'true');
+    hideEl.title = t('view.search.hide.title');
+    hideEl.textContent = '×';
+    // 行不可 Tab 聚焦（listbox 模式），把键盘等价挂到行上供读屏/快捷键发现
+    elBtn.setAttribute('aria-keyshortcuts', 'Delete');
+    elBtn.append(pathEl, meta, hideEl);
+
+    this.slotRefs.set(elBtn, { el: elBtn, hideEl, pathEl, fieldEl, valueEl, kindEl, index: -1, visible: false });
+    this.slotNodes.push(elBtn);
+    return elBtn;
+  }
+
+  /** 填一个可见槽位（`top` / `hidden` 由 VirtualList 写，这里只写内容与状态类）。 */
+  private paintSlot(ctx: VirtualPaint): void {
     const view = this.view;
-    if (!this.mounted || !view || view.size === 0) {
-      this.hideSlotsFrom(0);
-      this.rendered = 0;
-      if (view) this.updateFoot(view);
-      return;
-    }
+    const slot = this.slotRefs.get(ctx.el);
+    if (!view || !slot) return;
+    const index = ctx.index;
+    const hit = view.hits[index];
+    if (!hit) return;
 
-    const scrollTop = Math.max(0, this.scroller.scrollTop);
-    const viewportRows = Math.floor(this.scroller.clientHeight / this.rowHeight);
-    const window = computeResultWindow(view.size, scrollTop, viewportRows, {
-      rowHeight: this.rowHeight,
-      overscan: this.overscan,
-    });
+    slot.index = index;
+    slot.visible = true;
+    slot.el.dataset.index = String(index);
+    slot.el.dataset.path = hit.path;
+    slot.el.title = hit.path;
+    const selected = index === view.current;
+    slot.el.classList.toggle('is-selected', selected);
+    slot.el.setAttribute('aria-selected', selected ? 'true' : 'false');
 
-    this.ensurePool(window.count);
-
-    const term = view.query;
-    const current = view.current;
-    let used = 0;
-    for (let i = 0; i < window.count; i++) {
-      const index = window.start + i;
-      const hit = view.hits[index];
-      if (!hit) break;
-
-      const slot = this.slots[i];
-      slot.index = index;
-      slot.visible = true;
-      slot.el.hidden = false;
-      slot.el.style.top = `${index * this.rowHeight}px`;
-      slot.el.dataset.index = String(index);
-      slot.el.dataset.path = hit.path;
-      slot.el.title = hit.path;
-      const selected = index === current;
-      slot.el.classList.toggle('is-selected', selected);
-      slot.el.setAttribute('aria-selected', selected ? 'true' : 'false');
-
-      writeHighlighted(slot.pathEl, hit.path, term, view.wholeWord);
-      writeHighlighted(slot.valueEl, hit.preview, term, view.wholeWord);
-      slot.fieldEl.textContent = fieldLabel(hit.field);
-      slot.kindEl.textContent = hit.kind;
-      used++;
-    }
-    this.hideSlotsFrom(used);
-    this.rendered = used;
-    this.updateFoot(view);
+    writeHighlighted(slot.pathEl, hit.path, view.query, view.wholeWord);
+    writeHighlighted(slot.valueEl, hit.preview, view.query, view.wholeWord);
+    slot.fieldEl.textContent = fieldLabel(hit.field);
+    slot.kindEl.textContent = hit.kind;
   }
 
-  private ensurePool(count: number): void {
-    while (this.slots.length < count) {
-      const elBtn = el('button', 'result');
-      elBtn.type = 'button';
-      elBtn.setAttribute('role', 'option');
-      elBtn.tabIndex = -1;
-      elBtn.hidden = true;
-      elBtn.style.height = `${this.rowHeight}px`;
-
-      const pathEl = el('span', 'result__path');
-      const meta = el('span', 'result__meta');
-      const fieldEl = el('span', 'result__field');
-      const valueEl = el('span', 'result__value');
-      const kindEl = el('span', 'result__kind');
-      meta.append(fieldEl, valueEl, kindEl);
-      // 行尾 ×（#53）：行本身是 <button>，这里只能是 span（aria-hidden）+ 行聚焦 Delete 等价
-      const hideEl = el('span', 'result__hide');
-      hideEl.setAttribute('aria-hidden', 'true');
-      hideEl.title = t('view.search.hide.title');
-      hideEl.textContent = '×';
-      // 行不可 Tab 聚焦（listbox 模式），把键盘等价挂到行上供读屏/快捷键发现
-      elBtn.setAttribute('aria-keyshortcuts', 'Delete');
-      elBtn.append(pathEl, meta, hideEl);
-
-      this.windowEl.appendChild(elBtn);
-      this.slots.push({ el: elBtn, hideEl, pathEl, fieldEl, valueEl, kindEl, index: -1, visible: false });
-    }
-  }
-
-  private hideSlotsFrom(from: number): void {
-    for (let i = from; i < this.slots.length; i++) {
-      const slot = this.slots[i];
-      if (!slot.visible && slot.el.hidden) continue;
+  /** 槽位被窗口淘汰：清掉状态类与选择器属性（内容留着无所谓，下次 paint 会覆盖）。 */
+  private clearSlot(el: HTMLElement): void {
+    const slot = this.slotRefs.get(el);
+    el.classList.remove('is-selected');
+    el.removeAttribute('aria-selected');
+    // 不把隐藏行留在 `[data-index]` / `[data-path]` 选择器里（权重同失败态一样干净）
+    delete el.dataset.index;
+    delete el.dataset.path;
+    el.removeAttribute('title');
+    if (slot) {
       slot.visible = false;
       slot.index = -1;
-      slot.el.hidden = true;
-      slot.el.classList.remove('is-selected');
-      slot.el.removeAttribute('aria-selected');
-      // 不把隐藏行留在 `[data-index]` / `[data-path]` 选择器里（权重同失败态一样干净）
-      delete slot.el.dataset.index;
-      delete slot.el.dataset.path;
-      slot.el.removeAttribute('title');
     }
   }
 
@@ -804,10 +786,6 @@ export class SearchPanel {
     if (event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     this.opts.onSubmit();
-  };
-
-  private readonly handleScroll = (): void => {
-    this.drawWindow();
   };
 
   private readonly handlePrev = (): void => {

@@ -12,14 +12,10 @@
  * DOM 契约的 id / class 由 app 与冒烟脚本依赖，不要改名。
  */
 import type { OutlineRow, OutlineView } from '../../viewmodel/outline-state';
-import {
-  computeOutlineWindow,
-  OUTLINE_OVERSCAN,
-  OUTLINE_ROW_HEIGHT,
-} from '../../viewmodel/outline-state';
-import { MAX_SCROLL_PX } from '../../protocol/versions';
+import { OUTLINE_OVERSCAN, OUTLINE_ROW_HEIGHT } from '../../viewmodel/outline-state';
 import { clampRowHeight } from '../../shared/num';
 import { t } from '../../i18n/index';
+import { VirtualList, type VirtualPaint } from '../virtual-list';
 
 export interface OutlinePanelOptions {
   /** 行高（px）；默认 OUTLINE_ROW_HEIGHT，实际随设置由 `setRowHeight` 更新 */
@@ -77,7 +73,8 @@ export class OutlinePanel {
 
   private mounted = false;
   private view: OutlineView | null = null;
-  private rendered = 0;
+  /** 虚拟列表：spacer / 槽位池 / 隐藏与复用清理（seams S3b） */
+  private list: VirtualList | null = null;
 
   private scroller!: HTMLDivElement;
   private spacer!: HTMLDivElement;
@@ -90,8 +87,10 @@ export class OutlinePanel {
   private footPrefixNode: Text | null = null;
   private footSuffixNode: Text | null = null;
 
-  private readonly slots: RowSlot[] = [];
-  private resizeObserver: ResizeObserver | null = null;
+  /** 槽位元素 → 内部引用（池由 VirtualList 持有） */
+  private readonly slotRefs = new WeakMap<HTMLElement, RowSlot>();
+  /** 已创建槽位数（槽位 id 的稳定后缀，池只增不缩） */
+  private slotRefsSize = 0;
 
   /** 上次已处理（滚入视口）的选中路径；选中变化才自动滚动，避免和用户滚动打架 */
   private revealedSelected: string | null | undefined = undefined;
@@ -155,12 +154,20 @@ export class OutlinePanel {
     this.host.append(this.emptyEl, this.scroller, this.footEl);
 
     /* ---- 事件（行节点池复用：监听挂在容器上，事件委托） ---- */
-    this.scroller.addEventListener('scroll', this.handleScroll, { passive: true });
     this.scroller.addEventListener('click', this.handleClick);
     this.scroller.addEventListener('keydown', this.handleKeydown);
 
-    this.resizeObserver = new ResizeObserver(() => this.drawWindow());
-    this.resizeObserver.observe(this.scroller);
+    this.list = new VirtualList({
+      scroller: this.scroller,
+      spacer: this.spacer,
+      host: this.windowEl,
+      rowHeight: this.rowHeight,
+      overscan: this.overscan,
+      createSlot: () => this.createSlot(),
+      paint: (ctx) => this.paintSlot(ctx),
+      clearSlot: (el) => this.clearSlot(el),
+      afterDraw: () => this.syncActiveDescendant(),
+    });
   }
 
   /** 渲染一帧只读快照（行池复用：只重画可见窗口）。 */
@@ -169,9 +176,9 @@ export class OutlinePanel {
     const selectedChanged = view.selected !== this.revealedSelected;
     this.view = view;
 
-    this.updateSpacer();
+    this.list?.setSize(view.rows.length);
     this.updateEmpty(view);
-    this.drawWindow();
+    this.updateFoot(view);
 
     if (selectedChanged) this.revealSelected();
   }
@@ -183,18 +190,17 @@ export class OutlinePanel {
     this.rowHeight = next;
     if (!this.mounted) return;
     this.scroller.style.setProperty('--outline-row-h', `${next}px`);
-    for (const slot of this.slots) slot.el.style.height = `${next}px`;
-    this.updateSpacer();
-    this.drawWindow();
+    this.list?.setRowHeight(next);
+    this.updateFoot(this.view ?? ({} as OutlineView));
     this.revealSelected();
   }
 
   /** 面板由隐藏变可见时重画（display:none 下 clientHeight 为 0，窗口算不出来）。 */
   refresh(): void {
     if (!this.mounted || !this.view) return;
-    this.updateSpacer();
+    this.list?.refresh();
     this.updateEmpty(this.view);
-    this.drawWindow();
+    this.updateFoot(this.view);
     this.revealSelected();
   }
 
@@ -217,37 +223,28 @@ export class OutlinePanel {
 
   /** 当前窗口实际渲染（非 hidden）的行数。 */
   renderedCount(): number {
-    return this.rendered;
+    return this.list?.rendered ?? 0;
   }
 
   scrollTopPx(): number {
-    return this.mounted ? this.scroller.scrollTop : 0;
+    return this.mounted && this.list ? this.list.scrollTop : 0;
   }
 
   destroy(): void {
     if (!this.mounted) return;
-    this.scroller.removeEventListener('scroll', this.handleScroll);
+    this.list?.destroy();
+    this.list = null;
     this.scroller.removeEventListener('click', this.handleClick);
     this.scroller.removeEventListener('keydown', this.handleKeydown);
-    this.resizeObserver?.disconnect();
-    this.resizeObserver = null;
-    this.slots.length = 0;
     this.footPrefixNode = null;
     this.footSuffixNode = null;
     this.host.replaceChildren();
     this.view = null;
-    this.rendered = 0;
     this.revealedSelected = undefined;
     this.mounted = false;
   }
 
   // -------------------------------------------------------------- rendering
-
-  private updateSpacer(): void {
-    const size = this.view?.rows.length ?? 0;
-    const height = Math.min(size * this.rowHeight, MAX_SCROLL_PX);
-    this.spacer.style.height = `${height}px`;
-  }
 
   private updateEmpty(view: OutlineView): void {
     const text = emptyText(view.phase);
@@ -271,71 +268,54 @@ export class OutlinePanel {
       return;
     }
     this.footEl.hidden = false;
-    this.footRendered.textContent = String(this.rendered);
+    this.footRendered.textContent = String(this.list?.rendered ?? 0);
     this.footTotal.textContent = String(size);
   }
 
-  /** 只重画可见窗口：spacer 撑出总高度，窗口内行节点池复用。 */
-  private drawWindow(): void {
-    if (!this.mounted) return;
-    const view = this.view;
-    if (!view || view.rows.length === 0) {
-      this.hideSlotsFrom(0);
-      this.rendered = 0;
-      this.scroller.removeAttribute('aria-activedescendant');
-      if (view) this.updateFoot(view);
-      return;
-    }
+  /** 造一个行槽位（池由 VirtualList 持有；这里只负责 DOM 形状与内部引用表）。 */
+  private createSlot(): HTMLElement {
+    const rowEl = el('div', 'outline-row');
+    rowEl.setAttribute('role', 'treeitem');
+    // 行池槽位 id 稳定：scroller 的 aria-activedescendant 指向当前行（虚拟列表 a11y）
+    rowEl.id = `outline-row-${this.slotRefsSize}`;
 
-    const scrollTop = Math.max(0, this.scroller.scrollTop);
-    const viewportRows = Math.floor(this.scroller.clientHeight / this.rowHeight);
-    const win = computeOutlineWindow(view.rows.length, scrollTop, viewportRows, {
-      rowHeight: this.rowHeight,
-      overscan: this.overscan,
-    });
+    rowEl.tabIndex = -1;
+    rowEl.hidden = true;
+    rowEl.style.height = `${this.rowHeight}px`;
 
-    this.ensurePool(win.count);
+    // caret / type / count 按行内容挂载或卸载（见 paintSlot）：
+    // 冒烟与 a11y 都依赖「标量行没有 .outline-row__caret / .outline-row__count」
+    const caret = el('span', 'outline-row__caret');
+    caret.setAttribute('aria-hidden', 'true');
+    const keyEl = el('span', 'outline-row__key');
+    const typeEl = el('span', 'outline-row__type');
+    const countEl = el('span', 'outline-row__count');
+    rowEl.append(keyEl);
 
-    let used = 0;
-    let activeId: string | null = null;
-    for (let i = 0; i < win.count; i++) {
-      const index = win.start + i;
-      const row = view.rows[index];
-      if (!row) break;
-      const slot = this.slots[i] as RowSlot;
-      this.paintSlot(slot, row, index, view.selected);
-      if (!row.more && view.selected !== null && row.path === view.selected) activeId = slot.el.id;
-      used++;
-    }
-    this.hideSlotsFrom(used);
-    // a11y：行不是焦点元素，scroller 用 aria-activedescendant 指向当前行
-    if (activeId !== null) this.scroller.setAttribute('aria-activedescendant', activeId);
-    else this.scroller.removeAttribute('aria-activedescendant');
-    this.rendered = used;
-    this.updateFoot(view);
+    this.slotRefs.set(rowEl, { el: rowEl, caret, keyEl, typeEl, countEl, index: -1, visible: false });
+    this.slotRefsSize += 1;
+    return rowEl;
   }
 
-  private ensurePool(count: number): void {
-    while (this.slots.length < count) {
-      const rowEl = el('div', 'outline-row');
-      rowEl.setAttribute('role', 'treeitem');
-      // 行池槽位 id 稳定：scroller 的 aria-activedescendant 指向当前行（虚拟列表 a11y）
-      rowEl.id = `outline-row-${this.slots.length}`;
-      rowEl.tabIndex = -1;
-      rowEl.hidden = true;
-      rowEl.style.height = `${this.rowHeight}px`;
-
-      // caret / type / count 按行内容挂载或卸载（见 paintSlot）：
-      // 冒烟与 a11y 都依赖「标量行没有 .outline-row__caret / .outline-row__count」
-      const caret = el('span', 'outline-row__caret');
-      caret.setAttribute('aria-hidden', 'true');
-      const keyEl = el('span', 'outline-row__key');
-      const typeEl = el('span', 'outline-row__type');
-      const countEl = el('span', 'outline-row__count');
-      rowEl.append(keyEl);
-
-      this.windowEl.appendChild(rowEl);
-      this.slots.push({ el: rowEl, caret, keyEl, typeEl, countEl, index: -1, visible: false });
+  /** a11y：行不是焦点元素，scroller 用 aria-activedescendant 指向当前行（draw 之后收尾）。 */
+  private syncActiveDescendant(): void {
+    const view = this.view;
+    if (!view || view.selected === null || !this.list) {
+      this.scroller.removeAttribute('aria-activedescendant');
+      return;
+    }
+    let node: HTMLElement | null = null;
+    for (const child of this.windowEl.children) {
+      const elNode = child as HTMLElement;
+      if (!elNode.hidden && elNode.dataset.path === view.selected && elNode.dataset.more === undefined) {
+        node = elNode;
+        break;
+      }
+    }
+    if (node && node.id) {
+      this.scroller.setAttribute('aria-activedescendant', node.id);
+    } else {
+      this.scroller.removeAttribute('aria-activedescendant');
     }
   }
 
@@ -346,12 +326,19 @@ export class OutlinePanel {
     else node.appendChild(child);
   }
 
-  private paintSlot(slot: RowSlot, row: OutlineRow, index: number, selected: string | null): void {
-    const node = slot.el;
+  private paintSlot(ctx: VirtualPaint): void {
+    const view = this.view;
+    const slot = this.slotRefs.get(ctx.el);
+    if (!view) return;
+    const index = ctx.index;
+    const row = view.rows[index];
+    if (!row) return;
+    const selected = view.selected;
+    const node = slot ? slot.el : (ctx.el as HTMLDivElement);
+    if (!slot) return;
     slot.index = index;
     slot.visible = true;
     node.hidden = false;
-    node.style.top = `${index * this.rowHeight}px`;
     node.style.height = `${this.rowHeight}px`;
     // 缩进用 CSS 变量（每行按层级）
     node.style.setProperty('--o-depth', String(row.depth));
@@ -409,33 +396,31 @@ export class OutlinePanel {
     node.setAttribute('aria-label', label);
   }
 
-  private hideSlotsFrom(from: number): void {
-    for (let i = from; i < this.slots.length; i++) {
-      const slot = this.slots[i];
-      if (!slot.visible && slot.el.hidden) continue;
-      slot.visible = false;
-      slot.index = -1;
-      slot.el.hidden = true;
-      slot.el.classList.remove('is-open', 'is-current', 'outline-row--more');
-      // 隐藏行不留在 [data-path] 等选择器里（冒烟按选择器数行数）
-      delete slot.el.dataset.path;
-      delete slot.el.dataset.depth;
-      delete slot.el.dataset.kind;
-      delete slot.el.dataset.count;
-      delete slot.el.dataset.more;
-      slot.el.removeAttribute('aria-level');
-      slot.el.removeAttribute('aria-expanded');
-      slot.el.removeAttribute('aria-selected');
-      slot.el.removeAttribute('aria-label');
-      slot.el.removeAttribute('title');
-      slot.caret.remove();
-      slot.caret.textContent = '';
-      slot.typeEl.remove();
-      slot.typeEl.textContent = '';
-      slot.countEl.remove();
-      slot.countEl.textContent = '';
-      slot.keyEl.textContent = '';
-    }
+  /** 槽位被窗口淘汰：清掉状态类 / 选择器属性 / 内容（大纲的清理比搜索彻底）。 */
+  private clearSlot(el: HTMLElement): void {
+    const slot = this.slotRefs.get(el);
+    el.classList.remove('is-open', 'is-current', 'outline-row--more');
+    // 隐藏行不留在 [data-path] 等选择器里（冒烟按选择器数行数）
+    delete el.dataset.path;
+    delete el.dataset.depth;
+    delete el.dataset.kind;
+    delete el.dataset.count;
+    delete el.dataset.more;
+    el.removeAttribute('aria-level');
+    el.removeAttribute('aria-expanded');
+    el.removeAttribute('aria-selected');
+    el.removeAttribute('aria-label');
+    el.removeAttribute('title');
+    if (!slot) return;
+    slot.visible = false;
+    slot.index = -1;
+    slot.caret.remove();
+    slot.caret.textContent = '';
+    slot.typeEl.remove();
+    slot.typeEl.textContent = '';
+    slot.countEl.remove();
+    slot.countEl.textContent = '';
+    slot.keyEl.textContent = '';
   }
 
   /**
@@ -473,7 +458,7 @@ export class OutlinePanel {
     } else {
       return;
     }
-    this.drawWindow();
+    this.list?.draw();
   }
 
   // -------------------------------------------------------------- keyboard
@@ -597,10 +582,6 @@ export class OutlinePanel {
   };
 
   // -------------------------------------------------------------- events
-
-  private readonly handleScroll = (): void => {
-    this.drawWindow();
-  };
 
   private readonly handleClick = (event: MouseEvent): void => {
     const target = event.target;
