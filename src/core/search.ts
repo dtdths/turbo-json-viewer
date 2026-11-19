@@ -3,7 +3,7 @@
  *
  * 深度优先 walk 整棵值图，不建 search root（ir-spec §4.3：命中集合是视图状态）。
  * 默认大小写不敏感；命中上限默认 SEARCH_LIMIT（50,000），超过则 truncated。
- * 预览必须短（命中集可能 5 万条），见 row-model.shortPreview。
+ * 预览必须短（命中集可能 5 万条），见 json-graph.shortPreview。
  *
  * 数值匹配口径（2026-11-12 用户反馈修订，ADR-0014 修订）：数字（number / BigInt）按
  * **树里显示的文本**匹配（number → `JSON.stringify`，BigInt → 十进制串），所以搜
@@ -54,7 +54,7 @@ const CANCEL_CHECK_MASK = 4095;
 /**
  * 「值搜索」用的文本：字符串 = 内容本身；数字 = **树里显示的文本**
  * （number → JSON.stringify，BigInt → 十进制串）；布尔/null = `'true'/'false'/'null'`。
- * 与 `row-model.scalarPreview` 同源，保证「搜到的 == 看到的」（ADR-0023 §1）。
+ * 与 `json-graph.scalarPreview` 同源，保证「搜到的 == 看到的」（ADR-0023 §1）。
  */
 function searchableValueText(node: unknown, kind: ReturnType<typeof jsonKind>): string | null {
   if (kind === 'string') return node as string;

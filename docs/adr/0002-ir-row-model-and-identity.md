@@ -197,7 +197,7 @@
    （`Object.keys().indexOf`），对 45 条路径语料逐条比对返回值与抛错码；外加与 `RowModel.valueAt`
    在三种显示序下交叉验证、以及 `walkPath` 每步 `key`/`parent` 对齐。`RowModel.valueAt` 现在是一行委托。
 5. **接口收窄**：`row-model.ts` 不再导出任何图函数（`isArrayContainer` 这个零引用死导出一并删除）；
-   `search` / `outline` / `profile` / `doc-service` 只 import `json-graph`。行模型 1000 → 851 行。
+   `search` / `outline` / `profile` / `doc-service` 只 import `json-graph`。行模型 1000 → 846 行。
 6. **`identity` 这笔债确认不还**：决策 3 的「运行期懒 id + `(parent, slot)` 标量句柄」是**有意未落地**
    ——运行期一律走**路径**口径（`isOpenAt(path)` / `openPaths()` / 选中 path，见本 ADR「改：展开态只用
    path 口径」修订），标量没有对象身份这件事用路径直接绕开了。README §3.2 的 `identity` 行因此标注
@@ -207,6 +207,12 @@
    「路径→值」这条最该归位的规则继续被几何绑架；(c) 把 `setOrder` / `setNodeOrder` / `displayOrderAt`
    也搬走——它们本质是「重排 → 重建 Fenwick」，搬走等于把几何拆成两半；(d) 让 `json-graph` import
    `core/order` 以便复用 `keysOf`——显示序重新渗进值图。
-8. **代价**：单测 1453 → **1514**（+61，全部在新文件）；`worker.js` 66.2 → **66.3KB gz**（+0.1；
+8. **代价**：单测 1453 → **1515**（+62，全部在新文件）；`worker.js` 66.2 → **66.3KB gz**（+0.1；
    无硬预算、只记录）；`page.js` 55.3 / 懒加载 145.9 / `page.css` 9.2 / 语言包 6.4·7.2 **零变化**
    （`core/*` 只进 worker）；17 套冒烟断言零改动。
+9. **两处口径修正**（双轴审查后）：
+   - `json-graph.ts` **239 行**，比 Q6 估的 ≤180 多 59 行（注释 + 遍历骨架 `WalkFrame`/`childAtSlot`
+     导出给行模型复用；拆成两个文件反而会造浅 module）。验收以此数为准。
+   - `walkPath` 的对象键判定收窄成「自有**且可枚举**」（`propertyIsEnumerable`）——与旧口径
+     `Object.keys().indexOf` 完全等价；非枚举自有属性在两边都拒绝，oracle 里补了这条用例。
+   - `ChainEntry.path` 是重构前就有的死字段（写入无人读），顺手删掉；`locateChain` 收成一行 map。

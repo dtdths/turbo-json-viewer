@@ -4,7 +4,7 @@
  * 归属（候选 4 / ADR-0002 修订 2026-11-19）：本模块只回答「这份值图里有什么」，
  * 一个字节的**显示序**（`sortOrder` / 单节点覆盖）和**行几何**（Fenwick / 窗口 / toggle）
  * 都不在这里——那是 `core/row-model`。分成两个文件是为了让 `search` / `outline` /
- * `profile` / `doc-service` 不必只为几个纯函数 import 1000 行的行模型。
+ * `profile` / `doc-service` 不必只为几个纯函数 import 整个行模型。
  *
  * 路径语法唯一来源：`walkPath` / `valueAt` 是一条**顺序无关**的解析器（对象用自有属性直取，
  * 数组按下标规则），几何需要的显示 slot 由 `RowModel` 自己按 `keysOf` 换算，不回流到这里。
@@ -128,7 +128,10 @@ export function shortPreview(node: unknown): string {
 /* 全展开计数（自适应展开 / expand-all 的 dry-run）                            */
 /* ------------------------------------------------------------------------- */
 
-/** 迭代全展开遍历的帧：`keys` 为对象容器的**值图**键序（数组为 null）。 */
+/**
+ * 迭代遍历帧（全展开计数与行模型的几何重建共用这一形状）：`keys` 由调用方决定——
+ * `json-graph` 给**值图**键序，`RowModel` 给**显示序**；数组为 `null`。
+ */
 export interface WalkFrame {
   container: Container;
   keys: string[] | null;
@@ -190,9 +193,13 @@ function pathNotFound(path: Path): CoreError {
   return new CoreError({ code: 'BAD_COMMAND', message: `path not found: ${path}` });
 }
 
-/** 对象是否**自有**该键：只看自有可枚举之外的中毒键（`__proto__` / `constructor`）也不放行继承属性。 */
-function hasOwnKey(container: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(container, key);
+/**
+ * 对象是否**自有且可枚举**该键——与旧口径 `Object.keys(container).indexOf(key)` 完全等价。
+ * 继承属性（`toString`）与**非枚举**自有属性都不放行；`JSON.parse('{"__proto__":1}')` 造出的
+ * 自有数据属性照常放行。用 `propertyIsEnumerable` 一次覆盖「自有 + 可枚举」两件事。
+ */
+function isOwnEnumerableKey(container: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.propertyIsEnumerable.call(container, key);
 }
 
 /**
@@ -217,7 +224,7 @@ export function walkPath(root: unknown, path: Path): PathStep[] {
       steps.push({ parent: container, key: String(slot), node: container[slot] });
     } else {
       const key = segment.kind === 'key' ? segment.key : String(segment.index);
-      if (!hasOwnKey(container, key)) throw pathNotFound(path);
+      if (!isOwnEnumerableKey(container, key)) throw pathNotFound(path);
       steps.push({ parent: container, key, node: container[key] });
     }
     container = steps[steps.length - 1]?.node;

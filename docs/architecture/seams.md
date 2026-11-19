@@ -187,7 +187,7 @@ export function countAllExpandedRows(value: unknown, limit: number): number;
 - `RowModel.valueAt` 是一行委托；`row-model.ts` **不 re-export** 任何图函数（单入口）。
 - 行为等价由 `tests/unit/core/json-graph.test.ts` 的旧口径参考实现守着（参考实现只存在于测试）。
 
-**删除测试**：删掉 → `search` / `outline` / `profile` / `doc-service` 重新 import 1000 行行模型；路径语法回到「几何与数据读共用一份实现」，读一个节点要先有显示序的键表。
+**删除测试**：删掉 → `search` / `outline` / `profile` / `doc-service` 重新 import 整个行模型（现 846 行）；路径语法回到「几何与数据读共用一份实现」，读一个节点要先有显示序的键表。
 
 ## 4. S3 · 行渲染器
 

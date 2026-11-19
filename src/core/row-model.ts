@@ -127,7 +127,6 @@ interface ChainEntry {
   container: Container;
   slot: number;
   node: unknown;
-  path: Path;
 }
 
 export class RowModel {
@@ -788,15 +787,11 @@ export class RowModel {
    * （Fenwick 前缀和、`rowOfPath`、`replaceNode` 的写入位置），值图不需要（#59）。
    */
   private locateChain(path: Path): ChainEntry[] {
-    const steps = walkPath(this.rootValue, path);
-    const chain: ChainEntry[] = [];
-    let currentPath: Path = ROOT_PATH;
-    for (const step of steps) {
-      const slot = this.displaySlotOf(step, path);
-      currentPath = this.pathOfSlot(step.parent, slot, currentPath);
-      chain.push({ container: step.parent, slot, node: step.node, path: currentPath });
-    }
-    return chain;
+    return walkPath(this.rootValue, path).map((step) => ({
+      container: step.parent,
+      slot: this.displaySlotOf(step, path),
+      node: step.node,
+    }));
   }
 
   /** 显示序里的 slot：数组就是下标；对象在显示序键表里查位置（缓存的 `keysOf`）。 */

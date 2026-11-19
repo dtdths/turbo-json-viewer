@@ -158,25 +158,33 @@ describe('valueAt：与旧口径（Object.keys().indexOf）逐条等价', () => 
     expect(valueAt(doc, '$')).toBe(doc);
   });
 
-  it('与 RowModel.valueAt 完全一致（含三种显示序）', () => {
+  it('非枚举自有属性与旧口径一致（旧口径看 Object.keys，新实现看可枚举性）', () => {
+    const doc = fixture() as Record<string, unknown>;
+    Object.defineProperty(doc, 'hidden', { value: 1, enumerable: false });
+    expect(outcome(() => valueAt(doc, '$.hidden'))).toEqual(outcome(() => referenceValueAt(doc, '$.hidden')));
+    expect(outcome(() => valueAt(doc, '$.hidden'))).toMatchObject({ ok: false, code: 'BAD_COMMAND' });
+  });
+
+  it('RowModel 的显示序解析也与旧口径一致（三种档）', () => {
     for (const order of ['raw', 'key-asc', 'key-desc'] as const) {
       const model = new RowModel(fixture(), { order });
       for (const path of PATHS) {
-        expect(outcome(() => valueAt(model.value, path)), `${order} ${path}`).toEqual(
-          outcome(() => model.valueAt(path)),
+        expect(outcome(() => model.valueAt(path)), `${order} ${path}`).toEqual(
+          outcome(() => referenceValueAt(model.value, path)),
         );
       }
     }
   });
 
-  it('值图读与显示序无关：乱序文档取到的仍是同一个值', () => {
-    const doc = fixture();
-    const asc = new RowModel(doc, { order: 'key-asc' });
-    const desc = new RowModel(doc, { order: 'key-desc' });
-    for (const path of ['$.a.b.c.d.e', '$.arr[2]', '$.__proto__.x', "$['a.b']"]) {
-      expect(valueAt(asc.value, path)).toEqual(valueAt(doc, path));
-      expect(valueAt(desc.value, path)).toEqual(valueAt(doc, path));
-    }
+  it('切档 / 单节点覆盖之后 valueAt 结果不变（显示序只动 slot）', () => {
+    const model = new RowModel(fixture());
+    const paths = ['$.a.b.c.d.e', '$.arr[2]', '$.__proto__.x', "$['a.b']"];
+    const before = paths.map((path) => outcome(() => model.valueAt(path)));
+    model.setOrder('key-desc');
+    expect(paths.map((path) => outcome(() => model.valueAt(path)))).toEqual(before);
+    model.setOrder('raw');
+    model.setNodeOrder('$.a', 'key-asc');
+    expect(paths.map((path) => outcome(() => model.valueAt(path)))).toEqual(before);
   });
 });
 
