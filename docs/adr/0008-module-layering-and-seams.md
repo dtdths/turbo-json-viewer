@@ -212,3 +212,58 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    （直读 `profileCache`）改为断言 `release` 被触发。单测 1414 → 1432。
 8. **代价**：`worker.js` 65.9 → **66.2KB gz**（+0.3；worker 自 ADR-0020 起无硬预算、只记录）；
    `page.js` / 懒加载 / 语言包不受影响（core 只进 worker）。
+
+## 修订（2026-11-19）：每标签视图态收成 `TabViewData` + 一个搬运模块
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-19，候选 2）+ `grilling` 两轮拍板（Q1–Q10），
+> 实现票 **#58**。§1「app 是唯一装配点」、§2「accept dependencies, don't create them」、
+> §3「一个概念一个 module」不变——本修订把「每标签视图态」从**四份表示**收成「一份存档 + 一份活动镜像」，
+> 并把两者之间的搬运收成**一张表**。
+
+1. **问题**：同一份 per-tab 状态有四种表示——`TabExtras`（7 字段，`main.ts` 里的第二张 `Map`）、
+   模块级镜像 `let`（51 个）、`WorkspaceState.TabState`（10 字段）、`DocSession.SessionState`（活动会话
+   镜像）。三张手写清单（`saveActiveSession` / `bindTab` / `restoreActiveTabView`）各抄一遍字段名，
+   `resetTabStateForNewDoc` 再清一遍，`applyRootVersions` 把同一版本扇给 5 类持有者。**加一个 per-tab
+   字段最少要改 6 处**（类型 / 默认值 / let / save / bind / reset），渲染型 7 处，版本型或 hook 暴露型 8–10 处。
+2. **存档只留一份**：`TabViewData`（`src/viewmodel/tab-view-data.ts`，**新建**）装 12 个字段（原 7 个
+   extras + 本轮补的 5 个串味字段），住在 `WorkspaceState.TabState.view`——它**随标签一起生灭**：
+   `add` 建默认、`replace` 换文档就地复位、`remove` 随标签丢弃。`tabExtras` 这张以 tabId 为键的
+   第二张 `Map` 被删除。版本字段 / `selected` / `meta` **不进** `view`：它们本来就住在 `TabState` 顶层，
+   存一份就够，`capture` 走 `workspace.update` 写。
+3. **镜像留在 app**：51 个模块级 `let` 继续当活动标签的实时镜像，**读点零改动**（这是与「句柄式全量迁移」
+   的关键取舍，见第 9 条）。镜像由 `app/tab-view-state.ts` 的 `TabViewState` 管理，**四个方法**：
+   `capture()`（切走：镜像→存档）/ `restore(tab)`（切回：存档→镜像，顺带表达式视图瞬时复位）/
+   `reset(tab)`（换文档）/ `clear()`（回空态：没有标签可存档，但镜像必须复位）。
+4. **一张 accessor 表**：`VIEW_FIELD_KEYS` + `TabViewAccessors`（`get`/`set` 闭包由 `main.ts` 注入，
+   因为 `scrollTopPx` 要读 DOM）。`capture`/`restore`/`clear` 全循环这张表。加一个 per-tab 字段 =
+   `TabViewData` 1 行 + `VIEW_FIELD_KEYS` 1 行 + 表 1 行 + 镜像 `let` 1 行（相邻块）。编译期守卫
+   `UnclassifiedViewField`（`Exclude<keyof TabViewData, 已归类>` 必须为 `never`）保证新增字段**不可能**
+   悄悄漏掉归类——这是本轮唯一「类型能替人守纪律」的地方。
+5. **两个滚动位置没有镜像**：`scrollTopPx` / `rawScrollTopPx` 只存在于存档里，`restoreActiveTabView`
+   从 `tabView.active()` 直读。给它们造镜像会多两个 `let` 且没有第二个读者；accessor 表里把它们归为
+   `DirectReadViewField`，并由同一个守卫检查。
+6. **版本扇出的归属**：活状态问 `DocSession`（`syncRootVersion`），存档问 `TabViewState.syncVersions`。
+   `applyRootVersions` 从「一个循环喂 5 类持有者」缩成两处调用，与 §7 的「根死亡只有一个 owner」同构。
+7. **顺带修的 5 个真串味**（行为变化，独立成一提交，可单独回滚）：`exprLastText`（tab B 的「重新执行」
+   会跑 tab A 的表达式）、`exprErrorState` / `exprStatusState`（切换后行内错误与状态行残留）、
+   `searchPatternCore`（正则解析错误贴到新标签的 `SearchState`）、`fidelityIndex`（两标签都 ≥2 命中时
+   `1/N` 下标串）、`rawTreeAnchor`（关掉最后一个标签后空态仍能读到旧锚点——由 `clear()` 收口）。
+   前三者在 `restoreActiveTabView` 里追加一次「先清后填」的 `resetExpressionInlineText()`，因为面板是
+   单实例，光恢复镜像不会重画那一行。
+8. **被否决**：(a) **把 `let` 全删、读点改 `view.xxx`**（真·单份表示）——`session.` 104 处 + 读点数百处
+   全要动，等于把一次可回滚的重构变成全文件迁移，「冒烟断言零改动」几乎不可能同时成立；
+   (b) **新建第二张以 tabId 为键的 map**（`app/tab-view-state.ts` 自己存）——`TabState.docRevision` 与
+   新 map 的存档值仍会分叉，等于把要消灭的第二份表示换个位置；(c) **双写过渡**（`view` 与 `tabExtras`
+   同时维护再删旧）——双写期本身就是新的两份表示；(d) **只用一次性 plan（仿 `DocSession.land()`）**——
+   不持有存档，解决不了四份表示；(e) **`let` 数强压到 ≤30**——与 (a) 同义，读点迁移换来的只是数字好看。
+9. **兼容（硬约束）**：`h.state()` 仍取活动实时会话（`bindTab` 后更新）；`workspaceHookState()` 的
+   `live ? session.docRevision : tab.docRevision` / `totalRows` 口径与 `TabHookState` 8 个字段名**逐字不变**；
+   `exprViewActive` 仍让 `live=false`；**`smoke-workspace` 62/62 断言零改动**（新增的 `clear()` 走单测，
+   没有新增冒烟断言）。
+10. **测试面**：`tests/unit/app/tab-view-state.test.ts` **24 例**（node env，假 workspace + 假 accessor）：
+    字段归类守卫、capture/restore 往返、滚动位置由注入读法决定、版本扇出、换文档复位、回空态全复位、
+    以及 5 个串味字段各自「A 有 / B 没有」的矩阵。DOM 形状 / 焦点 / 动效仍归真机冒烟。
+11. **代价**：单测 1432 → **1456**（+24）；`page.js` 54.9 → **55.4KB gz**（+0.5：存档类型与默认值 +0.1、
+    访问器表与绑定器 +0.4；预算仍 56 未动）；懒加载 145.9 / 语言包 / `worker.js` 不变；`main.ts`
+    3914 → **3856 行**（管道区净减，但 ③ 的行内反馈重画 + 空态收口 + 5 行表又把数字抬回去——
+    **比 Q9 定的 ≤3830 多 26 行**，验收口径以「加字段 3 处」为主，行数只是旁证）；`^let ` 仍 **51**。

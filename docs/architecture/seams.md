@@ -307,6 +307,34 @@ export function installDevHook(deps: DevHookDeps): void;   // 挂 globalThis.__t
 
 **删除测试**：删掉 → `main.ts` 尾部再长出 ~450 行第二套 app（重写入口、直连 core、刮 DOM），行为验证只能压进 7k 行浏览器冒烟。
 
+## 6.7 app · 每标签视图态（Tab View）
+
+**位置**：存档类型 `src/viewmodel/tab-view-data.ts`、数据住 `TabState.view`；搬运在 `src/app/tab-view-state.ts`（纯 TS、零 DOM）；镜像仍是 `main.ts` 的模块级 `let`。ADR-0008 修订 2026-11-19，实现票 #58。
+
+```ts
+// src/app/tab-view-state.ts
+export const VIEW_FIELD_KEYS = ['rawMetaInfo','fidelity','exprView','searchOpts','anchor',
+  'exprLastText','exprErrorState','exprStatusState','searchPatternCore','fidelityIndex'] as const;
+export type TabViewAccessors = { readonly [K in MirroredViewField]: {
+  get(): TabViewData[K]; set(value: TabViewData[K]): void } };
+export class TabViewState {
+  constructor(deps: TabViewDeps);   // workspace + 字段表 + live() + 两个滚动读法 + resetTransient
+  active(): TabViewData | null;      // 活动标签存档（只给没有镜像的滚动位置用）
+  capture(): void;  restore(tab: TabState): void;  reset(tab: TabState): void;
+  clear(): void;    syncVersions(roots: readonly RootVersion[]): void;
+}
+```
+
+**不变式**
+- 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的 `let`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + 表 1 行 + 镜像 `let` 1 行，`UnclassifiedViewField` 编译期守卫防漏。
+- 归属：**活状态问 `DocSession`，存档问 `TabViewState`**。所以 `syncVersions` 只碰标签与非活动标签的表达式结果视图；活动会话与活动 `exprView` 由 `main.ts` 自己同步。
+- 版本字段 / `selected` / `meta` 不进 `view`：它们本就住在 `TabState` 顶层，`capture()` 走 `workspace.update` 写，别再存第二份。
+- 两个滚动位置**没有镜像**：`restoreActiveTabView` 从 `active()` 直读；给它们造镜像会多两个 `let` 且没有第二个读者。
+- `restore(tab)` 顺带复位表达式视图的瞬时状态（`exprViewActive=false` / `docSessionBeforeExpr=null`）——表达式结果不跨标签自动激活。
+- dev hook 兼容：`h.state()` 仍取活动实时会话；`workspaceHookState()` 的 `live ? session.docRevision : tab.docRevision` / `totalRows` 口径与 `TabHookState` 字段名逐字不变。
+
+**删除测试**：删掉 → 每标签视图态退回「三张手写字段清单 + 第二张 tabId map」（加一个字段改 6–7 处，漏一处就表现为切标签串味或空态残留旧锚点）。
+
 ## 7. 删除测试汇总
 
 - **S1 Worker 边界**：删掉 → 复杂度平移到每个 view + Worker 生命周期，`core` 只能靠真浏览器测。
