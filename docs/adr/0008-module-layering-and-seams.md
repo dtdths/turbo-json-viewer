@@ -276,3 +276,41 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
     3914 → **3850 行**（管道区净减，但 accessor 表 + ③ 的行内反馈重画又把数字抬回去——
    **比 Q9 定的 ≤3830 多 20 行**；验收口径以「加字段 4–5 处且相邻、漏了编译不过」为主，行数只是旁证）；
    `^let ` 仍 **51**。
+
+## 修订（2026-11-19）：搜索结果与大纲共用 `view/virtual-list`；树与原文判定不值得合
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-19，候选 5）+ `grilling` 两轮（Q1–Q10），
+> 实现票 **#61**。§3「一个概念一个 module」不变；本修订把**两份几乎逐行相同**的虚拟列表收成一份，
+> 并**否决**了「四份都合」的原始设想——理由在下面第 5、6 条，都是逐行拆开后才看见的。
+
+1. **问题**：`search-panel.ts`（915 行）与 `outline-panel.ts`（626 行）各自手写 scroller + spacer、
+   槽位池的增删、越界槽位隐藏、复用时的清理纪律、ResizeObserver、`rendered` 计数；`ensurePool` /
+   `hideSlotsFrom` / `drawWindow` 三对函数几乎逐行同构。唯一共用的只有 `shared/window.ts` 的 33 行窗口数学。
+2. **一个模块**：`src/view/virtual-list.ts` 的 `VirtualList`——只收**纯几何 + 池化**（滚动容器、spacer、
+   槽位池、隐藏、复用清理、RO、计数）。行内容、锚点、gutter、隐藏过滤、load more 一概不进。
+3. **接口窄、DOM 归属清**：模块**只碰槽位的 `style.top` 与 `hidden`**；槽位元素由面板 `createSlot()`
+   造，内容由 `paint(ctx)` 填，被淘汰时模块调 `clearSlot(el)`——**清理的时机**归模块、**清什么**归面板。
+   冒烟读的是 class / 子节点 / `top` / `hidden` 这些形状，模块不该有意见。
+4. **模块只认 `size`（个数）与 `paint(index)`**，`index → 数据` 的映射归面板，模块永不读数据数组。
+   注：今天 `search-state` 的 `size` 恒等于 `hits.length`（过滤与隐藏已经体现在数组里），
+   这条边界是为「显示条数 ≠ 数组长度」的将来留的，不是现状——初稿把它当成现状写过，已更正。
+5. **树不接（否决）**：拆开后才看清——树**不在 view 里算窗口**，窗口来自 `WindowMachine`
+   （`viewportRows + 1 + 2×overscan` + 预取 + 3 屏上限），与 `computeVirtualWindow` 不是同一个公式；
+   树的槽位是 `RowRenderer`/`DomRowPool` 的句柄（`setTop`/`setVisible`），**已经有自己的 seam**（S3）。
+   硬合要给模块加一层槽位适配器，而树恰恰是几何断言最密的地方（`smoke-settings` 的 `spacerHeight`、
+   `smoke-expand` 的 `scrollHeight`、`smoke-order` 的内联 `top`）。
+6. **原文接了一次又回退（实测负收益）**：原文的窗口同样由 viewmodel 给（`smoke-raw` 断言了那个 `+1`），
+   池化只有约 90 行且形状不同（gutter / 行号 / locate chip / flash）。为它给模块加
+   `windowMode: 'external'` + `renderWindow` 后：`raw-view.ts` 461 → **477 行**、`page.js` 55.8 → **56.0**
+   （顶到预算）。已回退，模块回到只服务自算窗口的两个面板。
+7. **被否决**：(a) 四份全合（第 5、6 条的实测）；(b) 让模块持 `items` 数组、`size` 从长度来
+   （搜索的隐藏过滤要造平行数组，等于把视图语义搬进模块）；(c) 把 `reveal()` 这类「定位到第 N 条」收进模块
+   （四者定位后的选中 / 展开 / 高亮语义各不相同）；(d) 把 dev hook 探针改成读模块实例
+   （探针继续读 DOM，是「冒烟验真 DOM」的前提）。
+8. **代价**：单测 1515 → **1532**（+17，`tests/unit/view/virtual-list.test.ts`，仓库自带的 fake-dom，
+   **没有引 jsdom**——Q6 的「jsdom 单测」前提不成立）；`search-panel.ts` 915 → 893、`outline-panel.ts`
+   626 → 607；**`page.js` 55.3 → 55.8KB gz（+0.5，余 0.2）**——这次重构**没有**省字节：
+   ~150 行同构骨架被删掉，但 options / 回调分发 / 池管理搬进模块后净增；懒加载 145.9 / css 9.2 / 语言包不变。
+   17 套冒烟断言零改动。
+9. **口径修正**：走查报告说「四份 ensurePool/hideSlotsFrom 同构」只对 search + outline 成立；
+   树与原文的「虚拟列表」其实早已分家（几何在 viewmodel、渲染在 `RowRenderer` / 自己的槽位形状）。

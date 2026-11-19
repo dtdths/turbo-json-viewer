@@ -162,8 +162,6 @@ interface ResultSlot {
   readonly fieldEl: HTMLSpanElement;
   readonly valueEl: HTMLSpanElement;
   readonly kindEl: HTMLSpanElement;
-  index: number;
-  visible: boolean;
 }
 
 // ---------------------------------------------------------------- panel
@@ -426,6 +424,10 @@ export class SearchPanel {
       createSlot: () => this.createSlot(),
       paint: (ctx) => this.paintSlot(ctx),
       clearSlot: (el) => this.clearSlot(el),
+      // 底栏「已渲染 N」跟着每次重画刷新（含 ResizeObserver 触发的重画）
+      afterDraw: () => {
+        if (this.view) this.updateFoot(this.view);
+      },
     });
   }
 
@@ -476,10 +478,9 @@ export class SearchPanel {
     this.updateFilters(view);
     this.updateEmptyState(view);
 
-    // 命中集换了 → 回顶；setSize 内部同步 spacer 并重画窗口
+    // 命中集换了 → 回顶；setSize 内部同步 spacer 并重画窗口，底栏计数由 afterDraw 刷新
     if (hitsChanged && this.list) this.list.scrollTop = 0;
     this.list?.setSize(view.size);
-    // 滚动重画时 foot 也保持准确（paint 只负责行内容）
     this.updateFoot(view);
   }
 
@@ -713,7 +714,6 @@ export class SearchPanel {
     elBtn.setAttribute('role', 'option');
     elBtn.tabIndex = -1;
     elBtn.hidden = true;
-    elBtn.style.height = `${this.rowHeight}px`;
 
     const pathEl = el('span', 'result__path');
     const meta = el('span', 'result__meta');
@@ -730,7 +730,7 @@ export class SearchPanel {
     elBtn.setAttribute('aria-keyshortcuts', 'Delete');
     elBtn.append(pathEl, meta, hideEl);
 
-    this.slotRefs.set(elBtn, { el: elBtn, hideEl, pathEl, fieldEl, valueEl, kindEl, index: -1, visible: false });
+    this.slotRefs.set(elBtn, { el: elBtn, hideEl, pathEl, fieldEl, valueEl, kindEl });
     this.slotNodes.push(elBtn);
     return elBtn;
   }
@@ -744,8 +744,6 @@ export class SearchPanel {
     const hit = view.hits[index];
     if (!hit) return;
 
-    slot.index = index;
-    slot.visible = true;
     slot.el.dataset.index = String(index);
     slot.el.dataset.path = hit.path;
     slot.el.title = hit.path;
@@ -768,10 +766,6 @@ export class SearchPanel {
     delete el.dataset.index;
     delete el.dataset.path;
     el.removeAttribute('title');
-    if (slot) {
-      slot.visible = false;
-      slot.index = -1;
-    }
   }
 
   // -------------------------------------------------------------- events

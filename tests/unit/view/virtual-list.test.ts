@@ -10,12 +10,27 @@ import { installFakeDom, type FakeDomHandle, type FakeElement } from './fake-dom
  * 滚动用 `emit('scroll')` 触发（模块自己挂的监听）。
  */
 let dom: FakeDomHandle;
+let restoreResizeObserver: (() => void) | null = null;
+
+/** fake DOM 不提供 ResizeObserver：装一个空的（模块只 observe/disconnect，不主动触发）。 */
+class FakeResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
 
 beforeEach(() => {
   dom = installFakeDom();
+  const previous = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = FakeResizeObserver;
+  restoreResizeObserver = () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = previous;
+  };
 });
 
 afterEach(() => {
+  restoreResizeObserver?.();
+  restoreResizeObserver = null;
   dom.restore();
 });
 
@@ -43,8 +58,7 @@ function makeHarness(opts: {
   rowHeight?: number;
   overscan?: number;
   viewportPx?: number;
-  drawOnScroll?: boolean;
-  onScroll?: (px: number) => void;
+  afterDraw?: () => void;
 } = {}): Harness {
   const rowHeight = opts.rowHeight ?? 10;
   const scrollerEl = scroller(opts.viewportPx ?? 100);
@@ -87,9 +101,7 @@ function makeHarness(opts: {
       fake.removeAttribute('title');
       fake.classList.remove('is-selected');
     },
-    onScroll: opts.onScroll,
-    drawOnScroll: opts.drawOnScroll,
-    drawOnResize: false,
+    afterDraw: opts.afterDraw,
   });
   return h;
 }
@@ -224,7 +236,7 @@ describe('paint 上下文', () => {
 });
 
 describe('滚动与销毁', () => {
-  it('drawOnScroll 默认开启：滚动事件触发重画', () => {
+  it('滚动事件触发重画', () => {
     const h = makeHarness();
     h.list.setSize(100);
     const before = h.paints.length;
@@ -234,15 +246,16 @@ describe('滚动与销毁', () => {
     expect(h.list.scrollTop).toBe(200);
   });
 
-  it('drawOnScroll=false 时滚动不重画，但仍回调 onScroll（树 / 原文的口径）', () => {
-    const seen: number[] = [];
-    const h = makeHarness({ drawOnScroll: false, onScroll: (px) => seen.push(px) });
+  it('afterDraw 在每次重画后触发（大纲写 aria / 搜索刷底栏用）', () => {
+    let calls = 0;
+    const h = makeHarness({ afterDraw: () => (calls += 1) });
     h.list.setSize(100);
-    const before = h.paints.length;
+    expect(calls).toBe(1);
     h.scroller.scrollTop = 120;
     h.scroller.emit('scroll');
-    expect(h.paints.length).toBe(before);
-    expect(seen).toEqual([120]);
+    expect(calls).toBe(2);
+    h.list.setSize(0);
+    expect(calls).toBe(3);
   });
 
   it('scrollTop setter 把负值 / NaN 夹成 0', () => {

@@ -226,6 +226,36 @@ export interface RowRenderer {
 **性能约束**：40 行/帧 0.03–0.09ms；池大小 = `viewportRows + 2 × overscan`。
 **删除测试**：删掉 → `TreeView` 自己拼 innerHTML，行复用/主题重绘/命中态散落；canvas 实验要重写整棵树。
 
+## 4.5 S3b · 虚拟列表（VirtualList）
+
+**位置**：`src/view/virtual-list.ts`（view 层，DOM 依赖；纯几何 + 池化）。候选 5 / 2026-11-19，票 #61。
+
+```ts
+export class VirtualList {
+  constructor(opts: VirtualListOptions);   // scroller / spacer / host / rowHeight / overscan
+                                           // + createSlot / paint / clearSlot（面板注入）
+                                           // + afterDraw（每次重画后的收尾：大纲写 aria、搜索刷底栏）
+  setSize(n: number): void;                // spacer = min(n × rowHeight, MAX_SCROLL_PX) + 重画
+  setRowHeight(px: number): void;          // 槽位高度 / spacer / 窗口一起重排
+  draw(): void;                            // 按 size + 滚动位置重算可见窗口
+  refresh(): void;                         // 面板由隐藏变可见时重画（clientHeight 为 0 的那一帧）
+  get size(): number;
+  get rowHeight(): number;
+  get rendered(): number;                  // 可见槽位数
+  get/set scrollTop: number;
+  viewportPx(): number;
+  destroy(): void;
+}
+```
+
+**不变式**
+- 模块**只碰槽位元素的 `style.top` / `style.height` 与 `hidden`**；class / 子节点 / dataset / aria / 高亮全在 `paint` 里——冒烟断言读的是这些形状，模块不该有意见。
+- 槽位由面板 `createSlot()` 造；被窗口淘汰时模块调 `clearSlot(el)`：**清理的时机**归模块，**清什么**归面板（幽灵 mark / 残留 title / 残留可点态是四份实现里最容易漏的地方）。
+- 模块只认 `size`（显示几条）与 `paint(index)`；`index → 数据` 的映射归面板。今天 `search-state` 的 `size` 恒等于 `hits.length`，这条边界是为「显示条数 ≠ 数组长度」的将来留的，不是现状。
+- 窗口由模块按 `size` + 滚动位置 + 视口算（search 44/4、大纲 24/6）。树与原文的窗口来自 viewmodel 的 `WindowMachine`（`viewportRows + 1 + 2×overscan` + 预取，**另一个公式**），故**不接**本模块（见 ADR-0008 修订段）。
+
+**删除测试**：删掉 → 搜索与大纲各自再写一遍 spacer / 池增长 / 隐藏清理 / ResizeObserver（这次重构前就是两份几乎逐行相同的实现）。
+
 ## 5. S4 · 主题与 token 注入
 
 **位置**：`view` 与样式之间。主题不是组件，是一条 token 契约：`<html data-theme="dark|light">` + `docs/design/tokens.css` 的 CSS 变量。

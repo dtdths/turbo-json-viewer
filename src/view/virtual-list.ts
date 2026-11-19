@@ -5,20 +5,20 @@
  * 越界槽位隐藏、复用时的清理纪律、ResizeObserver、rendered 计数」，其中 search 与 outline
  * 几乎逐行同构。本模块把**「什么时候做什么」**收成一份，把**「长什么样」**留给面板：
  *
- *   - 模块只碰槽位元素的 `style.top` 与 `hidden`（`Q3`：DOM 形状是冒烟断言的依据）；
+ *   - 模块只碰槽位元素的 `style.top` / `style.height` 与 `hidden`（`Q3`：DOM 形状是冒烟断言的依据）；
  *   - 槽位元素由面板经 `createSlot()` 造，内容由 `paint(ctx)` 填；
  *   - 槽位被窗口淘汰时调用 `clearSlot(el)`——**清理的时机**归模块，**清什么**归面板
- *     （幽灵 mark / 残留 title / 残留可点态是四份实现里最容易漏的地方）。
+ *     （幽灵 mark / 残留 title / 残留可点态是两份实现里最容易漏的地方）。
  *
- * 边界（`Q7`）：`size` 是**显示几条**，不是数据有几条。搜索结果的 size 是过滤后的可见命中数，
- * 而它索引的是全部命中数组；索引映射一律归面板，模块永不读数据数组。
+ * 边界（`Q7`）：`size` 是**显示几条**（搜索 = 过滤后且未隐藏的命中数，大纲 = 已加载行数），
+ * 索引映射一律归面板，模块永不读数据数组——所以将来「显示条数 ≠ 数组长度」的列表也能接。
  *
  * 行高与 overscan 由调用方给（树来自设置、search 44/4、大纲 24/6、原文固定行高）；
  * spacer 高度 = `min(size × rowHeight, MAX_SCROLL_PX)`（与树/原文/大纲既有口径一致；
  * 搜索的命中上限 5 万 × 44px 远小于上限，实际等价）。
  *
- * 滚动与尺寸变化：默认自己监听（search / 大纲是自包含列表）；树与原文的重画由 app 的窗口回包驱动，
- * 用 `drawOnScroll: false` / `drawOnResize: false` 关掉、只留 `onScroll` 回调去请求窗口。
+ * 滚动与尺寸变化由模块自己监听（两个调用方都是自包含列表）。树与原文不接本模块：它们的窗口来自
+ * viewmodel 的 `WindowMachine`（另一套公式），树的槽位还是 `RowRenderer` 的句柄（见 ADR-0008 修订段）。
  */
 import { MAX_SCROLL_PX } from '../protocol/versions';
 import { computeVirtualWindow } from '../shared/window';
@@ -47,14 +47,8 @@ export interface VirtualListOptions {
   paint(ctx: VirtualPaint): void;
   /** 槽位被淘汰时的清理（类名 / dataset / 标题 / 高亮残留） */
   clearSlot(el: HTMLElement): void;
-  /** 滚动后回调（树 / 原文用它请求窗口；search 与大纲不需要） */
-  onScroll?(scrollTop: number): void;
-  /** 每次 draw 结束后的收尾（大纲用它写 aria-activedescendant；search 不需要） */
+  /** 每次 draw 结束后的收尾（大纲写 aria-activedescendant；搜索刷底栏计数） */
   afterDraw?(): void;
-  /** 默认 true；树 / 原文传 false（它们由 app 的窗口回包驱动重画） */
-  drawOnScroll?: boolean;
-  /** 默认 true；同上 */
-  drawOnResize?: boolean;
 }
 
 interface Slot {
@@ -77,17 +71,13 @@ export class VirtualList {
     this.opts = opts;
     this.rowHeightValue = normalizePositive(opts.rowHeight, 1);
     this.onScrollBound = () => {
-      if (this.opts.drawOnScroll !== false) this.draw();
-      if (this.opts.onScroll) this.opts.onScroll(this.scrollTop);
+      this.draw();
     };
     this.opts.scroller.addEventListener('scroll', this.onScrollBound, { passive: true });
-    this.resizeObserver =
-      opts.drawOnResize === false
-        ? null
-        : new ResizeObserver(() => {
-            this.draw();
-          });
-    this.resizeObserver?.observe(opts.scroller);
+    this.resizeObserver = new ResizeObserver(() => {
+      this.draw();
+    });
+    this.resizeObserver.observe(opts.scroller);
     this.syncSpacer();
   }
 
@@ -176,8 +166,8 @@ export class VirtualList {
     this.opts.afterDraw?.();
   }
 
-  /** 从 `from` 起隐藏并清理槽位（面板的 size 变小时用；重复调用是 no-op）。 */
-  hideFrom(from: number): void {
+  /** 从 `from` 起隐藏并清理槽位（重复调用是 no-op）。 */
+  private hideFrom(from: number): void {
     for (let i = from; i < this.slots.length; i++) {
       const slot = this.slots[i] as Slot;
       if (!slot.visible && slot.el.hidden && slot.index === -1) continue;

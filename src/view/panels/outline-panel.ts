@@ -59,8 +59,6 @@ interface RowSlot {
   readonly keyEl: HTMLSpanElement;
   readonly typeEl: HTMLSpanElement;
   readonly countEl: HTMLSpanElement;
-  index: number;
-  visible: boolean;
 }
 
 export class OutlinePanel {
@@ -191,7 +189,7 @@ export class OutlinePanel {
     if (!this.mounted) return;
     this.scroller.style.setProperty('--outline-row-h', `${next}px`);
     this.list?.setRowHeight(next);
-    this.updateFoot(this.view ?? ({} as OutlineView));
+    if (this.view) this.updateFoot(this.view);
     this.revealSelected();
   }
 
@@ -281,7 +279,6 @@ export class OutlinePanel {
 
     rowEl.tabIndex = -1;
     rowEl.hidden = true;
-    rowEl.style.height = `${this.rowHeight}px`;
 
     // caret / type / count 按行内容挂载或卸载（见 paintSlot）：
     // 冒烟与 a11y 都依赖「标量行没有 .outline-row__caret / .outline-row__count」
@@ -292,7 +289,7 @@ export class OutlinePanel {
     const countEl = el('span', 'outline-row__count');
     rowEl.append(keyEl);
 
-    this.slotRefs.set(rowEl, { el: rowEl, caret, keyEl, typeEl, countEl, index: -1, visible: false });
+    this.slotRefs.set(rowEl, { el: rowEl, caret, keyEl, typeEl, countEl });
     this.slotRefsSize += 1;
     return rowEl;
   }
@@ -329,17 +326,13 @@ export class OutlinePanel {
   private paintSlot(ctx: VirtualPaint): void {
     const view = this.view;
     const slot = this.slotRefs.get(ctx.el);
-    if (!view) return;
+    if (!view || !slot) return;
     const index = ctx.index;
     const row = view.rows[index];
     if (!row) return;
     const selected = view.selected;
-    const node = slot ? slot.el : (ctx.el as HTMLDivElement);
-    if (!slot) return;
-    slot.index = index;
-    slot.visible = true;
+    const node = ctx.el as HTMLDivElement;
     node.hidden = false;
-    node.style.height = `${this.rowHeight}px`;
     // 缩进用 CSS 变量（每行按层级）
     node.style.setProperty('--o-depth', String(row.depth));
     node.dataset.path = row.path;
@@ -412,8 +405,6 @@ export class OutlinePanel {
     el.removeAttribute('aria-label');
     el.removeAttribute('title');
     if (!slot) return;
-    slot.visible = false;
-    slot.index = -1;
     slot.caret.remove();
     slot.caret.textContent = '';
     slot.typeEl.remove();
