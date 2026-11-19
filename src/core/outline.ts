@@ -16,7 +16,7 @@ import { OUTLINE_PAGE_MAX } from '../protocol/versions';
 import { clampInt } from '../shared/num';
 import { appendIndex, appendKey } from '../shared/path';
 import { orderedKeys } from './order';
-import { childCountOf, isContainer, jsonKind } from './row-model';
+import { childCountOf, isContainer, jsonKind } from './json-graph';
 
 /** 回包去掉 `rootId`（由 DocService 补）：纯函数不认识文档根。 */
 export type OutlinePage = Omit<OutlineReply, 'rootId'>;

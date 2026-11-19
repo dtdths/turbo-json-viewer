@@ -13,121 +13,32 @@
  */
 import { CoreError } from '../protocol/errors';
 import { ROW_BUDGET } from '../protocol/versions';
-import type { JsonKind, Path, Row, SortOrder } from '../protocol/types';
-import { appendIndex, appendKey, parsePath, ROOT_PATH } from '../shared/path';
+import type { Path, Row, SortOrder } from '../protocol/types';
+import { appendIndex, appendKey, ROOT_PATH } from '../shared/path';
+import {
+  childAtSlot,
+  childCountOf,
+  countAllExpandedRows,
+  isContainer,
+  jsonKind,
+  previewOf,
+  valueAt as graphValueAt,
+  walkPath,
+  type Container,
+  type PathStep,
+  type WalkFrame,
+} from './json-graph';
 import { normalizeSortOrder, orderedKeys } from './order';
 
-/** JSON 容器（对象或数组）。标量（含 null）不是容器。 */
-export type Container = Record<string, unknown> | unknown[];
+/* ------------------------------------------------------------------------- */
+/* 几何重建帧（keys 是**显示序**；数组为 null）                               */
+/* ------------------------------------------------------------------------- */
 
-/** 折叠容器摘要：取前 N 项、总长上限 C 字符。 */
-export const SUMMARY_ITEMS = 3;
-export const SUMMARY_CHARS = 90;
-/** 搜索命中预览上限（命中集可能 5 万条，预览必须短）。 */
-export const HIT_PREVIEW_CHARS = 80;
-
-export function isContainer(node: unknown): node is Container {
-  return typeof node === 'object' && node !== null;
-}
-
-export function isArrayContainer(node: Container): node is unknown[] {
-  return Array.isArray(node);
-}
-
-export function jsonKind(node: unknown): JsonKind {
-  if (node === null) return 'null';
-  switch (typeof node) {
-    case 'string':
-      return 'string';
-    case 'number':
-      return 'number';
-    case 'bigint':
-      // 无损数字（ADR-0020）：BigInt 归 `number` 类，不新增 JsonKind 成员
-      return 'number';
-    case 'boolean':
-      return 'boolean';
-    case 'object':
-      return Array.isArray(node) ? 'array' : 'object';
-    default:
-      return 'null';
-  }
-}
-
-export function childCountOf(container: Container): number {
-  return Array.isArray(container) ? container.length : Object.keys(container).length;
-}
-
-/** 标量的 JSON 原文（字符串带引号/转义；数字用 JSON 规则，BigInt 用十进制串）。 */
-export function scalarPreview(node: unknown): string {
-  if (node === null) return 'null';
-  switch (typeof node) {
-    case 'string':
-      return JSON.stringify(node);
-    case 'number':
-      return JSON.stringify(node);
-    case 'bigint':
-      // 无损数字（ADR-0020）：BigInt 不能走 JSON.stringify（会抛 TypeError）
-      return node.toString();
-    case 'boolean':
-      return node ? 'true' : 'false';
-    default:
-      // 值图不产生 undefined/function/symbol；防御性兜底成 null
-      return 'null';
-  }
-}
-
-/** 摘要里的单值短形态：容器用 `{…}` / `[…]`，不递归。 */
-export function inlinePreview(node: unknown): string {
-  if (!isContainer(node)) return scalarPreview(node);
-  const count = childCountOf(node);
-  if (Array.isArray(node)) return count > 0 ? '[…]' : '[]';
-  return count > 0 ? '{…}' : '{}';
-}
-
-/** 按字符截断（不切断代理对），超长补 `…`。 */
-export function truncateText(text: string, max: number): string {
-  if (text.length <= max) return text;
-  let end = Math.max(0, max - 1);
-  const code = text.charCodeAt(end - 1);
-  if (code >= 0xd800 && code <= 0xdbff) end -= 1; // 别把 emoji 切成两半
-  return text.slice(0, end) + '…';
-}
-
-/** 折叠容器摘要：对象 `"k": v, …`；数组 `v, v, …`。 */
-export function summarizeContainer(node: Container): string {
-  const count = childCountOf(node);
-  if (count === 0) return Array.isArray(node) ? '[]' : '{}';
-  const n = Math.min(SUMMARY_ITEMS, count);
-  const parts: string[] = [];
-  if (Array.isArray(node)) {
-    for (let i = 0; i < n; i++) parts.push(inlinePreview(node[i]));
-  } else {
-    const keys = Object.keys(node);
-    for (let i = 0; i < n; i++) {
-      const key = keys[i] as string;
-      parts.push(JSON.stringify(key) + ': ' + inlinePreview(node[key]));
-    }
-  }
-  let out = parts.join(', ');
-  if (count > n) out += ', …';
-  return truncateText(out, SUMMARY_CHARS);
-}
-
-/** 行预览：标量 JSON 原文 / 空容器字面量 / 展开容器省略号 / 折叠容器摘要。 */
-export function previewOf(node: unknown, open: boolean): string {
-  if (!isContainer(node)) return scalarPreview(node);
-  const count = childCountOf(node);
-  if (count === 0) return Array.isArray(node) ? '[]' : '{}';
-  if (open) return Array.isArray(node) ? '[…]' : '{…}';
-  return summarizeContainer(node);
-}
-
-/** 命中预览：标量截断到 HIT_PREVIEW_CHARS；容器只给省略号形态。 */
-export function shortPreview(node: unknown): string {
-  if (!isContainer(node)) return truncateText(scalarPreview(node), HIT_PREVIEW_CHARS);
-  const count = childCountOf(node);
-  if (Array.isArray(node)) return count > 0 ? '[…]' : '[]';
-  return count > 0 ? '{…}' : '{}';
+interface BuildFrame extends WalkFrame {
+  /** 子项可见行数（按 slot 顺序收集，结束时交给 Fenwick） */
+  sizes: number[];
+  /** 已收集子项的可见行数之和 */
+  sum: number;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -177,61 +88,6 @@ class Fenwick {
     }
     return pos;
   }
-}
-
-/* ------------------------------------------------------------------------- */
-/* 全展开计数（自适应展开 / expand-all 的 dry-run）                           */
-/* ------------------------------------------------------------------------- */
-
-interface WalkFrame {
-  container: Container;
-  /** 对象容器的键序（数组为 null）；键序即行序 */
-  keys: string[] | null;
-  slot: number;
-  count: number;
-}
-
-interface BuildFrame extends WalkFrame {
-  /** 子项可见行数（按 slot 顺序收集，结束时交给 Fenwick） */
-  sizes: number[];
-  /** 已收集子项的可见行数之和 */
-  sum: number;
-}
-
-function frameOf(container: Container): WalkFrame {
-  if (Array.isArray(container)) return { container, keys: null, slot: 0, count: container.length };
-  const keys = Object.keys(container);
-  return { container, keys, slot: 0, count: keys.length };
-}
-
-function childAtSlot(frame: WalkFrame): unknown {
-  return frame.keys
-    ? (frame.container as Record<string, unknown>)[frame.keys[frame.slot] as string]
-    : (frame.container as unknown[])[frame.slot];
-}
-
-/**
- * 「全展开后的可见行数」= 值图节点数（全展开时每个节点恰好一行）。
- * 超过 limit 立即返回 limit + 1：早停保证大文档（50MB / 2.96M 节点）也只走 ≤ limit+1 个节点。
- */
-export function countAllExpandedRows(value: unknown, limit: number): number {
-  let count = 1;
-  if (count > limit) return limit + 1;
-  if (!isContainer(value)) return count;
-  const stack: WalkFrame[] = [frameOf(value)];
-  while (stack.length > 0) {
-    const frame = stack[stack.length - 1] as WalkFrame;
-    if (frame.slot >= frame.count) {
-      stack.pop();
-      continue;
-    }
-    const child = childAtSlot(frame);
-    frame.slot += 1;
-    count += 1;
-    if (count > limit) return limit + 1;
-    if (isContainer(child)) stack.push(frameOf(child));
-  }
-  return count;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -442,10 +298,9 @@ export class RowModel {
     return rows;
   }
 
-  /** 路径处的值；路径不存在抛 BAD_COMMAND（根路径返回根值）。 */
+  /** 路径处的值；路径不存在抛 BAD_COMMAND（根路径返回根值）。归 `json-graph`（#59）。 */
   valueAt(path: Path): unknown {
-    const chain = this.locateChain(path);
-    return chain.length === 0 ? this.rootValue : (chain[chain.length - 1] as ChainEntry).node;
+    return graphValueAt(this.rootValue, path);
   }
 
   /** 路径的可见行号；不在视图中（祖先折叠）或不存在 → -1。 */
@@ -926,34 +781,30 @@ export class RowModel {
     };
   }
 
-  /** 解析路径为「从根的子项到目标」的链；任何一段缺失都抛 BAD_COMMAND。 */
+  /**
+   * 解析路径为「从根的子项到目标」的链；任何一段缺失都抛 BAD_COMMAND。
+   *
+   * 路径语法归 `json-graph.walkPath`（顺序无关）；这里只补**显示 slot**——几何需要它
+   * （Fenwick 前缀和、`rowOfPath`、`replaceNode` 的写入位置），值图不需要（#59）。
+   */
   private locateChain(path: Path): ChainEntry[] {
-    const segments = parsePath(path);
+    const steps = walkPath(this.rootValue, path);
     const chain: ChainEntry[] = [];
-    let container: unknown = this.rootValue;
     let currentPath: Path = ROOT_PATH;
-    for (const segment of segments) {
-      if (!isContainer(container)) throw this.badPath(path);
-      let slot: number;
-      if (Array.isArray(container)) {
-        if (segment.kind === 'index') {
-          slot = segment.index;
-        } else {
-          slot = Number(segment.key);
-          if (!Number.isInteger(slot) || segment.key.trim() === '') throw this.badPath(path);
-        }
-        if (!Number.isInteger(slot) || slot < 0 || slot >= container.length) throw this.badPath(path);
-      } else {
-        const key = segment.kind === 'key' ? segment.key : String(segment.index);
-        slot = this.keysOf(container).indexOf(key);
-        if (slot < 0) throw this.badPath(path);
-      }
-      const node = this.childAt(container, slot);
-      currentPath = this.pathOfSlot(container, slot, currentPath);
-      chain.push({ container, slot, node, path: currentPath });
-      container = node;
+    for (const step of steps) {
+      const slot = this.displaySlotOf(step, path);
+      currentPath = this.pathOfSlot(step.parent, slot, currentPath);
+      chain.push({ container: step.parent, slot, node: step.node, path: currentPath });
     }
     return chain;
+  }
+
+  /** 显示序里的 slot：数组就是下标；对象在显示序键表里查位置（缓存的 `keysOf`）。 */
+  private displaySlotOf(step: PathStep, path: Path): number {
+    if (Array.isArray(step.parent)) return Number(step.key);
+    const slot = this.keysOf(step.parent).indexOf(step.key);
+    if (slot < 0) throw this.badPath(path);
+    return slot;
   }
 
   /** 视图收起：释放子树内的展开状态 / 索引 / 键缓存，**保留**显示排序覆盖（覆盖是会话态视图状态）。 */

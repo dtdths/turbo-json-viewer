@@ -36,7 +36,7 @@ import {
   wordEdges,
   type WordEdges,
 } from '../shared/word';
-import { isContainer, jsonKind, scalarPreview, shortPreview } from './row-model';
+import { isContainer, jsonKind, scalarPreview, shortPreview } from './json-graph';
 
 export interface SearchWalkOpts extends SearchOpts {
   /** 每 4096 个节点问一次；用于 cancelSearch / 新搜索抢占（骨架里同步 walk 不常用） */

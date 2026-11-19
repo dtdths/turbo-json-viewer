@@ -23,7 +23,7 @@
  * （下标不进路径）。第 2 遍的节点预算只影响收集，不影响第 1 遍的精确计数。
  */
 import type { DocumentProfile, FieldStat, JsonKind, PathSample } from '../protocol/types';
-import { jsonKind } from './row-model';
+import { jsonKind } from './json-graph';
 
 /** 第 2 遍字段收集的节点预算（ADR-0025 §4）。 */
 export const PROFILE_NODE_BUDGET = 50_000;

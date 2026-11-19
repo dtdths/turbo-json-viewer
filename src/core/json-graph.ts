@@ -128,21 +128,22 @@ export function shortPreview(node: unknown): string {
 /* 全展开计数（自适应展开 / expand-all 的 dry-run）                            */
 /* ------------------------------------------------------------------------- */
 
-interface Frame {
+/** 迭代全展开遍历的帧：`keys` 为对象容器的**值图**键序（数组为 null）。 */
+export interface WalkFrame {
   container: Container;
-  /** 对象容器的键序（数组为 null）；值图顺序，与显示序无关 */
   keys: string[] | null;
   slot: number;
   count: number;
 }
 
-function frameOf(container: Container): Frame {
+function frameOf(container: Container): WalkFrame {
   if (Array.isArray(container)) return { container, keys: null, slot: 0, count: container.length };
   const keys = Object.keys(container);
   return { container, keys, slot: 0, count: keys.length };
 }
 
-function childAtSlot(frame: Frame): unknown {
+/** 帧内当前 slot 的子值（行模型的几何遍历复用同一份读法）。 */
+export function childAtSlot(frame: WalkFrame): unknown {
   return frame.keys
     ? (frame.container as Record<string, unknown>)[frame.keys[frame.slot] as string]
     : (frame.container as unknown[])[frame.slot];
@@ -158,9 +159,9 @@ export function countAllExpandedRows(value: unknown, limit: number): number {
   let count = 1;
   if (count > limit) return limit + 1;
   if (!isContainer(value)) return count;
-  const stack: Frame[] = [frameOf(value)];
+  const stack: WalkFrame[] = [frameOf(value)];
   while (stack.length > 0) {
-    const frame = stack[stack.length - 1] as Frame;
+    const frame = stack[stack.length - 1] as WalkFrame;
     if (frame.slot >= frame.count) {
       stack.pop();
       continue;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CoreError } from '../../../src/protocol/errors';
+import { RowModel } from '../../../src/core/row-model';
 import {
-  RowModel,
   countAllExpandedRows,
   isContainer,
   jsonKind,
@@ -10,7 +10,7 @@ import {
   shortPreview,
   summarizeContainer,
   truncateText,
-} from '../../../src/core/row-model';
+} from '../../../src/core/json-graph';
 import { ROOT_PATH } from '../../../src/shared/path';
 
 const DOC = {
