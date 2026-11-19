@@ -178,3 +178,37 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
 9. **已知可优化（未做）**：`app/dev-hook.ts` 仍静态打进生产 `page.js`（12.5KB raw，运行时
    `isExtension` 守卫）。改成动态 import 可回收数 KB，但它会落进**懒加载**预算（145.9 / 146，余 0.1），
    需要同时处理两个预算口径；本修订只记录，不并入。
+
+## 修订（2026-11-19）：根级派生状态收成一个 module + 根死亡统一释放
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-19，候选 3）+ `grilling` 拍板（Q1–Q9）。
+> §3「一个概念一个 module」与 §1 的分层不变——本修订把 core 内五种「由根派生」的数据收进一个
+> module，并把「根死亡要清什么」从两处手工清单收成一条回调链。
+
+1. **一个 module**：`src/core/root-derived.ts` 的 `RootDerived`。五种数据——保真报告、path↔offset
+   索引、单路径偏移、节点数、文档概要——原来各写一套「查 → 校验 → 算 → 存」，并存三种失效方言。
+   现在失效键由 `DERIVED_SLOTS` 一张表声明：`identity`（WeakMap 跟随根对象，文档替换 / 根被淘汰
+   自动回收：源文本类）与 `docRevision`（版本推进即失效、必须显式释放：值图类）。
+2. **接口 6 个方法**：`get`（miss 算一次）/ `peek`（异步派生先查、`await` 后 `set`；对 docRevision
+   槽同时做版本判定）/ `set`（一次采样喂两个槽——`profile` 回填 `nodeCount`）/ `getAt`（子键槽 +
+   per-root LRU：命中挪队尾、超容量淘汰、`null` 也算命中）/ `release(rootId)` / `clear()`。
+   新增一种派生数据 = `DERIVED_SLOTS` 加一行 + 调用点用槽名，接口不动。
+3. **根死亡只有一个 owner**：`RootStore` 增 `onRelease(rootId)` 选项，`close` / LRU 淘汰 / `clear`
+   三处根死亡都回调，同一根只触发一次；`DocService.releaseRootState`（派生缓存 / 编辑历史 /
+   搜索抢占 seq）成为唯一调用方。`closeRoot` 不再显式释放。
+4. **顺带修一个真漏洞**：表达式根被 LRU 淘汰时原来只 `emit(stale)`，不释放旁路状态——被淘汰的
+   表达式根若曾跑过搜索，`latestSearchSeq` 条目会残留到服务关闭。现在淘汰也走 `onRelease`。
+5. **不搬的东西**：`histories`（可变 undo 栈）与 `latestSearchSeq`（单调 seq）不是派生数据，
+   留在 `DocService`，但和 `RootDerived` 一起由 `releaseRootState` 这一处释放——模块名因此不必
+   扩张成「什么都装的根附属状态」。
+6. **被否决**：(a) 每槽一个方法（`fidelityOf` / `nodeCountOf` …）——接口从 6 涨到 10，新增缓存
+   要改接口；(b) `map(root, slot)` 返回受容量约束的 Map——把 LRU 纪律又交回调用点；
+   (c) 只抽失效纪律、缓存本体留在 DocService——「查→算→存」的 5 份样板正是重复来源；
+   (d) 让 `RootStore` 直接持有 `RootDerived`——容器只该认 `Root`，用回调保持解耦。
+7. **测试面**：`tests/unit/core/root-derived.test.ts` 13 例（identity / docRevision 失效矩阵、
+   `peek` 版本判定、`set` 落值、子键 LRU 与 `null` 命中、换根对象重算、纪律表）；
+   `root-store` +4（`onRelease`：close 幂等 / LRU 淘汰 / clear 逐个 / 未注册时不变）；
+   `doc-service` +1（表达式根被 LRU 淘汰后 `latestSearchSeq` 不残留）。旧的白盒用例
+   （直读 `profileCache`）改为断言 `release` 被触发。单测 1414 → 1432。
+8. **代价**：`worker.js` 65.9 → **66.2KB gz**（+0.3；worker 自 ADR-0020 起无硬预算、只记录）；
+   `page.js` / 懒加载 / 语言包不受影响（core 只进 worker）。
