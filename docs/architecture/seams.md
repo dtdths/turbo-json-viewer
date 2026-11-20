@@ -427,17 +427,20 @@ export class ExpressionWorkspace {
 
 ```ts
 // src/app/selection-intake.ts（Service Worker 侧）
-export const INCOMING_MENU_ID = 'tjv-open-selection';
+export const INCOMING_MENU_ID = 'tjv-open-selection';          // 父项（品牌名）
+export const INCOMING_MENU_VIEW = 'tjv-open-selection-view';
+export const INCOMING_MENU_DOWNLOAD = 'tjv-open-selection-download';
+export function modeOfMenuItem(id: string | number): IncomingMode | null;
 export const INCOMING_KEY_PREFIX = 'tjv.incoming.';
 export const SELECTION_MAX_CHARS = 2_000_000;   // ≈4MB UTF-16
 export const INCOMING_TTL_MS = 60 * 60 * 1000;
 export function isJsonCandidate(text: string): boolean;   // trim 首字符 { / [（不设长度下限）
-export function deliverSelection(port: SelectionIntakePort, raw: string): Promise<void>;
+export function deliverSelection(port: SelectionIntakePort, raw: string, mode?: IncomingMode): Promise<void>;
 //   port = { storage: chrome.storage.session, open(token), uuid(), now() }   // 形状与端口类型在 shared/incoming
 
 // src/app/incoming-selection.ts（页面侧）
 export function incomingTokenFromHash(hash: string): string | null;  // 只认安全 token
-export function takeIncoming(store: IncomingStore | null, token: string): Promise<IncomingRead | null>;   // 见 shared/incoming
+export function takeIncoming(store: IncomingStore | null, token: string): Promise<IncomingRead | null>;   // {kind:'import', text, mode} | {kind:'error'}
 export function suspectedTruncated(text: string): boolean;           // ≥16384 字符
 ```
 
@@ -448,6 +451,7 @@ export function suspectedTruncated(text: string): boolean;           // ≥16384
 - **SW 仍不持文档**：选区文本只在 `storage.session` 停留到读完；SW 不 import 页面模块，页面不 import SW 模块（共享**值**会让 esbuild 拆出首屏共享 chunk，键前缀各写一份、注释互指；条目形状与存储端口类型在 `shared/incoming`，纯类型零运行时）。
 - **清理**：SW 每次投递前清 1 小时前的残留（`createdAt` 不合法的一并清）；`storage.session` 本身在浏览器重启时清空。
 - **落点/命名**：沿用设置「导入位置」（默认新标签），文档名固定 `selection.json`，来源 `'clipboard'`。
+- **二级菜单（#63）**：父项只出子菜单（品牌名不翻译），子项 `打开查看` / `下载 JSON`；`mode='download'` 时页面导入成功后 `core.exportDoc` + `<a download>` 直接落盘（不经保存对话框、**不关标签页**）。菜单图标靠 manifest `icons` 的 16×16。
 
 **删除测试**：删掉 → 右键入口消失；或退回「SW 直连当天文档 / 页面读全局变量」的形态，token 生命周期与刷新去重只能靠真机手测。
 

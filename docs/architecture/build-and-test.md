@@ -93,7 +93,11 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
   "version": "0.1.0",
   "description": "本地只读 JSON 查看器：Worker 常驻文档、固定行高虚拟化、搜索/表达式/临时编辑。",
   "minimum_chrome_version": "120",
-  "action": { "default_title": "Turbo JSON Viewer" },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": {
+    "default_title": "Turbo JSON Viewer",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" }
+  },
   "background": { "service_worker": "sw.js", "type": "module" },
   "permissions": ["storage", "contextMenus"],
   "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
@@ -110,7 +114,7 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
 |---|---|---|---|
 | 扩展页 | `chrome-extension://<id>/page.html`（**非 popup**） | 装配一切：创建 Worker、挂载 view、持有 `RowWindowSource` | 用户关闭标签即销毁；选 tab 而非 popup，因为 popup 失焦即关，会连 Worker 一起杀掉 |
 | module worker | `new Worker(chrome.runtime.getURL('worker.js'), { type: 'module' })` | 文档常驻、解析、行模型、搜索、表达式、编辑、trail、复制 | 随页面创建/销毁；不跨页面复用（ADR-0001） |
-| Service Worker | `sw.js`（`type: "module"`） | `action.onClicked → tabs.create(page.html)`；右键菜单选区 → 一次性 token 写 `storage.session` + 开页（`page.html#incoming=<token>`，ADR-0031） | Chrome 随时可杀；**不持文档、不转消息**；选区文本只经 `storage.session` 一次性中转，页面读完即删 |
+| Service Worker | `sw.js`（`type: "module"`） | `action.onClicked → tabs.create(page.html)`；右键二级菜单（打开查看 / 下载 JSON）→ 一次性 token 写 `storage.session` + 开页（`page.html#incoming=<token>`，ADR-0031/#63） | Chrome 随时可杀；**不持文档、不转消息**；选区文本只经 `storage.session` 一次性中转，页面读完即删 |
 
 通道：窗口请求走独立 `MessageChannel`、控制命令走 `postMessage`（两者往返无性能差，11µs；分开只为隔离排队，ADR-0001）。SW 与 module worker 是两个概念，文档状态只在后者。
 

@@ -70,7 +70,7 @@ info.selectionText（SW，菜单回调）
 ### 5. i18n
 
 - 页面 toast 走语言包：`app.incoming.notJson` / `app.incoming.tooLarge` / `app.incoming.truncated`（en / zh-CN 全量镜像，守护测试覆盖）；错误码 → 词条的映射在 `view/incoming-copy.ts`（与 `view/expression-copy` 同分工，app 不拼文案）。
-- 菜单标题走 `_locales`（`chrome.i18n.getMessage('menuOpenSelection')`）：**跟随浏览器语言，不跟随应用内语言**——SW 拿不到页面语言包。记为已知差距，不静默。
+- 菜单文案走 `_locales`（原 `menuOpenSelection`；2026-11-20 修订后为子项 `menuView` / `menuDownload`，父项是品牌名不翻译）：**跟随浏览器语言，不跟随应用内语言**——SW 拿不到页面语言包。记为已知差距，不静默。
 
 ### 6. 测试策略
 
@@ -107,3 +107,17 @@ info.selectionText（SW，菜单回调）
 - `smoke-extension` **OK**（新增 phase，见 §6）；其余 16 套冒烟断言零改动（`smoke-export` 的 `menu:select-restores-focus` 为既有环境偶发）。
 - 体积：`page.js` **57.1 / 58**、`sw.js` 0.7、语言包 6.5 / 7.3、懒加载 145.9 / 146。
 - 真机手测（发布前）：普通页面选中 beautified JSON → 右键 → 打开；选中散文 → 开页 toast；选中 >2M 字符 → 过大提示；`chrome://` 页面无菜单项。
+
+## 修订（2026-11-20）：二级菜单 + 菜单图标 + 「下载 JSON」（#63）
+
+用户真机试用反馈（截图）：菜单文案整句过长、菜单项左侧无图标；并希望第二项能直接下载。
+
+1. **结构**：父项 `Turbo JSON Viewer`（品牌名不翻译，hover 出子菜单）+ 子项「打开查看」/「下载 JSON」（`_locales`，跟随浏览器语言）。菜单 id 稳定：`tjv-open-selection` / `-view` / `-download`；`modeOfMenuItem()` 只认两个子项 id，父项与未知 id 返回 null。父项不可点（Chrome 子菜单语义）。
+2. **图标**：manifest 加 `icons`（16/32/48/128）与 `action.default_icon`——Chrome 只在提供 16×16 图标时才在菜单项旁显示图标。图形是深色圆角方块 + 品牌蓝 `{}`，由一次性 canvas 脚本生成（不进构建依赖），PNG 提交在 `src/app/icons/`，build 原样复制到 `dist/icons`。
+3. **下载（路线 A，零新权限）**：token 的 `{kind:'text'}` 带 `mode: 'view' | 'download'`；页面导入成功后直接 `core.exportDoc` + `<a download>` 落盘：
+   - **不经保存对话框**——新开的标签页没有用户手势，`showSaveFilePicker` 会失败；CfT 实测无手势锚点下载可以落盘；
+   - **不关闭标签页**（用户拍板）：语义是「先导入再导出」，文档留在标签页里供继续查看；
+   - 解析失败不下载、保留标签页并走现有错误提示；
+   - 文件名沿用导入名（`selection.json`），缩进/转义跟当前设置。
+4. **测试**：单测 1571 → **1574**（+3：mode 透传 / 菜单 id → 动作 / 页面读 mode）；`smoke-extension` 增加下载 phase（CDP `Browser.setDownloadBehavior` + `downloadWillBegin`，断言文件落盘、标签页未关、token 已删、hash 已清、页面有导入结果）。
+5. **体积**：`page.js` 57.1 → **57.2KB gz（仍 ≤58）**、`sw.js` 0.7 → **0.8**（无硬预算）、语言包 6.5 / 7.4 与懒加载 145.9 不变；图标 4 个 PNG 共 ~18KB（不计 gz 预算，随扩展分发）。
