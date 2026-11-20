@@ -4,7 +4,7 @@
  * 只做「解析 hash → 读并删 `storage.session` 里的一次性 token」；导入与文案归 app。
  * 纯 TS、零 DOM：`location` / `history` 的清理由调用方（`main.ts`）做，单测可直喂 hash 与假存储。
  */
-import type { IncomingErrorCode, IncomingStore } from '../shared/incoming';
+import type { IncomingErrorCode, IncomingMode, IncomingStore } from '../shared/incoming';
 
 /**
  * 与 `app/selection-intake` 的 `INCOMING_KEY_PREFIX` **必须一致**。
@@ -23,7 +23,7 @@ export const INCOMING_HASH_PREFIX = '#incoming=';
 export const SUSPECTED_TRUNCATED_CHARS = 16_384;
 
 export type IncomingRead =
-  | { kind: 'import'; text: string }
+  | { kind: 'import'; text: string; mode: IncomingMode }
   | { kind: 'error'; code: IncomingErrorCode };
 
 /** 从 `location.hash` 取 token；格式不对就当没有（不报错，避免把垃圾 hash 变成错误提示）。 */
@@ -54,9 +54,10 @@ export async function takeIncoming(store: IncomingStore | null, token: string): 
     /* 删除失败不影响本次导入（条目会由 SW 的 TTL 清理兜底） */
   }
   if (typeof value !== 'object' || value === null) return null;
-  const payload = value as { kind?: unknown; text?: unknown; error?: unknown };
+  const payload = value as { kind?: unknown; text?: unknown; error?: unknown; mode?: unknown };
   if (payload.kind === 'text' && typeof payload.text === 'string') {
-    return { kind: 'import', text: payload.text };
+    // 旧 token 没有 mode：默认「打开查看」
+    return { kind: 'import', text: payload.text, mode: payload.mode === 'download' ? 'download' : 'view' };
   }
   if (payload.kind === 'error' && (payload.error === 'not-json' || payload.error === 'too-large')) {
     return { kind: 'error', code: payload.error };

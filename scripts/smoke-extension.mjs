@@ -6,7 +6,9 @@
  * 检查：manifest 能加载、page 能打开、module worker 由 chrome.runtime.getURL 创建、
  * 粘贴路径（synthetic ClipboardEvent）导入、首帧、长任务、截图。
  */
+import os from 'node:os';
 import path from 'node:path';
+import { mkdtempSync, readdirSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { extensionUrl, launchChrome, REPO_ROOT } from '../prototype/p1/lib/chrome.mjs';
 import { startStaticServer } from '../prototype/p1/lib/http.mjs';
@@ -111,7 +113,11 @@ try {
         const m = chrome.runtime.getManifest();
         return {
           permission: (m.permissions || []).includes('contextMenus'),
-          title: chrome.i18n.getMessage('menuOpenSelection') || null,
+          view: chrome.i18n.getMessage('menuView') || null,
+          download: chrome.i18n.getMessage('menuDownload') || null,
+          icons: Object.keys(m.icons || {}).sort().join(',') === '128,16,32,48',
+          iconsLoad: (await Promise.all(Object.values(m.icons || {}).map((p) => fetch(chrome.runtime.getURL(p)).then((r) => r.ok)))).every(Boolean),
+          defaultIcon: Boolean(m.action?.default_icon?.['16'] && m.action?.default_icon?.['32']),
           script: Boolean(m.content_scripts) === false && (m.host_permissions || []).length === 0,
         };
       })()`,
@@ -146,6 +152,40 @@ try {
       toastShown: true,
       text: await intake.eval("document.getElementById('toast').textContent ?? ''"),
     };
+
+    // 下载模式（#63）：导入成功后自动落盘，标签页**不关**（语义 = 先导入再导出）
+    const KEY_DL = 'tjv.incoming.smoke-incoming-0003';
+    const dlDir = mkdtempSync(path.join(os.tmpdir(), 'tjv-smoke-dl-'));
+    await chrome.browser.send('Browser.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath: dlDir,
+      eventsEnabled: true,
+    });
+    const began = [];
+    const offDownload = chrome.browser.on('Browser.downloadWillBegin', (params) => began.push(params));
+    await intake.eval(
+      `chrome.storage.session.set({ '${KEY_DL}': { kind: 'text', text: '{"a":1,"b":[1,2,3]}', mode: 'download', createdAt: Date.now() } }).then(() => true)`,
+    );
+    await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=3#incoming=smoke-incoming-0003`, {
+      timeoutMs: 30000,
+    });
+    await intake.waitFor("document.querySelector('#fileName')?.textContent === 'selection.json'", {
+      timeoutMs: 15000,
+    });
+    // 等下载真正落盘（.crdownload 会重命名成 .json）
+    for (let i = 0; i < 80 && !readdirSync(dlDir).some((f) => f.endsWith('.json')); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    offDownload?.();
+    report.incomingDownload = {
+      began: began.length > 0,
+      suggested: began[0]?.suggestedFilename ?? null,
+      files: readdirSync(dlDir),
+      tabOpen: await intake.eval("document.visibilityState !== 'unloaded' && Boolean(document.getElementById('fileName'))"),
+      hashCleared: await intake.eval('location.hash === ""'),
+      tokenRemoved: await intake.eval(`chrome.storage.session.get('${KEY_DL}').then((b) => !('${KEY_DL}' in b))`),
+      rows: await intake.eval("document.querySelectorAll('.row[data-path]:not([hidden])').length"),
+    };
   } catch (error) {
     report.incomingPhaseError = String(error);
   }
@@ -165,6 +205,16 @@ const ok =
   r.rows > 0 &&
   inc.menuTitle?.permission === true &&
   inc.menuTitle?.script === true &&
+  inc.menuTitle?.icons === true &&
+  inc.menuTitle?.iconsLoad === true &&
+  inc.menuTitle?.defaultIcon === true &&
+  Boolean(inc.menuTitle?.view) &&
+  Boolean(inc.menuTitle?.download) &&
+  report.incomingDownload?.began === true &&
+  report.incomingDownload?.tabOpen === true &&
+  report.incomingDownload?.hashCleared === true &&
+  report.incomingDownload?.tokenRemoved === true &&
+  (report.incomingDownload?.files ?? []).some((f) => f.endsWith('.json')) &&
   inc.imported === true &&
   inc.tokenRemoved === true &&
   inc.hashCleared === true &&

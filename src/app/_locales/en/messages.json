@@ -7,8 +7,12 @@
     "message": "Local read-only JSON viewer: worker-resident documents, fixed-height row virtualization, search and temporary edits.",
     "description": "Extension description shown in the Chrome Web Store / extensions page."
   },
-  "menuOpenSelection": {
-    "message": "Open selected JSON in Turbo JSON Viewer",
-    "description": "Context-menu item shown when text is selected on a page (#57 / ADR-0031)."
+  "menuView": {
+    "message": "Open in viewer",
+    "description": "Context submenu: open the selection in the viewer (#63)."
+  },
+  "menuDownload": {
+    "message": "Download JSON",
+    "description": "Context submenu: download the selection as JSON (#63)."
   }
 }

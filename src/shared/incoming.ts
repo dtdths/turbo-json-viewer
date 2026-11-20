@@ -14,8 +14,11 @@ export type IncomingErrorCode = 'not-json' | 'too-large';
  * `createdAt` 只用于清理残留（不是安全边界）。
  */
 export type IncomingPayload =
-  | { kind: 'text'; text: string; createdAt: number }
+  | { kind: 'text'; text: string; mode: IncomingMode; createdAt: number }
   | { kind: 'error'; error: IncomingErrorCode; createdAt: number };
+
+/** 子菜单的两条动作：打开查看 / 下载 JSON（#63）。 */
+export type IncomingMode = 'view' | 'download';
 
 /** `chrome.storage.session` 的形状（SW 侧 = 全量；页面侧只用 `IncomingStore` 子集）。 */
 export interface SessionStorageLike {

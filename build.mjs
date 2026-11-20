@@ -21,6 +21,7 @@ const staticFiles = [
   ['src/app/manifest.json', 'manifest.json'],
   // Chrome 扩展本地化（#45 / ADR-0026 §5）：_locales 必须在扩展根目录（dist/）
   ['src/app/_locales', '_locales'],
+  ['src/app/icons', 'icons'],
 ];
 
 const options = {

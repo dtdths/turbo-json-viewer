@@ -1269,6 +1269,30 @@ async function consumeIncomingSelection(): Promise<void> {
   if (outcome === 'parse' && suspectedTruncated(incoming.text)) {
     showToast(t('app.incoming.truncated'), 6000, 'error');
   }
+  if (outcome === 'ok' && incoming.mode === 'download') await downloadImportedSelection();
+}
+
+/**
+ * 子菜单「下载 JSON」（#63）：导入成功后直接落盘。
+ * - 不走系统保存对话框：新开的标签页没有用户手势，`showSaveFilePicker` 会失败；
+ * - **不关闭**标签页：语义是「先导入再导出」，文档留在标签里供继续查看/操作；
+ * - 文件名沿用导入名（`selection.json`），缩进/转义跟当前设置。
+ */
+async function downloadImportedSelection(): Promise<void> {
+  if (!session.rootId || !meta) return;
+  const name = currentExportName();
+  if (name === null) return;
+  try {
+    const { text, bytes } = await core.exportDoc(
+      session.rootId,
+      settings.get('jsonIndent'),
+      settings.get('escapeUnicode'),
+    );
+    downloadText(name, text);
+    exportLastAction = { mode: 'file', name, bytes };
+  } catch (error) {
+    showError(error);
+  }
 }
 
 async function importFile(file: File, target?: 'replace' | 'new-tab'): Promise<void> {

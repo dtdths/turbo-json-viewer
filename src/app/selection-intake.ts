@@ -11,11 +11,22 @@
  * - **点了要有反馈**：不像 JSON / 过大也投递一条**错误 token**，由页面开页 toast 解释
  *   （右键菜单无法按选区内容显隐，点进来才发现不是 JSON 是常态）。
  */
-import type { IncomingPayload, SessionStorageLike } from '../shared/incoming';
+import type { IncomingMode, IncomingPayload, SessionStorageLike } from '../shared/incoming';
 
 
-/** 菜单项 id（`chrome.contextMenus` 的稳定标识）。 */
+/** 父菜单项 id（品牌名，hover 出子菜单）。 */
 export const INCOMING_MENU_ID = 'tjv-open-selection';
+/** 子项：打开查看。 */
+export const INCOMING_MENU_VIEW = 'tjv-open-selection-view';
+/** 子项：下载 JSON。 */
+export const INCOMING_MENU_DOWNLOAD = 'tjv-open-selection-download';
+
+/** 菜单项 id → 动作；父项 / 未知 id 返回 null。 */
+export function modeOfMenuItem(id: string | number): IncomingMode | null {
+  if (id === INCOMING_MENU_VIEW) return 'view';
+  if (id === INCOMING_MENU_DOWNLOAD) return 'download';
+  return null;
+}
 /** `storage.session` 里一次性 token 的键前缀。 */
 export const INCOMING_KEY_PREFIX = 'tjv.incoming.';
 /** 选区文本上限（字符数 ≈ UTF-16 code unit）：远低于 `storage.session` 10MB 配额，也避免卡住 SW。 */
@@ -47,13 +58,17 @@ export function isJsonCandidate(text: string): boolean {
  * 不像 JSON / 过大也写**错误 token**（页面 toast 解释），因为 SW 没有别的反馈通道
  * （通知要 `notifications` 权限、剪贴板要离屏文档）。
  */
-export async function deliverSelection(port: SelectionIntakePort, raw: string): Promise<void> {
+export async function deliverSelection(
+  port: SelectionIntakePort,
+  raw: string,
+  mode: IncomingMode = 'view',
+): Promise<void> {
   const text = raw.trim();
   const createdAt = port.now();
   let payload: IncomingPayload;
   if (!isJsonCandidate(text)) payload = { kind: 'error', error: 'not-json', createdAt };
   else if (text.length > SELECTION_MAX_CHARS) payload = { kind: 'error', error: 'too-large', createdAt };
-  else payload = { kind: 'text', text, createdAt };
+  else payload = { kind: 'text', text, mode, createdAt };
 
   await pruneStale(port);
   const token = port.uuid();

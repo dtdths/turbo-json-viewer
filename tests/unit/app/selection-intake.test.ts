@@ -6,6 +6,7 @@ import {
   SELECTION_MAX_CHARS,
   deliverSelection,
   isJsonCandidate,
+  modeOfMenuItem,
   type SelectionIntakePort,
 } from '../../../src/app/selection-intake';
 
@@ -67,8 +68,27 @@ describe('selection-intake · 投递', () => {
     expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({
       kind: 'text',
       text: '{"a":1,"b":2,"c":3}',
+      mode: 'view',
       createdAt: 5_000,
     });
+  });
+
+  it('下载模式透传到 token', async () => {
+    const p = port(7_000);
+    await deliverSelection(p, '{"a":1,"b":2}', 'download');
+    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({
+      kind: 'text',
+      text: '{"a":1,"b":2}',
+      mode: 'download',
+      createdAt: 7_000,
+    });
+  });
+
+  it('菜单项 id → 动作（父项 / 未知 id 返回 null）', () => {
+    expect(modeOfMenuItem('tjv-open-selection-view')).toBe('view');
+    expect(modeOfMenuItem('tjv-open-selection-download')).toBe('download');
+    expect(modeOfMenuItem('tjv-open-selection')).toBeNull();
+    expect(modeOfMenuItem(42)).toBeNull();
   });
 
   it('不像 JSON 也投递错误 token（点了要有反馈）', async () => {

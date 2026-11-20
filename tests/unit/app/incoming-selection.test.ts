@@ -49,9 +49,18 @@ describe('incoming-selection · hash 解析', () => {
 describe('incoming-selection · 取一次 token', () => {
   it('正常文本：返回 import 并删除条目（单次使用）', async () => {
     const s = store({ [`${INCOMING_KEY_PREFIX}abc12345`]: { kind: 'text', text: '{"a":1}', createdAt: 1 } });
-    expect(await takeIncoming(s, 'abc12345')).toEqual({ kind: 'import', text: '{"a":1}' });
+    expect(await takeIncoming(s, 'abc12345')).toEqual({ kind: 'import', text: '{"a":1}', mode: 'view' });
     expect(s.bag.has(`${INCOMING_KEY_PREFIX}abc12345`)).toBe(false);
     expect(s.removed).toEqual([`${INCOMING_KEY_PREFIX}abc12345`]);
+  });
+
+  it('下载模式的 token 原样带出 mode', async () => {
+    const s = store({ [`${INCOMING_KEY_PREFIX}abc12345`]: { kind: 'text', text: '{"a":1}', mode: 'download' } });
+    expect(await takeIncoming(s, 'abc12345')).toEqual({
+      kind: 'import',
+      text: '{"a":1}',
+      mode: 'download',
+    });
   });
 
   it('错误 token：返回 error，同样删掉条目', async () => {
@@ -79,7 +88,7 @@ describe('incoming-selection · 取一次 token', () => {
   it('删除失败不影响本次导入（SW 的 TTL 清理兜底）', async () => {
     const s = store({ [`${INCOMING_KEY_PREFIX}abc12345`]: { kind: 'text', text: '{"a":1}' } });
     s.failRemove = true;
-    expect(await takeIncoming(s, 'abc12345')).toEqual({ kind: 'import', text: '{"a":1}' });
+    expect(await takeIncoming(s, 'abc12345')).toEqual({ kind: 'import', text: '{"a":1}', mode: 'view' });
   });
 });
 
