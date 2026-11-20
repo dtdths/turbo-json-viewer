@@ -99,3 +99,24 @@
 - 13 套冒烟串行（CDP 9883；不能并发）；
 - `node build.mjs --analyze` 体积；
 - 不推送。
+
+## 修订（2026-11-20）：选中项后的焦点归还补一种「丢了」的形态（#64）
+
+§2.7 第 1 条承诺「导出菜单选中项后焦点回箭头按钮」，实现里一直有个**竞态洞**，冒烟的
+`menu:select-restores-focus` 因此间歇性红（曾被当成插桩偶发；CDP 探针定位后确认是产品侧）。
+
+1. **时序**：`onSelect` → `runExportMode()` 同步走到 `copyDocJson()` 的 `setExportButtonsDisabled(true)`
+   → `view/menu` 的 `close('select')` 调 `focusOpener()` 撞上**按钮 disabled** 而落空
+   （焦点留在已 `hidden` 的菜单项上）→ 浏览器随后才把焦点挪到 `body`，时机不定。
+2. **洞**：动作完成后的归还守卫只认 `activeElement === null | body`；看到的是那个**已隐藏的菜单项**
+   → 判不过 → 永不归还。
+3. **修法**：判据补第三种 —— **菜单已关闭且焦点还在菜单内**（`exportMenu.hidden && exportMenu.contains(active)`）。
+   菜单已关闭时，焦点留在菜单内只可能是「刚才那一下」的残留，不涉及抢用户中途点的位置（真点到
+   别处时 `activeElement` 会落在那个元素上，守卫不触发）；而**导出较慢、用户又把菜单点开**时
+   焦点在菜单里是用户自己的选择，因此加了 `hidden` 这个前提，不抢。
+4. **验收**：`smoke-export` 的 `menu:select-restores-focus` 连跑两次稳定绿（35/35）；CDP 探针从
+   「t=30ms 起 activeElement 恒为 `BODY`」变成「t=30ms 起恒为 `exportMenuBtn`」；`npm run check`
+   1574/1574；体积不变（57.2 / 58）。
+5. **不改的部分**：`view/menu` 的通用契约不变（`close(reason)` 的 `wantsFocus` 规则不动）——归还
+   之所以不能放进 `close()`，是因为导出期间按钮本来就被 disabled（这正是本 ADR 把归还放到
+   动作之后的原因）。

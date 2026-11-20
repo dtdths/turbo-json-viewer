@@ -1972,7 +1972,11 @@ function syncExportUi(): void {
 /**
  * 导出方式菜单控制器（ADR-0015）：定位/键盘/外部关闭/焦点归还收口到 `view/menu`。
  * 选中项后焦点归还放在动作完成之后：导出期间两个按钮被 disabled（不可聚焦），
- * 动作结束、按钮恢复后再把焦点还给箭头按钮；只有焦点确实掉到 body 时才归还，避免抢用户中途点的位置。
+ * 动作结束、按钮恢复后再把焦点还给箭头按钮；只有焦点确实丢了才归还，避免抢用户中途点的位置。
+ *
+ * 「丢了」有三种（#64）：`null`、`body`、以及**仍停在已 `hidden` 的菜单项上**——第三种是常态：
+ * `close('select')` 里的 `focusOpener()` 撞上按钮的 disabled 窗口而落空，浏览器随后才把焦点挪到
+ * body（时机不定）；只认前两种会漏判，导致焦点永远留在 body。
  */
 const exportMenuController = createMenu({
   element: exportMenu,
@@ -1983,7 +1987,10 @@ const exportMenuController = createMenu({
     rememberExportMode(mode);
     void runExportMode(mode).finally(() => {
       const active = document.activeElement;
-      if (active === null || active === document.body) exportMenuBtn.focus();
+      // 菜单若被重新打开（导出较慢时用户又点开），焦点在菜单里是「用户的选择」，不动。
+      const leftInClosedMenu = exportMenu.hidden && exportMenu.contains(active);
+      const lostFocus = active === null || active === document.body || leftInClosedMenu;
+      if (lostFocus) exportMenuBtn.focus();
     });
   },
 });

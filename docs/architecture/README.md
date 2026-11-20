@@ -496,6 +496,8 @@ Apply：core.replaceNode(path, jsonText) → parseLossless（≤5MB；ADR-0020�
 
 | 6.47 右键菜单二级菜单 + 图标 + 下载 JSON（#63 / ADR-0031 修订，2026-11-20） | ✅ | 父项 `Turbo JSON Viewer`（品牌不翻译）+ 子项「打开查看」/「下载 JSON」（`_locales`）；菜单 id `tjv-open-selection` / `-view` / `-download`，`modeOfMenuItem()` 只认子项；manifest 加 `icons`（16/32/48/128）+ `action.default_icon`（Chrome 只在有 16×16 时显示菜单图标），图标为深色圆角 + 品牌蓝 `{}`（一次性 canvas 生成，PNG 提交在 `src/app/icons/`，build 复制到 `dist/icons`）；下载走**路线 A（零新权限）**：token `{kind:'text', mode:'download'}` → 页面导入成功后 `core.exportDoc` + `<a download>` 直接落盘（不经保存对话框——新标签页无手势；**不关标签页**，语义=先导入再导出）；**单测 1571 → 1574**（+3）；`smoke-extension` 加下载 phase（CDP `Browser.setDownloadBehavior` + `downloadWillBegin`，断言文件落盘 / 标签页未关 / token 删 / hash 清）；`page.js` 57.1 → **57.2KB gz（仍 ≤58）**、`sw.js` 0.7 → 0.8、语言包 6.5 / 7.4、懒加载 145.9 / 146 不变；图标 4 个 PNG ~18KB | 用户可见：右键菜单变成品牌父项 + 两项子菜单，菜单项有图标；第二项导入后直接下载 `selection.json` 并保留标签页。**权限不变**（仍 `storage` + `contextMenus`，无下载权限）。已知差距：下载位置为浏览器默认目录、文件名固定；真实右键点击只能手测 |
 
+| 6.48 导出菜单焦点归还的竞态洞（#64，2026-11-20） | ✅ | `app/main.ts` 导出菜单控制器的**归还守卫**补一种「丢了」的形态：除 `activeElement === null / document.body` 外，**菜单已关闭且焦点仍在菜单内**（`exportMenu.hidden && exportMenu.contains(active)`）也算（带上 `hidden` 前提：导出慢而用户又点开菜单时不抢焦点）（选中项后 `close('select')` 的 `focusOpener()` 撞上按钮 disabled 窗口而落空，焦点留在已 `hidden` 的菜单项上，浏览器随后才挪到 body）；修前 CDP 探针 t=30ms 起恒为 `BODY`，修后恒为 `exportMenuBtn`；`smoke-export` 的 `menu:select-restores-focus` 由「偶发红」变**稳定绿**（连跑两次 35/35）；单测 1574 不变（DOM 行为归冒烟）、体积 `page.js` **57.2 / 58 不变**；文档同步 ADR-0015「修订（2026-11-20）」 | 用户可见：从导出菜单选完任意一项后，焦点确实回到箭头按钮（键盘 Tab 可继续走）——这是 ADR-0015 §2.7 原本承诺、但实现里一直有竞态漏判的行为 |
+
 ## 12. 多文档工作区标签（#18，已实现 2026-11-11）
 
 > 设计定稿 2026-10-30（ADR-0009），实现 2026-11-11；验收数字见 §11 的 **6.19** 行与 ADR-0009「实现结果」。
