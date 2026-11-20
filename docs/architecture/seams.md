@@ -378,14 +378,48 @@ export class TabViewState {
 
 **不变式**
 - 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的 `let`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + accessor 1 行 + 镜像 `let` 1 行（都在相邻块）；`VIEW_FIELDS_ALL_CLASSIFIED` 是编译期守卫——漏归类会构建失败。
-- 归属：**活状态问 `DocSession`，存档问 `TabViewState`**。所以 `syncVersions` 只碰标签与非活动标签的表达式结果视图；活动会话与活动 `exprView` 由 `main.ts` 自己同步。
+- 归属：**活状态问 `DocSession` / `ExpressionWorkspace`，存档问 `TabViewState`**。所以 `syncVersions` 只碰标签与非活动标签的表达式结果视图；活动会话由 `DocSession`、活动 `exprView` 与文档会话存档由 `ExpressionWorkspace.syncVersions` 各自扇出。
 - 版本字段 / `selected` / `meta` 不进 `view`：它们本就住在 `TabState` 顶层，`capture()` 走 `workspace.update` 写，别再存第二份。
 - 两个滚动位置**没有镜像**：`restoreActiveTabView` 从 `tab.view` 直读；给它们造镜像会多两个 `let` 且没有第二个读者。
 - 换文档的存档复位归 `WorkspaceState.replace`（单一 owner），不是本模块的方法。
-- `restore(tab)` 顺带复位表达式视图的瞬时状态（`exprViewActive=false` / `docSessionBeforeExpr=null`）——表达式结果不跨标签自动激活。
+- `restore(tab)` 顺带复位表达式视图的瞬时状态（`ExpressionWorkspace.resetTransient()`：显示态与存档一起清）——表达式结果不跨标签自动激活。
 - dev hook 兼容：`h.state()` 仍取活动实时会话；`workspaceHookState()` 的 `live ? session.docRevision : tab.docRevision` / `totalRows` 口径与 `TabHookState` 字段名逐字不变。
 
 **删除测试**：删掉 → 每标签视图态退回「三张手写字段清单 + 第二张 tabId map」（加一个字段改 6–7 处，漏一处就表现为切标签串味或空态残留旧锚点）。
+
+## 6.8 app · 表达式工作区（Expression Workspace）
+
+**位置**：`src/app/expression-workspace.ts`（纯 TS、零 DOM import）；ADR-0008 修订 2026-11-20，实现票 #62。
+
+```ts
+// src/app/expression-workspace.ts
+export class ExpressionWorkspace {
+  constructor(deps: ExpressionWorkspaceDeps);  // panel / bar / session / rows / tree / core / view /
+                                               // budget / terminate / reload / toast / error / watchdogFlag
+  readonly mirror: ExpressionMirror;           // 交给 TabViewState 的四个字段（exprView / lastText / error / status）
+  readonly view: ExprViewState | null; readonly active: boolean;
+  documentRootId(): string | null; documentRevision(): number;   // 文档口径唯一入口（表达式激活时取存档）
+  stale(): boolean; activeRootId(): string | null;
+  run(text?, strict?): Promise<void>; rerun(): Promise<void>; cancel(): void;
+  back(opts?: {silent?: boolean}): void; enterFromArchive(): void;
+  resetTransient(): void; clear(): void;
+  syncVersions(roots): void; syncLandedRoot(rootId, rowVersion, totalRows): void;
+  applyInlineText(): void; renderAfterTabSwitch(): void; renderBar(stale?): void;
+  refreshOrigin(): void; jumpFromRow(path): Promise<void>;
+  completions(text, pos): Promise<ExprCompletion[]>; locate(path): Promise<{path: Path | null}>;
+  examples(): Promise<string[]>; refreshExamples(): void; consumeWatchdogFlag(): void;
+}
+```
+
+**不变式**
+- **一个 owner**：结果视图态、文档会话存档、在途 `seq`/`running`、行内错误/状态行、原路径缓存都只住在这里；`main.ts` 的 `expr*` 模块级 `let` 已全部删除。
+- **文档口径**：表达式视图激活时 `session.*` 是 expr 根，「当前文档根 / 版本」只能问 `documentRootId()` / `documentRevision()`（profile 采样、补全、eval 输入同源）。存档在 `suspended`，`back()` 完整 `session.restore`。
+- **进入只有一条路径**：`run()` 成功后与 `enterFromArchive()`（面板恢复 LRU）共用私有的 `enter` 逻辑；`enterFromArchive()` **幂等**（已激活即 no-op），不再覆盖存档；两条路径都同步「在原文中定位」开关。
+- **在途**：`seq` 自增作废迟到回包；`running` 闸门；`cancel()` 在切标签 / 关标签 / 回空态 / 换文档时调用。watchdog 经端口终止 worker + 重载（模块只写 `sessionStorage` 标记）。
+- **存档边界**：每标签存档仍归 `TabViewState`（`mirror` 提供 accessor）；`resetTransient()` 只复位「是否正显示」与存档副本，结果本体留在模块里供 LRU 恢复。
+- **dev hook 兼容**：`expression` 命名空间的成员名与语义逐字不变（`stale()` 由本模块回答）。
+
+**删除测试**：删掉 → 表达式规则退回 `main.ts` 的 161 个引用点，两条进入路径各写一半，文档会话出现第二份副本（已实际发生过一次存档覆盖）。
 
 ## 7. 删除测试汇总
 
@@ -394,6 +428,7 @@ export class TabViewState {
 - **S3 行渲染器**：删掉 → 行复用与命中/选中态散在 `TreeView`，canvas 替换要重写整棵树。
 - **S4 主题/token**：删掉 → 颜色/尺寸硬编码进组件，双主题与 Canvas 调色脱节。
 - **S5 持久化/编辑器**：删掉 → 存储与编辑器直接耦合进组件，降级路径不可测。
+- **app · 表达式工作区**：删掉 → 表达式会话规则散回 `main.ts`，两条进入路径各写一半，文档会话出现第二份副本。
 
 ## 8. 「逻辑不动调渲染」承诺边界
 

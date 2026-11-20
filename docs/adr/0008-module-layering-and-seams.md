@@ -314,3 +314,53 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
    17 套冒烟断言零改动。
 9. **口径修正**：走查报告说「四份 ensurePool/hideSlotsFrom 同构」只对 search + outline 成立；
    树与原文的「虚拟列表」其实早已分家（几何在 viewmodel、渲染在 `RowRenderer` / 自己的槽位形状）。
+
+## 修订（2026-11-20）：表达式工作区收成一个 module（`app/expression-workspace`）
+
+> 决策来源：`improve-codebase-architecture` 走查（2026-11-19，候选 6）+ `grilling` 两轮（Q1–Q5），
+> 实现票 **#62**。§1「app 是唯一装配点」与 §3「一个概念一个 module」不变——本修订把散在 `main.ts`
+> 里的**表达式会话规则**收进一个模块，并把「文档会话存档」从两处读点收成一处口径。
+
+1. **问题**：表达式区约 380 行（结果视图态 / 在途闸门 / watchdog / stale / 补全 / 示例 / 原路径缓存 /
+   LRU 恢复），`expr*` 符号在 `main.ts` 出现 **161 次**。其中两处是真的结构问题：
+   (a) 表达式视图激活时 `session.*` 是 expr 根，「当前文档根 / 文档版本」由另一个模块级 `let`
+   （`docSessionBeforeExpr`）回答——它就是文档会话的第二份副本；
+   (b) **进入结果视图有两条路径**（`run()` 成功、`setPanel('expression')` 恢复 LRU），规则各写一半。
+   走查报告说这是「两条绕过 session 的口径」，核对后更准确：不是新存储，是同一份存档的两个读点；
+   报告说的「`backToDocTree` 对 doc-session 半写」也不成立——它是完整 `session.restore(saved)`，
+   回顶 + 清选中是 ADR-0018 的既定语义（是否要恢复进入前的滚动/选中是另一个决定，本票不碰）。
+2. **一个模块**：`src/app/expression-workspace.ts` 的 `ExpressionWorkspace`——持结果视图态、文档会话存档、
+   `seq`/`running`、行内错误/状态行、原路径缓存；对外 `run` / `rerun` / `back` / `enterFromArchive` /
+   `cancel` / `resetTransient` / `clear` / `syncVersions` / `syncLandedRoot` / `stale()` /
+   `documentRootId()` / `documentRevision()` / `mirror` 等。零 DOM import。
+3. **端口窄、装配归 app**：面板 / 结果条 / 会话 / 行窗口 / 树 / core / 视图动作（landing、选中、状态栏、
+   定位开关、视图模式、面板切换、跳转）/ 预算 / watchdog 终止 / 重载 / toast / 错误 —— 全部注入。
+   与 `app/import/layer.ts`（deps 分 dom/env/actions）同构；`main.ts` 只留端口装配与 dev hook 转发。
+4. **文档口径唯一入口**：`documentRootId()` / `documentRevision()` 成为「表达式视图下文档是谁」的唯一实现
+   （profile 采样、补全、eval 输入都走它）。**没有**改成 `DocSession.suspend/resume`：存档仍是一份，
+   只是 owner 从 `main.ts` 换成了本模块；`DocSession` 继续只回答「当前显示根」。等出现第三种临时视图根
+   再考虑把它下移。
+5. **行为差异（三处，都是同一不变量的收口）**：
+   (a) 结果视图**已激活**时 `setPanel('expression')` 现在是 **no-op**——此前会把文档会话存档覆盖成
+   expr 会话，返回文档树时停在 expr 根（当时只有 dev hook 的 `expressionOpen()` 能踩到）；
+   (b) 重进结果视图补 `syncLocateRaw()`——此前这条路径漏了，结果行的行尾「在原文中定位」仍显示；
+   (c) 重进的 stale 用 `documentRevision()` 计算（与旧代码同值，口径统一，不再依赖调用时机）。
+   冒烟 `smoke-expression` **61/61 断言零改动**。真机实测（headless Chrome，同一脚本跑新旧两版）：
+   旧版「结果视图激活时再 `expressionOpen()` → back」停在 `expr:1`（`totalRows=3`），新版回到 `doc:1`
+   （`totalRows=9`）；旧版「back 后从面板重进」结果行的行尾定位按钮仍可见（`hidden=false`），新版隐藏。
+6. **被否决**：(a) **plan 式**（仿 `DocSession.land()`，每个方法返回计划、app 执行）——回顶/清选中/切视图
+   又摊回 `main.ts` 的百行执行器，等于没搬；(b) **事件式订阅**——表达式视图只有一个消费者，订阅只增加时序；
+   (c) **只收状态、把 watchdog/补全/示例留在 main**——它们在同一个「在途生命周期」上，切开会让「取消」与
+   「停止等待」分家；(d) **`DocSession.suspend/resume`**（见第 4 条）；(e) **改回顶/清选中语义**——另一个决定。
+7. **兼容（硬约束）**：dev hook 的 `expression` 命名空间（`view/active/stale/budget/statusState` +
+   9 个入口）形状与语义逐字不变；`TabViewState` 的四个表达式字段仍经 accessor 表搬运（`mirror` 由本模块提供，
+   存档仍归标签）；**17 套冒烟断言零改动**（`git diff -- scripts/` 为空）。
+8. **代价**：`main.ts` 3850 → **3498 行**、`^let ` 51 → **42**；新增模块 637 行（含端口与注释）。
+   单测 1532 → **1555**（+23：stale / 取消迟到回包 / running 闸门 / watchdog 假时钟 / 幂等进入 / LRU 恢复 /
+   版本扇出 / 原路径 / 跳转 / 补全降级 / 示例）；DOM 形状 / 焦点仍归 `smoke-expression`。
+9. **预算**：`page.js` 55.8 → **56.7KB gz（预算 56 → 57，用户 2026-11-20 拍板，余 0.3）**。
+   **这次重构没有省字节**：+0.9 全部来自 class 边界、端口对象与 accessor 间接层，零新能力；
+   `worker.js` 66.3 / `page.css` 9.2 / 语言包 6.4·7.2 / 懒加载 145.9 不变。
+10. **已知偶发**：`smoke-export` 的 `menu:select-restores-focus` 在本机偶发红（本次三轮里两红一绿）；
+    已用同一插桩在干净 `97f065c` worktree 复现（选完导出项后焦点落在 `body`、按钮可聚焦），
+    **与本修改无关**，属既有环境级偶发。
