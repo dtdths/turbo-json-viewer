@@ -7,8 +7,9 @@
  *   - 底板：靛蓝渐变圆角方（#6C79FF → #4450E4，圆角 = 22.5% 边长）。饱和底块让图标在
  *     深/浅两种工具栏上都自成一个亮块 —— 旧版「深色底 + 细括号」在深色工具栏里几乎看不见。
  *   - 标记：`{}` 画框（JSON 的成对记号，左右对称，不会读成「缺一半」）+ 中间一枚**涡轮盘**
- *     （`turbo` = 涡轮；实心盘挖三条带微弧的槽 + 小轮毂孔 = 「盘 + 三叶 + 轴」三层，
- *     比锥形槽版本少一层细节，16px 下每个元素仍有 2–3px 活动空间）。
+ *     （`turbo` = 涡轮；实心盘挖三条带微弧的槽 + 轮毂孔 = 「盘 + 三叶 + 轴」三层）。
+ *     2026-11-20 用户反馈"太满"后：盘从 4.55 收到 4.05、孔从 0.9 放到 1.1，并把整个标记按
+ *     中心缩到 88% —— 括号不再顶到圆角边，四周留出约 1.3 格（16px 时约 1.3px）的呼吸空间。
  *   - 几何一律以 16 格为单位（u = 边长/16），16px 时一格 = 1 像素；不靠缩放 128 的图。
  *
  * 输出提交在仓库里（`build.mjs` 的 staticFiles 会把它拷进 `dist/icons`），本脚本只负责重画。
@@ -75,7 +76,7 @@ try {
     // 涡轮盘：实心圆挖三条带微弧的锥形槽（外宽内窄）+ 小轮毂孔。
     // 在离屏画布上用 destination-out 挖槽，再整体合成，槽里透出的是底板本身。
     const turbine = (ctx, s, u, ink, {
-      slots = 3, rot = 0.18, wIn = 1.15, wOut = 2.35, spiral = 0.55, hub = 0.9, discR = 4.55,
+      slots = 3, rot = 0.18, wIn = 1.15, wOut = 2.35, spiral = 0.55, hub = 1.1, discR = 4.05,
     } = {}) => {
       const off = document.createElement('canvas');
       off.width = s;
@@ -140,8 +141,14 @@ try {
       c.height = s;
       const ctx = c.getContext('2d');
       tile(ctx, s);
+      // 整体缩放 88%：用户反馈「太满」——括号原本几乎顶到圆角边，收进来后四周才有留白
+      ctx.save();
+      ctx.translate((s / 2), (s / 2));
+      ctx.scale(0.88, 0.88);
+      ctx.translate(-(s / 2), -(s / 2));
       brackets(ctx, u, '#FFFFFF');
       turbine(ctx, s, u, '#FFFFFF');
+      ctx.restore();
       out['icon-' + s] = c.toDataURL('image/png');
     }
     return out;
