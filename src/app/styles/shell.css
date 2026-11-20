@@ -179,9 +179,9 @@ kbd {
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
-.brand { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: var(--text-body); white-space: nowrap; }
-.brand__mark { width: 20px; height: 20px; display: inline-flex; flex: none; }
-.brand__mark svg { width: 20px; height: 20px; display: block; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: var(--text-body); white-space: nowrap; }
+.brand__mark { width: 26px; height: 26px; display: inline-flex; flex: none; }
+.brand__mark svg { width: 26px; height: 26px; display: block; }
 .brand__tag {
   font-family: var(--font-mono);
   font-size: var(--text-micro);

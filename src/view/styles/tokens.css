@@ -89,7 +89,7 @@
   --text-display: 24px;    /* 空态主标题 */
 
   /* ---- metrics（ADR-0016 §2.1：尺寸单一来源） ---- */
-  --toolbar-h: 48px;
+  --toolbar-h: 56px;
   --repairbar-h: 32px;     /* 三条提示条共用高度 */
   --status-h: 26px;
   --row-h: 24px;           /* 树行高：不随字号涨（信息密度） */
