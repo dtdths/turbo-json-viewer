@@ -151,6 +151,11 @@ export const app = {
   'app.sel.hint.expr': 'Click a row to jump back to the source document',
   'app.sel.hint.edit': 'F2 / right-click to edit',
 
+  /* ---------------- 页面选区导入（#57 / ADR-0031） ---------------- */
+  'app.incoming.notJson': 'The selection is not a complete JSON document — select text that starts with { or [',
+  'app.incoming.tooLarge': 'The selection is too large — copy it and paste it inside the viewer instead',
+  'app.incoming.truncated': 'The browser may have truncated the selection — if parsing failed, copy and paste it instead',
+
   /* ---------------- 确认 / toast（main.ts） ---------------- */
   'app.confirm.closeTab': '“{name}” has temporary edits that are not exported; closing will discard them. Close anyway?',
   'app.toast.workspaceMemory': {

@@ -90,6 +90,65 @@ try {
   })()`);
   await page.screenshot(path.join(SHOTS, 'extension-main.png'));
   report.consoleErrors = page.exceptions.slice(errorsBefore);
+
+  // ---- phase 2：右键菜单投递的页面侧消费（#57 / ADR-0031）----
+  // 菜单点击本身无法程序化触发（原生菜单没有 API），这里直接验证约定的数据通路：
+  // storage.session 里的一次性 token → page.html#incoming=<token> → 导入成功、token 删掉、hash 抹掉。
+  const intake = await chrome.openPage();
+  await intake.setViewport(1440, 900);
+  await intake.goto(extensionUrl('dist', 'page.html'), { timeoutMs: 30000 });
+  await intake.waitFor('document.readyState === "complete"', { timeoutMs: 15000 });
+  await new Promise((r) => setTimeout(r, 300));
+
+  const KEY_OK = 'tjv.incoming.smoke-incoming-0001';
+  const KEY_ERR = 'tjv.incoming.smoke-incoming-0002';
+  report.incoming = { menuTitle: null, imported: false, tokenRemoved: false, hashCleared: false, name: null, rows: 0 };
+  report.incomingError = { toastShown: false, text: '' };
+
+  try {
+    report.incoming.menuTitle = await intake.eval(
+      `(async () => {
+        const m = chrome.runtime.getManifest();
+        return {
+          permission: (m.permissions || []).includes('contextMenus'),
+          title: chrome.i18n.getMessage('menuOpenSelection') || null,
+          script: Boolean(m.content_scripts) === false && (m.host_permissions || []).length === 0,
+        };
+      })()`,
+    );
+    await intake.eval(
+      `chrome.storage.session.set({ '${KEY_OK}': { text: '{"a":1,"b":[1,2,3]}', createdAt: Date.now() } }).then(() => true)`,
+    );
+    await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=1#incoming=smoke-incoming-0001`, {
+      timeoutMs: 30000,
+    });
+    await intake.waitFor("document.querySelector('#fileName')?.textContent === 'selection.json'", {
+      timeoutMs: 15000,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    Object.assign(report.incoming, {
+      imported: true,
+      name: await intake.eval("document.querySelector('#fileName')?.textContent ?? null"),
+      rows: await intake.eval("document.querySelectorAll('.row[data-path]:not([hidden])').length"),
+      hashCleared: await intake.eval('location.hash === ""'),
+      tokenRemoved: await intake.eval(`chrome.storage.session.get('${KEY_OK}').then((b) => !('${KEY_OK}' in b))`),
+    });
+
+    // 错误 token（不像 JSON）：开页 toast 解释，而不是静默失败
+    await intake.eval(
+      `chrome.storage.session.set({ '${KEY_ERR}': { error: 'not-json', createdAt: Date.now() } }).then(() => true)`,
+    );
+    await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=2#incoming=smoke-incoming-0002`, {
+      timeoutMs: 30000,
+    });
+    await intake.waitFor("!document.getElementById('toast').hidden", { timeoutMs: 15000 });
+    report.incomingError = {
+      toastShown: true,
+      text: await intake.eval("document.getElementById('toast').textContent ?? ''"),
+    };
+  } catch (error) {
+    report.incomingPhaseError = String(error);
+  }
 } finally {
   await chrome.close();
   await server.close();
@@ -97,6 +156,19 @@ try {
 
 console.log(JSON.stringify(report, null, 2));
 const r = report.result || {};
-const ok = r.hasChromeRuntime && !r.hasDevHook && r.firstRowMs != null && r.rows > 0 && report.consoleErrors?.length === 0;
+const inc = report.incoming || {};
+const incErr = report.incomingError || {};
+const ok =
+  r.hasChromeRuntime &&
+  !r.hasDevHook &&
+  r.firstRowMs != null &&
+  r.rows > 0 &&
+  inc.menuTitle?.permission === true &&
+  inc.menuTitle?.script === true &&
+  inc.imported === true &&
+  inc.tokenRemoved === true &&
+  inc.hashCleared === true &&
+  incErr.toastShown === true &&
+  report.consoleErrors?.length === 0;
 console.log(ok ? '\nextension smoke: OK' : '\nextension smoke: FAILED');
 process.exitCode = ok ? 0 : 1;

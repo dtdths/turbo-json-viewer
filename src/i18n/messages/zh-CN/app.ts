@@ -145,6 +145,11 @@ export const app: Record<keyof AppMessages, Message> = {
   'app.sel.hint.expr': '点击行跳回原文档',
   'app.sel.hint.edit': 'F2 / 右键编辑',
 
+  /* ---------------- 页面选区导入（#57 / ADR-0031） ---------------- */
+  'app.incoming.notJson': '选中的内容不是完整 JSON——请选中以 { 或 [ 开头的一段 JSON 文本',
+  'app.incoming.tooLarge': '选中内容过大——请复制后在插件里粘贴',
+  'app.incoming.truncated': '浏览器可能截断了选区——若解析失败，请改用复制粘贴',
+
   /* ---------------- 确认 / toast（main.ts） ---------------- */
   'app.confirm.closeTab': '「{name}」有未导出的临时修改，关闭后将丢弃。确认关闭？',
   'app.toast.workspaceMemory':

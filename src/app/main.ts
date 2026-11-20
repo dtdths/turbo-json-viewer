@@ -40,6 +40,7 @@ import {
 } from './import/layer-state';
 import { ImportLayer } from './import/layer';
 import { ExpressionWorkspace } from './expression-workspace';
+import { incomingTokenFromHash, suspectedTruncated, takeIncoming, type IncomingStore } from './incoming-selection';
 import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { parentPath, ROOT_PATH } from '../shared/path';
 import {
@@ -1192,13 +1193,13 @@ async function importBuffer(
   data: ArrayBuffer | string,
   name: string,
   target?: 'replace' | 'new-tab',
-): Promise<void> {
+): Promise<boolean> {
   const resolvedTarget = target ?? currentImportTarget();
   // 软上限在**解析前**判：满 8 个时不要先把 50MB 解析完再拒绝。
   // 注意空工作区的 canAdd 也是 false（activeId=null），第一个标签必须放行。
   if (resolvedTarget === 'new-tab' && workspace.activeId !== null && !workspace.view().canAdd) {
     showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
-    return;
+    return false;
   }
   const loadId = ++loadSeq;
   const inLayer = importLayer.isOpen();
@@ -1218,18 +1219,61 @@ async function importBuffer(
     if (loadId !== loadSeq) {
       // 回包已被更新的导入 / 关闭入口层作废：Worker 已经建好新根，必须释放，否则孤儿根泄漏
       void core.closeRoot(reply.rootId).catch(() => undefined);
-      return;
+      return false;
     }
     onLoaded(reply, resolvedTarget);
+    return true;
   } catch (error) {
-    if (loadId !== loadSeq) return;
-    if (CoreError.from(error).code === 'CANCELLED') return;
+    if (loadId !== loadSeq) return false;
+    if (CoreError.from(error).code === 'CANCELLED') return false;
     if (inLayer) {
       importLayer.setError(CoreError.from(error));
       importLayer.setBusy(false);
     } else {
       showError(error);
     }
+    return false;
+  }
+}
+
+/* ---------------- 页面选区导入（#57 / ADR-0031） ---------------- */
+
+/** 扩展页才有 `chrome.storage.session`；HTTP 冒烟 / 开发模式返回 null（该入口不存在）。 */
+function incomingStore(): IncomingStore | null {
+  const session = (
+    globalThis as {
+      chrome?: {
+        storage?: {
+          session?: { get(keys: string): Promise<Record<string, unknown>>; remove(keys: string): Promise<void> };
+        };
+      };
+    }
+  ).chrome?.storage?.session;
+  return session ?? null;
+}
+
+/**
+ * 消费右键菜单带过来的选区 token：hash 里的 token 只读一次、**先抹掉 hash**（刷新/回退不重复导入），
+ * 再读并删 `storage.session` 条目。失败（不像 JSON / 过大）也开页 toast 解释——菜单点进来就该有反馈。
+ */
+async function consumeIncomingSelection(): Promise<void> {
+  const token = incomingTokenFromHash(location.hash);
+  if (token === null) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const incoming = await takeIncoming(incomingStore(), token);
+  if (incoming === null) return;
+  if (incoming.kind === 'error') {
+    showToast(
+      t(incoming.code === 'too-large' ? 'app.incoming.tooLarge' : 'app.incoming.notJson'),
+      5000,
+      'error',
+    );
+    return;
+  }
+  const ok = await importBuffer('clipboard', incoming.text, 'selection.json');
+  // 右键菜单给的文本可能被浏览器截断：解析失败且长度可疑时，给专门提示而不是普通语法错误
+  if (!ok && suspectedTruncated(incoming.text)) {
+    showToast(t('app.incoming.truncated'), 6000, 'error');
   }
 }
 
@@ -3095,6 +3139,7 @@ function rerenderChrome(): void {
   renderEditBadge();
   renderProfile();
   renderInitialChrome();
+
   expression.applyInlineText();
   if (searchPatternCore && searchState.view().patternError) {
     searchState.markPatternError(patternErrorText(searchPatternCore));
@@ -3260,7 +3305,9 @@ function buildDevHookDeps(): DevHookDeps {
     settings,
     entries: {
       // dev hook 的 loadText 语义固定为「替换当前文档」（自动化既有契约；不跟随设置「导入位置」）
-      importText: (text, name) => importBuffer('file', text, name, 'replace'),
+      importText: async (text, name) => {
+        await importBuffer('file', text, name, 'replace');
+      },
       toggleNode,
       expandAll: applyExpandAll,
       runSearch,
@@ -3415,7 +3462,9 @@ function buildDevHookDeps(): DevHookDeps {
       state: () => workspaceHookState(),
       entries: {
         openNewTab: () => importLayer.openNewTab(),
-        importText: (text, name) => importBuffer('file', text, name, 'new-tab'),
+        importText: async (text, name) => {
+          await importBuffer('file', text, name, 'new-tab');
+        },
         switchTab: (id) => switchTab(id),
         closeTab: (id) => closeTab(id, { force: true }),
       },
@@ -3497,3 +3546,6 @@ void syncSortOrder(settings.get('sortOrder'));
 /* 首帧动态文案按当前 locale 回填（空态标题/副标题、编辑角标、状态栏；ADR-0026 §3）。
  * page.html 的静态文案已由文件顶部的 applyStaticMessages() 回填。 */
 renderInitialChrome();
+
+/* 页面选区导入（#57 / ADR-0031）：右键菜单投递的 token 在 URL hash 里，读一次即删。 */
+void consumeIncomingSelection();
