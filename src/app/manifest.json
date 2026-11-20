@@ -5,7 +5,15 @@
   "version": "0.1.0",
   "description": "__MSG_extDesc__",
   "minimum_chrome_version": "120",
-  "action": { "default_title": "__MSG_extName__" },
-  "background": { "service_worker": "sw.js", "type": "module" },
-  "permissions": ["storage"]
+  "action": {
+    "default_title": "__MSG_extName__"
+  },
+  "background": {
+    "service_worker": "sw.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "contextMenus"
+  ]
 }

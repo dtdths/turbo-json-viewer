@@ -6,5 +6,9 @@
   "extDesc": {
     "message": "本地只读 JSON 查看器：文档常驻 Worker、固定行高虚拟化、搜索与临时编辑。",
     "description": "扩展描述（Chrome 应用商店 / 扩展页显示）。"
+  },
+  "menuOpenSelection": {
+    "message": "用 Turbo JSON Viewer 打开选中的 JSON",
+    "description": "Context-menu item shown when text is selected on a page (#57 / ADR-0031)."
   }
 }
