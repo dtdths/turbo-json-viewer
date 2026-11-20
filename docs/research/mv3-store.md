@@ -171,6 +171,8 @@
 
 ## 11. 建议的最小权限 manifest 草案（建议稿，非政策文本）
 
+> 修订（2026-11-20 / ADR-0031）：新增右键菜单「打开选中的 JSON」后，权限为 `["storage", "contextMenus"]`（两者均**无安装警告**）；`host_permissions` 仍为 `[]`、无 `content_scripts`、无 `scripting` / `activeTab`——菜单只读 `info.selectionText`，**不注入第三方页面**。下文的 `"permissions": []` 是初始零权限建议，不影响本条修订。
+
 以「本地 JSON 查看 + 粘贴/文件导入 + 搜索 + 表达式求值 + 复制/导出、零网络」为功能面：
 
 ```jsonc

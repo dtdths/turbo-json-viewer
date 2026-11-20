@@ -3,7 +3,7 @@
 > 状态：Accepted（2026-10-28）
 > 关联：[README.md](README.md)（分层与 seam）、[seams.md](seams.md)（接口草案）；ADR-0001/0002/0005/0007；视觉定稿 `prototype/visual/c/`
 > 口径：性能数字来自 Chrome for Testing 156 / Apple M4 / 32GB、`headless=new`（`prototype/p1`），与 `docs/design/tech-reassessment.md` 一致；未测项一律标「待实测」，不估数。
-> 红线：仅 `storage` 权限、无网络/AI、禁 eval、文档不落盘（ADR-0003/0005）。
+> 红线：仅 `storage` + `contextMenus` 权限（均无商店警告）、无网络/AI、禁 eval、文档不落盘、不注入第三方页面（ADR-0003/0005/0031）。
 
 ## 1. 仓库布局
 
@@ -95,13 +95,13 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
   "minimum_chrome_version": "120",
   "action": { "default_title": "Turbo JSON Viewer" },
   "background": { "service_worker": "sw.js", "type": "module" },
-  "permissions": ["storage"],
+  "permissions": ["storage", "contextMenus"],
   "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
 }
 ```
 
 - 不写 `content_security_policy`：MV3 默认策略已是 `script-src 'self'; object-src 'self'`，天然禁 `eval`/远程代码，改它只会放宽，没理由改。
-- 不写 `web_accessible_resources`、不写 `host_permissions`：没有 content script、不注入第三方页面；数据只来自粘贴与用户选择的本地文件。
+- 不写 `web_accessible_resources`、不写 `host_permissions`、不写 `content_scripts`：没有 content script、**不注入第三方页面**；数据只来自粘贴 / 用户选择的本地文件 / **右键菜单回调给的 `info.selectionText`**（ADR-0031，`contextMenus` 无警告）。
 - `minimum_chrome_version: "120"` 与 esbuild `target` 对齐；真机基线为 CfT 156（ADR-0005）。
 
 ### 2.2 页面 / Worker / SW 三个运行时
@@ -110,7 +110,7 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
 |---|---|---|---|
 | 扩展页 | `chrome-extension://<id>/page.html`（**非 popup**） | 装配一切：创建 Worker、挂载 view、持有 `RowWindowSource` | 用户关闭标签即销毁；选 tab 而非 popup，因为 popup 失焦即关，会连 Worker 一起杀掉 |
 | module worker | `new Worker(chrome.runtime.getURL('worker.js'), { type: 'module' })` | 文档常驻、解析、行模型、搜索、表达式、编辑、trail、复制 | 随页面创建/销毁；不跨页面复用（ADR-0001） |
-| Service Worker | `sw.js`（`type: "module"`） | 只做 `action.onClicked → chrome.tabs.create({ url: runtime.getURL('page.html') })` | Chrome 随时可杀；**不持文档、不转消息、不写 storage** |
+| Service Worker | `sw.js`（`type: "module"`） | `action.onClicked → tabs.create(page.html)`；右键菜单选区 → 一次性 token 写 `storage.session` + 开页（`page.html#incoming=<token>`，ADR-0031） | Chrome 随时可杀；**不持文档、不转消息**；选区文本只经 `storage.session` 一次性中转，页面读完即删 |
 
 通道：窗口请求走独立 `MessageChannel`、控制命令走 `postMessage`（两者往返无性能差，11µs；分开只为隔离排队，ADR-0001）。SW 与 module worker 是两个概念，文档状态只在后者。
 
@@ -118,11 +118,11 @@ C 布局常量（CSS 变量，只有行高会被 `RowMetrics` 吸收进逻辑层
 
 | 红线 | 落实 |
 |---|---|
-| 仅 `storage` | 只存主题/面板/视图状态与最近文档**元数据**（文件名/大小/时间），从不存文档内容 |
+| 仅 `storage` + `contextMenus`（均无警告） | `storage` 只存主题/面板/视图状态与最近文档**元数据**（文件名/大小/时间），从不存文档内容；`contextMenus` 只用于「打开选中的 JSON」菜单项，选区文本经 `storage.session` 一次性中转（读完即删，ADR-0031） |
 | 无网络/AI | manifest 无 host 权限、无 fetch 调用；CSP 禁远程脚本 |
 | 禁 eval | 表达式用 acorn AST + 白名单 walker；构建产物断言 `eval(`/`new Function` 出现次数为 0 |
 | 文档不落盘 | 解析后释放源文本（ADR-0003）；导出是唯一写文件动作，走用户手势 |
-| 最小面 | 无 content script、无 `web_accessible_resources`、无 `tabs` 权限（`tabs.create` 不需要） |
+| 最小面 | 无 content script、无 `web_accessible_resources`、无 `tabs` 权限（`tabs.create` 不需要）、无 `scripting` / `activeTab` / `host_permissions`（选区只读 `info.selectionText`，不注入） |
 
 ## 3. 构建链（esbuild）
 

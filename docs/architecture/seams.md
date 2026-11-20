@@ -421,6 +421,37 @@ export class ExpressionWorkspace {
 
 **删除测试**：删掉 → 表达式规则退回 `main.ts` 的 161 个引用点，两条进入路径各写一半，文档会话出现第二份副本（已实际发生过一次存档覆盖）。
 
+## 6.9 app · 选区导入（Selection Intake）
+
+**位置**：SW 规则层 `src/app/selection-intake.ts`（纯 TS、零 `chrome`）；页面消费层 `src/app/incoming-selection.ts`（零 DOM）；接线 `sw.ts` / `main.ts`。ADR-0031，实现票 #57。
+
+```ts
+// src/app/selection-intake.ts（Service Worker 侧）
+export const INCOMING_MENU_ID = 'tjv-open-selection';
+export const INCOMING_KEY_PREFIX = 'tjv.incoming.';
+export const SELECTION_MAX_CHARS = 2_000_000;   // ≈4MB UTF-16
+export const SELECTION_MIN_CHARS = 16;
+export const INCOMING_TTL_MS = 60 * 60 * 1000;
+export function isJsonCandidate(text: string): boolean;   // trim 首字符 { / [ 且长度够
+export function deliverSelection(port: SelectionIntakePort, raw: string): Promise<void>;
+//   port = { storage: chrome.storage.session, open(token), uuid(), now() }
+
+// src/app/incoming-selection.ts（页面侧）
+export function incomingTokenFromHash(hash: string): string | null;  // 只认安全 token
+export function takeIncoming(store: IncomingStore | null, token: string): Promise<IncomingRead | null>;
+export function suspectedTruncated(text: string): boolean;           // ≥16384 字符
+```
+
+**不变式**
+- **不注入页面**：选区只来自 `contextMenus` 回调的 `info.selectionText`；manifest 无 `content_scripts` / `host_permissions` / `scripting` / `activeTab`。
+- **一次性 token**：`storage.session` 的 `tjv.incoming.<uuid>` 由页面读到即删；URL 只带 token（`page.html#incoming=<token>`），页面**先 `history.replaceState` 抹 hash 再读**——刷新/回退不会重复导入。
+- **失败也有反馈**：「不像 JSON」「过大」写成错误 token，页面开页 toast 解释；SW 没有通知/剪贴板通道，不为此加权限。
+- **SW 仍不持文档**：选区文本只在 `storage.session` 停留到读完；SW 不 import 页面模块，页面不 import SW 模块（共享常量会让 esbuild 拆出首屏共享 chunk，键前缀各写一份、注释互指）。
+- **清理**：SW 每次投递前清 1 小时前的残留；`storage.session` 本身在浏览器重启时清空。
+- **落点/命名**：沿用设置「导入位置」（默认新标签），文档名固定 `selection.json`，来源 `'clipboard'`。
+
+**删除测试**：删掉 → 右键入口消失；或退回「SW 直连当天文档 / 页面读全局变量」的形态，token 生命周期与刷新去重只能靠真机手测。
+
 ## 7. 删除测试汇总
 
 - **S1 Worker 边界**：删掉 → 复杂度平移到每个 view + Worker 生命周期，`core` 只能靠真浏览器测。
@@ -429,6 +460,7 @@ export class ExpressionWorkspace {
 - **S4 主题/token**：删掉 → 颜色/尺寸硬编码进组件，双主题与 Canvas 调色脱节。
 - **S5 持久化/编辑器**：删掉 → 存储与编辑器直接耦合进组件，降级路径不可测。
 - **app · 表达式工作区**：删掉 → 表达式会话规则散回 `main.ts`，两条进入路径各写一半，文档会话出现第二份副本。
+- **app · 选区导入**：删掉 → 右键入口消失；或退回「SW 直连文档 / 页面读全局变量」，一次性 token 与刷新去重只能靠真机手测。
 
 ## 8. 「逻辑不动调渲染」承诺边界
 
