@@ -117,7 +117,7 @@ try {
       })()`,
     );
     await intake.eval(
-      `chrome.storage.session.set({ '${KEY_OK}': { text: '{"a":1,"b":[1,2,3]}', createdAt: Date.now() } }).then(() => true)`,
+      `chrome.storage.session.set({ '${KEY_OK}': { kind: 'text', text: '{"a":1,"b":[1,2,3]}', createdAt: Date.now() } }).then(() => true)`,
     );
     await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=1#incoming=smoke-incoming-0001`, {
       timeoutMs: 30000,
@@ -136,7 +136,7 @@ try {
 
     // 错误 token（不像 JSON）：开页 toast 解释，而不是静默失败
     await intake.eval(
-      `chrome.storage.session.set({ '${KEY_ERR}': { error: 'not-json', createdAt: Date.now() } }).then(() => true)`,
+      `chrome.storage.session.set({ '${KEY_ERR}': { kind: 'error', error: 'not-json', createdAt: Date.now() } }).then(() => true)`,
     );
     await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=2#incoming=smoke-incoming-0002`, {
       timeoutMs: 30000,

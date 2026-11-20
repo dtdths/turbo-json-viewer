@@ -50,10 +50,10 @@ function port(now = 1_000): FakePort {
 }
 
 describe('selection-intake · 候选判定', () => {
-  it('只认以 { 或 [ 开头、长度够的选区', () => {
-    expect(isJsonCandidate('{"a":1}')).toBe(false); // 太短
+  it('只认以 { 或 [ 开头的选区（不设长度下限：短 JSON 也是 JSON）', () => {
+    expect(isJsonCandidate('{"a":1}')).toBe(true);
+    expect(isJsonCandidate('[1]')).toBe(true);
     expect(isJsonCandidate('   {"a": 1, "b": 2}  ')).toBe(true);
-    expect(isJsonCandidate('[1,2,3,4,5,6,7,8]')).toBe(true);
     expect(isJsonCandidate('some prose that is long enough')).toBe(false);
     expect(isJsonCandidate('42, 43, 44, 45, 46, 47')).toBe(false);
   });
@@ -65,6 +65,7 @@ describe('selection-intake · 投递', () => {
     await deliverSelection(p, '  {"a":1,"b":2,"c":3}  ');
     expect(p.opened).toEqual(['uuid-1']);
     expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({
+      kind: 'text',
       text: '{"a":1,"b":2,"c":3}',
       createdAt: 5_000,
     });
@@ -74,21 +75,29 @@ describe('selection-intake · 投递', () => {
     const p = port();
     await deliverSelection(p, 'just some ordinary prose selection');
     expect(p.opened).toHaveLength(1);
-    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({ error: 'not-json', createdAt: 1_000 });
+    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({
+      kind: 'error',
+      error: 'not-json',
+      createdAt: 1_000,
+    });
   });
 
   it('超过字符上限按 too-large 处理（不把大文本写进 storage）', async () => {
     const p = port();
     const big = `{${'1'.repeat(SELECTION_MAX_CHARS)}}`;
     await deliverSelection(p, big);
-    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({ error: 'too-large', createdAt: 1_000 });
+    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({
+      kind: 'error',
+      error: 'too-large',
+      createdAt: 1_000,
+    });
   });
 
   it('清理超时残留，只碰自己的前缀', async () => {
     const now = 100 * INCOMING_TTL_MS;
     const p = port(now);
-    p.bag.set(`${INCOMING_KEY_PREFIX}old`, { text: '{}', createdAt: now - INCOMING_TTL_MS - 1 });
-    p.bag.set(`${INCOMING_KEY_PREFIX}fresh`, { text: '{}', createdAt: now - 1 });
+    p.bag.set(`${INCOMING_KEY_PREFIX}old`, { kind: 'text', text: '{}', createdAt: now - INCOMING_TTL_MS - 1 });
+    p.bag.set(`${INCOMING_KEY_PREFIX}fresh`, { kind: 'text', text: '{}', createdAt: now - 1 });
     p.bag.set('tjv.settings.v1', { keep: true });
     await deliverSelection(p, '{"a":1,"b":2,"c":3}');
     expect(p.bag.has(`${INCOMING_KEY_PREFIX}old`)).toBe(false);
@@ -101,7 +110,11 @@ describe('selection-intake · 投递', () => {
     const p = port();
     p.failNextSet = true;
     await deliverSelection(p, '{"a":1,"b":2,"c":3}');
-    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({ error: 'too-large', createdAt: 1_000 });
+    expect(p.bag.get(`${INCOMING_KEY_PREFIX}uuid-1`)).toEqual({
+      kind: 'error',
+      error: 'too-large',
+      createdAt: 1_000,
+    });
     expect(p.opened).toHaveLength(1);
   });
 

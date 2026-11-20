@@ -11,6 +11,8 @@
  * - **点了要有反馈**：不像 JSON / 过大也投递一条**错误 token**，由页面开页 toast 解释
  *   （右键菜单无法按选区内容显隐，点进来才发现不是 JSON 是常态）。
  */
+import type { IncomingPayload, SessionStorageLike } from '../shared/incoming';
+
 
 /** 菜单项 id（`chrome.contextMenus` 的稳定标识）。 */
 export const INCOMING_MENU_ID = 'tjv-open-selection';
@@ -18,39 +20,24 @@ export const INCOMING_MENU_ID = 'tjv-open-selection';
 export const INCOMING_KEY_PREFIX = 'tjv.incoming.';
 /** 选区文本上限（字符数 ≈ UTF-16 code unit）：远低于 `storage.session` 10MB 配额，也避免卡住 SW。 */
 export const SELECTION_MAX_CHARS = 2_000_000;
-/** 太短的选区不可能是 JSON 文档；阈值按「能放进一个值」估。 */
-export const SELECTION_MIN_CHARS = 16;
 /** 残留 token 的清理阈值：正常路径读完即删，这里只兜异常（页面没打开 / 读取失败）。 */
 export const INCOMING_TTL_MS = 60 * 60 * 1000;
 
-/** 投递失败的两类「有反馈的失败」；页面按 code 出文案。 */
-export type IncomingErrorCode = 'not-json' | 'too-large';
-
-export interface IncomingPayload {
-  /** 正常投递的选区文本（已 trim） */
-  text?: string;
-  error?: IncomingErrorCode;
-  /** 写入时刻（毫秒），用于清理残留；不是安全边界。 */
-  createdAt: number;
-}
-
 /** Service Worker 侧端口：只暴露投递真正需要的四件事。 */
 export interface SelectionIntakePort {
-  storage: {
-    get(keys: string | null): Promise<Record<string, unknown>>;
-    set(items: Record<string, unknown>): Promise<void>;
-    remove(keys: string | string[]): Promise<void>;
-  };
+  storage: SessionStorageLike;
   /** 打开查看器页面（`page.html#incoming=<token>`） */
   open(token: string): void;
   uuid(): string;
   now(): number;
 }
 
-/** 是否值得当 JSON 投递：trim 后的首字符是 `{` / `[`，且长度够。 */
+/**
+ * 是否值得当 JSON 投递：trim 后的首字符是 `{` / `[`。
+ * 不设长度下限——`{}` / `[1]` 也是 JSON；菜单是用户显式点击，噪声由「解析失败」反馈承担。
+ */
 export function isJsonCandidate(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.length < SELECTION_MIN_CHARS) return false;
   const first = trimmed.charAt(0);
   return first === '{' || first === '[';
 }
@@ -64,9 +51,9 @@ export async function deliverSelection(port: SelectionIntakePort, raw: string): 
   const text = raw.trim();
   const createdAt = port.now();
   let payload: IncomingPayload;
-  if (!isJsonCandidate(text)) payload = { error: 'not-json', createdAt };
-  else if (text.length > SELECTION_MAX_CHARS) payload = { error: 'too-large', createdAt };
-  else payload = { text, createdAt };
+  if (!isJsonCandidate(text)) payload = { kind: 'error', error: 'not-json', createdAt };
+  else if (text.length > SELECTION_MAX_CHARS) payload = { kind: 'error', error: 'too-large', createdAt };
+  else payload = { kind: 'text', text, createdAt };
 
   await pruneStale(port);
   const token = port.uuid();
@@ -76,7 +63,11 @@ export async function deliverSelection(port: SelectionIntakePort, raw: string): 
     // 配额 / 隐私模式：退化成极小的错误 token，至少不让用户「点了没反应」。
     try {
       await port.storage.set({
-        [INCOMING_KEY_PREFIX + token]: { error: 'too-large', createdAt } satisfies IncomingPayload,
+        [INCOMING_KEY_PREFIX + token]: {
+          kind: 'error',
+          error: 'too-large',
+          createdAt,
+        } satisfies IncomingPayload,
       });
     } catch {
       /* 连错误也写不进：页面只能空开，没有别的通道 */
@@ -85,7 +76,7 @@ export async function deliverSelection(port: SelectionIntakePort, raw: string): 
   port.open(token);
 }
 
-/** 清理超时残留（只碰 `tjv.incoming.` 前缀）。 */
+/** 清理超时残留（只碰 `tjv.incoming.` 前缀；`createdAt` 不合法的一并清掉）。 */
 async function pruneStale(port: SelectionIntakePort): Promise<void> {
   let bag: Record<string, unknown>;
   try {
@@ -97,7 +88,7 @@ async function pruneStale(port: SelectionIntakePort): Promise<void> {
   const stale: string[] = [];
   for (const [key, value] of Object.entries(bag)) {
     if (!key.startsWith(INCOMING_KEY_PREFIX)) continue;
-    const createdAt = (value as IncomingPayload | null | undefined)?.createdAt;
+    const createdAt = (value as { createdAt?: unknown } | null | undefined)?.createdAt;
     if (typeof createdAt !== 'number' || now - createdAt > INCOMING_TTL_MS) stale.push(key);
   }
   if (stale.length === 0) return;

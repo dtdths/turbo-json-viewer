@@ -25,7 +25,7 @@ A′ 虽然无警告，但 `chrome.scripting.executeScript` 本身就是往第�
 
 ### 1. 只做右键菜单（B）；不申请 host / `scripting` / `activeTab`
 
-- manifest `permissions`：`["storage", "contextMenus"]`，两者都**无商店警告**；`host_permissions` 仍为 `[]`，无 `content_scripts`。
+- manifest `permissions`：`["storage", "contextMenus"]`，两者都**无商店警告**；`host_permissions` 不声明（等同 `[]`），无 `content_scripts`。
 - 菜单项 id 固定 `tjv-open-selection`，`contexts: ['selection']`——有选区才出现；Chrome 无法按选区内容显隐/禁用（内容检查只能发生在点开之后）。
 - 注册时机：`runtime.onInstalled` 里 `removeAll()` → `create()`（安装/更新幂等；菜单跨浏览器重启持久，不需要 `onStartup`）。
 - SW 仍然「不持文档、不转消息」；选区文本只在 `storage.session` 里停留到页面读完即删。
@@ -34,15 +34,15 @@ A′ 虽然无警告，但 `chrome.scripting.executeScript` 本身就是往第�
 
 ```
 info.selectionText（SW，菜单回调）
-  → storage.session 写 { [tjv.incoming.<uuid>]: { text, createdAt } | { error, createdAt } }
+  → storage.session 写 { [tjv.incoming.<uuid>]: { kind:'text', text, createdAt } | { kind:'error', error, createdAt } }
   → tabs.create(page.html#incoming=<uuid>)
   → 页面启动读 hash → history.replaceState 抹掉 hash → 读并删条目 → 走现有 importBuffer
 ```
 
 - **键前缀 `tjv.incoming.`**（`storage.session`；`settings` / `ui` 在 `storage.local`，键空间分开）。
 - **单次使用**：页面读到即删；hash 先抹掉再读，刷新/回退不会重复导入。
-- **TTL 清理**：SW 每次投递前清掉超过 1 小时的残留（值带 `createdAt`；`storage.session` 本来就在浏览器重启时清空）。
-- **不污染首屏**：page 侧不 import SW 的模块——共享常量会让 esbuild 在 `page.js` / `sw.js` 之间拆出共享 chunk，首屏多一次请求，`--analyze` 也不会把它算进 `page.js`。所以键前缀在两个模块各写一份，注释互指。
+- **TTL 清理**：SW 每次投递前清掉超过 1 小时的残留（值带 `createdAt`；`createdAt` 不合法的一并清掉；`storage.session` 本来就在浏览器重启时清空）。
+- **不污染首屏**：page 侧不 import SW 的模块——共享**值**会让 esbuild 在 `page.js` / `sw.js` 之间拆出共享 chunk，首屏多一次请求，`--analyze` 也不会把它算进 `page.js`。所以键前缀在两个模块各写一份、注释互指；条目的形状与 `storage.session` 端口类型放在 `src/shared/incoming.ts`（**纯类型**，零运行时）。
 
 ### 3. 「点了要有反馈」（用户 2026-11-20 拍板）
 
@@ -50,10 +50,10 @@ info.selectionText（SW，菜单回调）
 
 | 情形 | 判据 | 页面反馈 |
 |---|---|---|
-| 不像 JSON | trim 后首字符不是 `{` / `[`，或长度 < 16 | 「选中的内容不是 JSON——请选中以 { 或 [ 开头的文本」 |
+| 不像 JSON | trim 后首字符不是 `{` / `[` | 「选中的内容不是 JSON——请选中以 { 或 [ 开头的文本」 |
 | 过大 | 文本 > **2,000,000** 字符（≈4MB UTF-16，远低于 10MB 配额，也避免卡住 SW） | 「选中内容过大——请复制后在插件里粘贴」 |
-| 正常 | 其余 | 走导入；落点沿用设置「导入位置」（默认新标签），显示名固定 `selection.json` |
-| 解析失败且长度 ≥ 16384 | 浏览器可能截断了 `selectionText` | 追加提示「浏览器可能截断了选区——若解析失败，请改用复制粘贴」 |
+| 正常 | 其余 | 走导入；落点是现有 `importTarget` 链路（新开的查看器工作区为空，实际等同新标签；设置只在已有文档时才有区分），显示名固定 `selection.json` |
+| 解析失败且长度 ≥ 16384 | 浏览器可能截断了 `selectionText` | 用「浏览器可能截断了选区——若解析失败，请改用复制粘贴」**取代**普通语法错误 toast（`showToast` 是同一条，不叠加） |
 | token 缺失 / 已消费 | 刷新、重复打开 | 静默（不报错） |
 
 - 写 token 失败（配额/隐私模式）时退化写一条极小的 `too-large` 错误 token；连错误都写不进才空开。
@@ -65,10 +65,11 @@ info.selectionText（SW，菜单回调）
 - **换行被压成空格**（Chrome 行为，社区与 issue 均可复现）。对合法 JSON 无害——字符串里的换行本来就只能是 `\n` 转义。
 - **可能截断**：官方文档没写上限，社区有 16384 的说法，W3C 线程又说 Chrome 是完整的。**无法自动验证**（原生菜单没有点击 API），所以按「可能截断」设计第 3 条的提示，并在真机手测清单里留着。
 - 覆盖不到：`chrome://*`、Chrome 应用商店、DevTools、PDF 阅读器；跨域 iframe 里的选区能否拿到 `selectionText` 未验证（列手测）。
+- **识别不设长度下限**（评审收口）：`{}` / `[1]` 也是 JSON，菜单是用户显式点击，噪声由解析失败反馈承担；早先「≥16 字符」会把 `{"a":1,"b":2}` 这类短 JSON 误拒。
 
 ### 5. i18n
 
-- 页面 toast 走语言包：`app.incoming.notJson` / `app.incoming.tooLarge` / `app.incoming.truncated`（en / zh-CN 全量镜像，守护测试覆盖）。
+- 页面 toast 走语言包：`app.incoming.notJson` / `app.incoming.tooLarge` / `app.incoming.truncated`（en / zh-CN 全量镜像，守护测试覆盖）；错误码 → 词条的映射在 `view/incoming-copy.ts`（与 `view/expression-copy` 同分工，app 不拼文案）。
 - 菜单标题走 `_locales`（`chrome.i18n.getMessage('menuOpenSelection')`）：**跟随浏览器语言，不跟随应用内语言**——SW 拿不到页面语言包。记为已知差距，不静默。
 
 ### 6. 测试策略
@@ -82,7 +83,7 @@ info.selectionText（SW，菜单回调）
 
 - `sw.js` 0.1 → **0.7KB gz**（无硬预算，记账）。
 - `page.js` 56.7 → **57.1KB gz**：预算 **57 → 58**（用户 2026-11-20 拍板，余 0.9）。增量全部来自选区导入：hash 消费 + 3 条文案 + `importBuffer` 返回值。
-- 语言包 en 6.4 → **6.5**、zh 7.2 → **7.3**（每包 ≤7.5）；懒加载 **145.9 / 146** 不变（拆掉了 page↔SW 共享常量导致的 0.4KB 共享 chunk）。
+- 语言包 en 6.4 → **6.5**、zh 7.2 → **7.4**（每包 ≤7.5）；懒加载 **145.9 / 146** 不变（拆掉了 page↔SW 共享常量导致的 0.4KB 共享 chunk）。
 
 ## 明确不做（本 ADR）
 
@@ -98,11 +99,11 @@ info.selectionText（SW，菜单回调）
 - 菜单标题跟随浏览器语言，不跟随应用内语言。
 - `selectionText` 是渲染后文本；可视化 JSON（行号/省略号）会解析失败。
 - 跨域 iframe 内的选区未验证。
-- 选择超过 ~16KB 时若浏览器确实截断，用户会先看到语法错误、再看到「可能被截断」提示（两步反馈）。
+- 选择超过 ~16KB 时若浏览器确实截断，用户看到的是「可能被截断」提示（它会重现成同一条 toast 上的最终文案，**不是**语法错误后再补一条）。
 
 ## 验收
 
 - `npm run check` 全绿：单测 **1557 → 1571**（+14：selection-intake 7 / incoming-selection 7）。
-- `smoke-extension` **OK**（新增 phase，见 §6）；其余 16 套冒烟断言零改动。
+- `smoke-extension` **OK**（新增 phase，见 §6）；其余 16 套冒烟断言零改动（`smoke-export` 的 `menu:select-restores-focus` 为既有环境偶发）。
 - 体积：`page.js` **57.1 / 58**、`sw.js` 0.7、语言包 6.5 / 7.3、懒加载 145.9 / 146。
 - 真机手测（发布前）：普通页面选中 beautified JSON → 右键 → 打开；选中散文 → 开页 toast；选中 >2M 字符 → 过大提示；`chrome://` 页面无菜单项。

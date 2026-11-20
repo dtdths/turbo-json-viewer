@@ -430,15 +430,14 @@ export class ExpressionWorkspace {
 export const INCOMING_MENU_ID = 'tjv-open-selection';
 export const INCOMING_KEY_PREFIX = 'tjv.incoming.';
 export const SELECTION_MAX_CHARS = 2_000_000;   // ≈4MB UTF-16
-export const SELECTION_MIN_CHARS = 16;
 export const INCOMING_TTL_MS = 60 * 60 * 1000;
-export function isJsonCandidate(text: string): boolean;   // trim 首字符 { / [ 且长度够
+export function isJsonCandidate(text: string): boolean;   // trim 首字符 { / [（不设长度下限）
 export function deliverSelection(port: SelectionIntakePort, raw: string): Promise<void>;
-//   port = { storage: chrome.storage.session, open(token), uuid(), now() }
+//   port = { storage: chrome.storage.session, open(token), uuid(), now() }   // 形状与端口类型在 shared/incoming
 
 // src/app/incoming-selection.ts（页面侧）
 export function incomingTokenFromHash(hash: string): string | null;  // 只认安全 token
-export function takeIncoming(store: IncomingStore | null, token: string): Promise<IncomingRead | null>;
+export function takeIncoming(store: IncomingStore | null, token: string): Promise<IncomingRead | null>;   // 见 shared/incoming
 export function suspectedTruncated(text: string): boolean;           // ≥16384 字符
 ```
 
@@ -446,8 +445,8 @@ export function suspectedTruncated(text: string): boolean;           // ≥16384
 - **不注入页面**：选区只来自 `contextMenus` 回调的 `info.selectionText`；manifest 无 `content_scripts` / `host_permissions` / `scripting` / `activeTab`。
 - **一次性 token**：`storage.session` 的 `tjv.incoming.<uuid>` 由页面读到即删；URL 只带 token（`page.html#incoming=<token>`），页面**先 `history.replaceState` 抹 hash 再读**——刷新/回退不会重复导入。
 - **失败也有反馈**：「不像 JSON」「过大」写成错误 token，页面开页 toast 解释；SW 没有通知/剪贴板通道，不为此加权限。
-- **SW 仍不持文档**：选区文本只在 `storage.session` 停留到读完；SW 不 import 页面模块，页面不 import SW 模块（共享常量会让 esbuild 拆出首屏共享 chunk，键前缀各写一份、注释互指）。
-- **清理**：SW 每次投递前清 1 小时前的残留；`storage.session` 本身在浏览器重启时清空。
+- **SW 仍不持文档**：选区文本只在 `storage.session` 停留到读完；SW 不 import 页面模块，页面不 import SW 模块（共享**值**会让 esbuild 拆出首屏共享 chunk，键前缀各写一份、注释互指；条目形状与存储端口类型在 `shared/incoming`，纯类型零运行时）。
+- **清理**：SW 每次投递前清 1 小时前的残留（`createdAt` 不合法的一并清）；`storage.session` 本身在浏览器重启时清空。
 - **落点/命名**：沿用设置「导入位置」（默认新标签），文档名固定 `selection.json`，来源 `'clipboard'`。
 
 **删除测试**：删掉 → 右键入口消失；或退回「SW 直连当天文档 / 页面读全局变量」的形态，token 生命周期与刷新去重只能靠真机手测。

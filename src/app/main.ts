@@ -40,7 +40,9 @@ import {
 } from './import/layer-state';
 import { ImportLayer } from './import/layer';
 import { ExpressionWorkspace } from './expression-workspace';
-import { incomingTokenFromHash, suspectedTruncated, takeIncoming, type IncomingStore } from './incoming-selection';
+import { incomingTokenFromHash, suspectedTruncated, takeIncoming } from './incoming-selection';
+import { incomingErrorText } from '../view/incoming-copy';
+import type { IncomingStore } from '../shared/incoming';
 import { LARGE_DOC_WARN_BYTES } from '../protocol/versions';
 import { parentPath, ROOT_PATH } from '../shared/path';
 import {
@@ -1188,18 +1190,21 @@ function currentImportTarget(): ImportTarget {
   return settings.get('importTarget');
 }
 
+/** 导入结果：`parse` = 解析失败（选区导入据此追加「可能被截断」提示），其余统一 `failed`。 */
+type ImportOutcome = 'ok' | 'parse' | 'failed';
+
 async function importBuffer(
   source: 'file' | 'paste' | 'clipboard',
   data: ArrayBuffer | string,
   name: string,
   target?: 'replace' | 'new-tab',
-): Promise<boolean> {
+): Promise<ImportOutcome> {
   const resolvedTarget = target ?? currentImportTarget();
   // 软上限在**解析前**判：满 8 个时不要先把 50MB 解析完再拒绝。
   // 注意空工作区的 canAdd 也是 false（activeId=null），第一个标签必须放行。
   if (resolvedTarget === 'new-tab' && workspace.activeId !== null && !workspace.view().canAdd) {
     showToast(t('app.tabs.limit', { n: workspace.max }), 3000, 'error');
-    return false;
+    return 'failed';
   }
   const loadId = ++loadSeq;
   const inLayer = importLayer.isOpen();
@@ -1219,20 +1224,21 @@ async function importBuffer(
     if (loadId !== loadSeq) {
       // 回包已被更新的导入 / 关闭入口层作废：Worker 已经建好新根，必须释放，否则孤儿根泄漏
       void core.closeRoot(reply.rootId).catch(() => undefined);
-      return false;
+      return 'failed';
     }
     onLoaded(reply, resolvedTarget);
-    return true;
+    return 'ok';
   } catch (error) {
-    if (loadId !== loadSeq) return false;
-    if (CoreError.from(error).code === 'CANCELLED') return false;
+    if (loadId !== loadSeq) return 'failed';
+    const coreError = CoreError.from(error);
+    if (coreError.code === 'CANCELLED') return 'failed';
     if (inLayer) {
-      importLayer.setError(CoreError.from(error));
+      importLayer.setError(coreError);
       importLayer.setBusy(false);
     } else {
       showError(error);
     }
-    return false;
+    return coreError.code === 'PARSE' ? 'parse' : 'failed';
   }
 }
 
@@ -1240,15 +1246,7 @@ async function importBuffer(
 
 /** 扩展页才有 `chrome.storage.session`；HTTP 冒烟 / 开发模式返回 null（该入口不存在）。 */
 function incomingStore(): IncomingStore | null {
-  const session = (
-    globalThis as {
-      chrome?: {
-        storage?: {
-          session?: { get(keys: string): Promise<Record<string, unknown>>; remove(keys: string): Promise<void> };
-        };
-      };
-    }
-  ).chrome?.storage?.session;
+  const session = (globalThis as { chrome?: { storage?: { session?: IncomingStore } } }).chrome?.storage?.session;
   return session ?? null;
 }
 
@@ -1263,16 +1261,12 @@ async function consumeIncomingSelection(): Promise<void> {
   const incoming = await takeIncoming(incomingStore(), token);
   if (incoming === null) return;
   if (incoming.kind === 'error') {
-    showToast(
-      t(incoming.code === 'too-large' ? 'app.incoming.tooLarge' : 'app.incoming.notJson'),
-      5000,
-      'error',
-    );
+    showToast(incomingErrorText(incoming.code), 5000, 'error');
     return;
   }
-  const ok = await importBuffer('clipboard', incoming.text, 'selection.json');
-  // 右键菜单给的文本可能被浏览器截断：解析失败且长度可疑时，给专门提示而不是普通语法错误
-  if (!ok && suspectedTruncated(incoming.text)) {
+  const outcome = await importBuffer('clipboard', incoming.text, 'selection.json');
+  // 右键菜单给的文本可能被浏览器截断：只有「解析失败」且长度可疑才追加提示（不是标签满了之类）
+  if (outcome === 'parse' && suspectedTruncated(incoming.text)) {
     showToast(t('app.incoming.truncated'), 6000, 'error');
   }
 }
@@ -3139,7 +3133,6 @@ function rerenderChrome(): void {
   renderEditBadge();
   renderProfile();
   renderInitialChrome();
-
   expression.applyInlineText();
   if (searchPatternCore && searchState.view().patternError) {
     searchState.markPatternError(patternErrorText(searchPatternCore));

@@ -4,12 +4,12 @@
  * 只做「解析 hash → 读并删 `storage.session` 里的一次性 token」；导入与文案归 app。
  * 纯 TS、零 DOM：`location` / `history` 的清理由调用方（`main.ts`）做，单测可直喂 hash 与假存储。
  */
-import type { IncomingErrorCode } from './selection-intake';
+import type { IncomingErrorCode, IncomingStore } from '../shared/incoming';
 
 /**
  * 与 `app/selection-intake` 的 `INCOMING_KEY_PREFIX` **必须一致**。
- * 刻意不 import：那两个常量会让 esbuild 在 page.js 与 sw.js 之间拆出共享 chunk，
- * 首屏就多一次请求（`--analyze` 也不会把它算进 page.js）。
+ * 刻意不 import：共享**值**会让 esbuild 在 page.js 与 sw.js 之间拆出首屏共享 chunk；
+ * 形状与端口类型在 `shared/incoming` 里，两边共用一份（只 import type，零运行时）。
  */
 const INCOMING_KEY_PREFIX = 'tjv.incoming.';
 
@@ -21,12 +21,6 @@ export const INCOMING_HASH_PREFIX = '#incoming=';
  * 解析失败且达到这个长度时，页面给「可能被截断」的专门提示，而不是普通语法错误。
  */
 export const SUSPECTED_TRUNCATED_CHARS = 16_384;
-
-/** `chrome.storage.session` 的最小子集（页面只读一次、删一次）。 */
-export interface IncomingStore {
-  get(keys: string): Promise<Record<string, unknown>>;
-  remove(keys: string): Promise<void>;
-}
 
 export type IncomingRead =
   | { kind: 'import'; text: string }
@@ -60,9 +54,11 @@ export async function takeIncoming(store: IncomingStore | null, token: string): 
     /* 删除失败不影响本次导入（条目会由 SW 的 TTL 清理兜底） */
   }
   if (typeof value !== 'object' || value === null) return null;
-  const payload = value as { text?: unknown; error?: unknown };
-  if (typeof payload.text === 'string') return { kind: 'import', text: payload.text };
-  if (payload.error === 'not-json' || payload.error === 'too-large') {
+  const payload = value as { kind?: unknown; text?: unknown; error?: unknown };
+  if (payload.kind === 'text' && typeof payload.text === 'string') {
+    return { kind: 'import', text: payload.text };
+  }
+  if (payload.kind === 'error' && (payload.error === 'not-json' || payload.error === 'too-large')) {
     return { kind: 'error', code: payload.error };
   }
   return null;

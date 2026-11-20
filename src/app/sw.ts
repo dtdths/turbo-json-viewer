@@ -6,6 +6,7 @@
  * 停留到页面读完即删）；**不注入任何页面**——菜单只读 `info.selectionText`。
  */
 import { INCOMING_MENU_ID, deliverSelection, type SelectionIntakePort } from './selection-intake';
+import type { SessionStorageLike } from '../shared/incoming';
 
 type ContextMenuClick = { menuItemId: string | number; selectionText?: string };
 
@@ -13,7 +14,7 @@ const chromeApi = (
   globalThis as unknown as {
     chrome?: {
       action?: { onClicked?: { addListener(fn: () => void): void } };
-      tabs?: { create(props: { url: string }): unknown };
+      tabs?: { create(props: { url: string }): void };
       runtime?: {
         getURL(path: string): string;
         onInstalled?: { addListener(fn: () => void): void };
@@ -24,13 +25,7 @@ const chromeApi = (
         onClicked?: { addListener(fn: (info: ContextMenuClick) => void): void };
       };
       i18n?: { getMessage(key: string): string };
-      storage?: {
-        session: {
-          get(keys: string | null): Promise<Record<string, unknown>>;
-          set(items: Record<string, unknown>): Promise<void>;
-          remove(keys: string | string[]): Promise<void>;
-        };
-      };
+      storage?: { session: SessionStorageLike };
     };
   }
 ).chrome;
