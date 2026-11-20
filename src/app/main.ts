@@ -724,7 +724,11 @@ function applyLanding(plan: LandingPlan): void {
   if (!forActiveDoc && !forActiveExpr) return;
   // 表达式视图内的展开/折叠会推进 expr 根的 rowVersion：同步视图态（重进表达式模式时用）
   if (forActiveExpr) {
-    expression.syncLandedRoot(rootId, plan.state.rowVersion, plan.state.totalRows);
+    expression.syncLandedRoot({
+      rootId,
+      rowVersion: plan.state.rowVersion,
+      totalRows: plan.state.totalRows,
+    });
   }
   rowSource.setRoot(
     { rootId, rowVersion: plan.state.rowVersion, totalRows: plan.state.totalRows },
@@ -753,7 +757,7 @@ function applyLanding(plan: LandingPlan): void {
 /**
  * 回包是否属于**当前显示根**（多标签 / ADR-0009 §2 + ADR-0018 §1）：
  * 切标签后，旧根的在途回包必须丢弃，不能写进新标签的会话（版本号巧合靠不住）。
- * 注意「显示根」可以是**活动标签的文档根**，也可以是**表达式结果根**（exprViewActive）——
+ * 注意「显示根」可以是**活动标签的文档根**，也可以是**表达式结果根**（expression.activeRootId）——
  * 结果视图上的展开/收起/全部展开/跳转回包打的是 expr 根，不能被当成跨标签回包丢掉
  * （丢了 UI 不动但 Worker 的 rowVersion 已推进 → 后续窗口请求 STALE_ROOT）。
  */
@@ -974,7 +978,7 @@ const expression: ExpressionWorkspace = new ExpressionWorkspace({
   },
   tree,
   core,
-  view: {
+  shell: {
     land: (plan) => applyLanding(plan),
     select: (path) => setSelection(path),
     syncLocateRaw: () => syncLocateRaw(),
@@ -1832,7 +1836,7 @@ async function exportDoc(): Promise<void> {
   if (name === null) return;
   const tabId = activeTab()?.id ?? null;
   const flags = currentNameFlags();
-  const oneOff = expression.view !== null && expression.active;
+  const oneOff = expression.activeRootId() !== null;
   const rootId = session.rootId;
   setExportButtonsDisabled(true);
   try {
@@ -1965,7 +1969,9 @@ async function copyDocJson(): Promise<void> {
     const copied = await writeClipboard(reply.text);
     exportLastAction = { mode: 'clipboard', bytes: reply.bytes, copied };
     // 截断结果必须带标记（ADR-0018 §4：截断不能静默发生）
-    const suffix = expression.active && expression.view?.truncated ? t('app.export.truncated') : '';
+    const suffix = expression.activeRootId() !== null && expression.view?.truncated === true
+      ? t('app.export.truncated')
+      : '';
     if (copied) showToast(t('app.toast.copyDone', { what: `JSON${suffix}` }), 2000, 'success');
     else showToast(t('app.toast.copyFailedExport'), 4000, 'error');
   } catch (error) {

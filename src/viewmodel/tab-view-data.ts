@@ -12,7 +12,7 @@ import type { ExprBudgetLevel, ExprError, FidelityReport, JsonKind, RawMeta } fr
 
 /**
  * 表达式结果视图态。`exprView` = **最近一次成功结果**的元信息（会话内保留，换文档即清）；
- * 树上当前是否显示该结果根由 `app` 侧的 `exprViewActive` 单独持有（切标签一律复位，
+ * 树上当前是否显示该结果根由 `app/expression-workspace` 单独持有（切标签一律复位，
  * 「切文档树模式即回」后仍保留，重进表达式模式可恢复）。
  * 结果根本体在 worker 的 RootStore 里（LRU 3），页面只持坐标，不持文档。
  */

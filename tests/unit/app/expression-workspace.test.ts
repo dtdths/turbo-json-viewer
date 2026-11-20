@@ -83,6 +83,7 @@ interface Harness {
     complete?: (req: unknown) => Promise<{ items: ExprCompletion[] }>;
     locate?: (req: unknown) => Promise<{ path: string | null }>;
   };
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
   toasts: { text: string; kind?: string }[];
   errors: unknown[];
   budget: 'loose' | 'standard' | 'strict';
@@ -122,6 +123,16 @@ function harness(overrides: Partial<{ selected: string | null; rows: WindowSnaps
     jumps: [] as string[],
     syncLocate: 0,
   };
+  const store = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+  };
   const h: Harness = {
     expr: undefined as unknown as ExpressionWorkspace,
     session,
@@ -132,6 +143,7 @@ function harness(overrides: Partial<{ selected: string | null; rows: WindowSnaps
     tree,
     view,
     core: {},
+    storage,
     toasts: [],
     errors: [],
     budget: 'standard',
@@ -164,7 +176,7 @@ function harness(overrides: Partial<{ selected: string | null; rows: WindowSnaps
       exprLocate: (req) =>
         h.core.locate ? h.core.locate(req) : Promise.resolve({ path: '$.data.items[0]' }),
     },
-    view: {
+    shell: {
       land: (plan) => view.landings.push(plan),
       select: (path) => view.selections.push(path),
       syncLocateRaw: () => {
@@ -195,6 +207,7 @@ function harness(overrides: Partial<{ selected: string | null; rows: WindowSnaps
     toast: (text, _ms, kind) => h.toasts.push({ text, kind }),
     error: (error) => h.errors.push(error),
     watchdogFlag: 'tjv.test.watchdog',
+    storage,
     reload: () => {
       h.reloads += 1;
     },
@@ -249,7 +262,7 @@ describe('ExpressionWorkspace · 进入 / 返回', () => {
   it('run 成功后：结果态、历史、状态行、结果条、落地计划都齐', async () => {
     const h = await enteredHarness();
     expect(h.expr.view?.rootId).toBe('expr:1');
-    expect(h.expr.lastExpressionText).toBe('$.data');
+    expect(h.expr.mirror.exprLastText.get()).toBe('$.data');
     expect(h.panel.history).toEqual(['$.data']);
     expect(h.panel.status).toContain('3');
     expect(h.expr.active).toBe(true);
@@ -401,6 +414,34 @@ describe('ExpressionWorkspace · 在途闸门', () => {
   });
 });
 
+describe('ExpressionWorkspace · watchdog 标记', () => {
+  it('watchdog 触发时先写重载标记，再终止并重载', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      h.budget = 'strict';
+      h.core.eval = () => new Promise<EvalReply>(() => undefined);
+      void h.expr.run('$.stuck');
+      vi.advanceTimersByTime(6_000);
+      expect(h.storage.getItem('tjv.test.watchdog')).toBe('1');
+      expect(h.terminated).toBe(1);
+      expect(h.reloads).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('consumeWatchdogFlag：有标记 → 提示并清掉；无标记 → 安静', () => {
+    const h = harness();
+    h.expr.consumeWatchdogFlag();
+    expect(h.toasts).toHaveLength(0);
+    h.storage.setItem('tjv.test.watchdog', '1');
+    h.expr.consumeWatchdogFlag();
+    expect(h.toasts).toHaveLength(1);
+    expect(h.storage.getItem('tjv.test.watchdog')).toBeNull();
+  });
+});
+
 describe('ExpressionWorkspace · 版本扇出与行内反馈', () => {
   it('syncVersions 同时更新文档会话存档与结果视图', async () => {
     const h = await enteredHarness();
@@ -418,9 +459,9 @@ describe('ExpressionWorkspace · 版本扇出与行内反馈', () => {
 
   it('syncLandedRoot 只写当前激活的结果根', async () => {
     const h = await enteredHarness();
-    h.expr.syncLandedRoot('expr:2', 50, 60);
+    h.expr.syncLandedRoot({ rootId: 'expr:2', rowVersion: 50, totalRows: 60 });
     expect(h.expr.view?.rowVersion).toBe(2);
-    h.expr.syncLandedRoot('expr:1', 3, 30);
+    h.expr.syncLandedRoot({ rootId: 'expr:1', rowVersion: 3, totalRows: 30 });
     expect(h.expr.view?.rowVersion).toBe(3);
     expect(h.expr.view?.totalRows).toBe(30);
   });

@@ -361,7 +361,7 @@ export function installDevHook(deps: DevHookDeps): void;   // 挂 globalThis.__t
 
 ## 6.7 app · 每标签视图态（Tab View）
 
-**位置**：存档类型 `src/viewmodel/tab-view-data.ts`、数据住 `TabState.view`；搬运在 `src/app/tab-view-state.ts`（纯 TS、零 DOM）；镜像仍是 `main.ts` 的模块级 `let`。ADR-0008 修订 2026-11-19，实现票 #58。
+**位置**：存档类型 `src/viewmodel/tab-view-data.ts`、数据住 `TabState.view`；搬运在 `src/app/tab-view-state.ts`（纯 TS、零 DOM）；镜像是 `main.ts` 的模块级 `let`（表达式四个字段的镜像由 `ExpressionWorkspace.mirror` 提供，仍是同一张表的一端）。ADR-0008 修订 2026-11-19，实现票 #58。
 
 ```ts
 // src/app/tab-view-state.ts
@@ -377,7 +377,7 @@ export class TabViewState {
 ```
 
 **不变式**
-- 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的 `let`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + accessor 1 行 + 镜像 `let` 1 行（都在相邻块）；`VIEW_FIELDS_ALL_CLASSIFIED` 是编译期守卫——漏归类会构建失败。
+- 每标签视图态只有**一份存档**（`TabState.view`）与**一份活动镜像**（`main.ts` 的模块级 `let`，或持有该状态的模块自己字段——表达式四个字段在 `ExpressionWorkspace`）；镜像 ↔ 存档只走 `VIEW_FIELD_KEYS` 这一张表。加字段 = `TabViewData` 1 行 + `defaultTabViewData()` 1 行 + `VIEW_FIELD_KEYS` 1 行 + accessor 1 行 + 镜像 1 行（`let` 或模块字段，都在相邻块）；`VIEW_FIELDS_ALL_CLASSIFIED` 是编译期守卫——漏归类会构建失败。
 - 归属：**活状态问 `DocSession` / `ExpressionWorkspace`，存档问 `TabViewState`**。所以 `syncVersions` 只碰标签与非活动标签的表达式结果视图；活动会话由 `DocSession`、活动 `exprView` 与文档会话存档由 `ExpressionWorkspace.syncVersions` 各自扇出。
 - 版本字段 / `selected` / `meta` 不进 `view`：它们本就住在 `TabState` 顶层，`capture()` 走 `workspace.update` 写，别再存第二份。
 - 两个滚动位置**没有镜像**：`restoreActiveTabView` 从 `tab.view` 直读；给它们造镜像会多两个 `let` 且没有第二个读者。
@@ -394,8 +394,8 @@ export class TabViewState {
 ```ts
 // src/app/expression-workspace.ts
 export class ExpressionWorkspace {
-  constructor(deps: ExpressionWorkspaceDeps);  // panel / bar / session / rows / tree / core / view /
-                                               // budget / terminate / reload / toast / error / watchdogFlag
+  constructor(deps: ExpressionWorkspaceDeps);  // panel / bar / session / rows / tree / core / shell /
+                                               // budget / terminate / reload / toast / error / watchdogFlag / storage
   readonly mirror: ExpressionMirror;           // 交给 TabViewState 的四个字段（exprView / lastText / error / status）
   readonly view: ExprViewState | null; readonly active: boolean;
   documentRootId(): string | null; documentRevision(): number;   // 文档口径唯一入口（表达式激活时取存档）
@@ -403,7 +403,7 @@ export class ExpressionWorkspace {
   run(text?, strict?): Promise<void>; rerun(): Promise<void>; cancel(): void;
   back(opts?: {silent?: boolean}): void; enterFromArchive(): void;
   resetTransient(): void; clear(): void;
-  syncVersions(roots): void; syncLandedRoot(rootId, rowVersion, totalRows): void;
+  syncVersions(roots): void; syncLandedRoot(entry: RootVersion): void;
   applyInlineText(): void; renderAfterTabSwitch(): void; renderBar(stale?): void;
   refreshOrigin(): void; jumpFromRow(path): Promise<void>;
   completions(text, pos): Promise<ExprCompletion[]>; locate(path): Promise<{path: Path | null}>;
@@ -414,8 +414,8 @@ export class ExpressionWorkspace {
 **不变式**
 - **一个 owner**：结果视图态、文档会话存档、在途 `seq`/`running`、行内错误/状态行、原路径缓存都只住在这里；`main.ts` 的 `expr*` 模块级 `let` 已全部删除。
 - **文档口径**：表达式视图激活时 `session.*` 是 expr 根，「当前文档根 / 版本」只能问 `documentRootId()` / `documentRevision()`（profile 采样、补全、eval 输入同源）。存档在 `suspended`，`back()` 完整 `session.restore`。
-- **进入只有一条路径**：`run()` 成功后与 `enterFromArchive()`（面板恢复 LRU）共用私有的 `enter` 逻辑；`enterFromArchive()` **幂等**（已激活即 no-op），不再覆盖存档；两条路径都同步「在原文中定位」开关。
-- **在途**：`seq` 自增作废迟到回包；`running` 闸门；`cancel()` 在切标签 / 关标签 / 回空态 / 换文档时调用。watchdog 经端口终止 worker + 重载（模块只写 `sessionStorage` 标记）。
+- **进入只有一条路径**：`run()` 成功后与 `enterFromArchive()`（面板恢复 LRU）共用私有前置 `prepareResultView()`（原文→树、存档文档会话、置激活、同步定位开关）与收尾 `finishEnter()`（结果条 / 状态行 / 状态栏）；`enterFromArchive()` **幂等**（已激活即 no-op），不再覆盖存档。差异只剩「怎么落地根」：一个是 `session.land()`，一个是 `session.restore()`。
+- **在途**：`seq` 自增作废迟到回包；`running` 闸门；`cancel()` 在切标签 / 关标签 / 回空态 / 换文档时调用。watchdog 经端口终止 worker + 重载；重载标记的写入与读取都在模块内，存储默认全局 `sessionStorage`、可经 `storage` 端口注入（隐私模式 / 单测）。
 - **存档边界**：每标签存档仍归 `TabViewState`（`mirror` 提供 accessor）；`resetTransient()` 只复位「是否正显示」与存档副本，结果本体留在模块里供 LRU 恢复。
 - **dev hook 兼容**：`expression` 命名空间的成员名与语义逐字不变（`stale()` 由本模块回答）。
 

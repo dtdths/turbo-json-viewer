@@ -84,7 +84,7 @@ export interface ExpressionTreePort {
  * app 侧的少量装配动作（都是「模块不该知道的整体动作」）：
  * 回包落地执行器、选中、状态栏、提示条、面板 / 视图模式、跳转。
  */
-export interface ExpressionViewActions {
+export interface ExpressionShell {
   land(plan: LandingPlan): void;
   select(path: string | null): void;
   syncLocateRaw(): void;
@@ -104,7 +104,8 @@ export interface ExpressionWorkspaceDeps {
   rows: ExpressionRowsPort;
   tree: ExpressionTreePort;
   core: Pick<CoreApi, 'eval' | 'complete' | 'exprLocate'>;
-  view: ExpressionViewActions;
+  /** app 外壳动作（回包落地 / 选中 / 状态栏 / 视图模式 / 跳转）——不是结果视图态（那个是 `view`） */
+  shell: ExpressionShell;
   /** 求值预算档位（读设置） */
   budget(): ExprBudgetLevel;
   /** watchdog 触发：终止 worker（模块自己写重载标记，调用方负责 reload） */
@@ -115,6 +116,8 @@ export interface ExpressionWorkspaceDeps {
   error(error: unknown): void;
   /** watchdog 重载标记键（`sessionStorage`，重载后读取） */
   watchdogFlag: string;
+  /** 重载标记的存储（缺省 = 全局 `sessionStorage`；单测注入假件） */
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
   /** 页面重载（watchdog 专用，便于单测注入） */
   reload(): void;
 }
@@ -174,18 +177,6 @@ export class ExpressionWorkspace {
 
   get active(): boolean {
     return this.exprViewActive;
-  }
-
-  get lastExpressionText(): string {
-    return this.lastText;
-  }
-
-  get inlineError(): ExprError | null {
-    return this.errorState;
-  }
-
-  get statusLine(): ExprStatusLine | null {
-    return this.statusState;
   }
 
   get selectedOrigin(): ExpressionOrigin | null {
@@ -263,10 +254,10 @@ export class ExpressionWorkspace {
   }
 
   /** 结果根上的展开 / 折叠 / 全部展开落地后，把新版本写回结果视图态（重进表达式模式时用）。 */
-  syncLandedRoot(rootId: string, rowVersion: number, totalRows: number): void {
-    if (this.exprViewActive && this.exprView?.rootId === rootId) {
-      this.exprView.rowVersion = rowVersion;
-      this.exprView.totalRows = totalRows;
+  syncLandedRoot(entry: RootVersion): void {
+    if (this.exprViewActive && this.exprView?.rootId === entry.rootId) {
+      this.exprView.rowVersion = entry.rowVersion;
+      this.exprView.totalRows = entry.totalRows;
     }
   }
 
@@ -280,12 +271,7 @@ export class ExpressionWorkspace {
     const view = this.exprView;
     // stale 必须在切 session 之前算：切完 session.docRevision 就是 expr 版本了
     const isStale = view.docRevision !== this.documentRevision();
-    // 结果视图只在树形态下有意义（原文视图下恢复结果根会看不见）→ 先切回树
-    if (this.deps.view.isRaw()) this.deps.view.setTreeMode();
-    this.suspended = this.deps.session.snapshot;
-    this.exprViewActive = true;
-    // 结果行尾「在原文中定位」必须关（与 `enter()` 同一口径；此前这条路径漏了）
-    this.deps.view.syncLocateRaw();
+    this.prepareResultView();
     this.deps.session.restore({
       rootId: view.rootId,
       docRevision: view.docRevision,
@@ -293,10 +279,7 @@ export class ExpressionWorkspace {
       totalRows: view.totalRows,
     });
     this.showResultRoot({ scrollTopPx: 0 });
-    this.renderBar(isStale);
-    this.statusState = { count: view.count, ms: Math.round(view.ms) };
-    this.deps.panel.setStatus(EXPR_COPY.status(this.statusState.count, this.statusState.ms));
-    this.deps.view.updateStatus();
+    this.finishEnter(isStale);
   }
 
   /** 返回文档树：恢复进入表达式视图前的文档会话；结果根保留在 worker LRU（可重进恢复）。 */
@@ -304,7 +287,7 @@ export class ExpressionWorkspace {
     if (!this.exprViewActive) return;
     this.exprViewActive = false;
     this.origin = null;
-    this.deps.view.syncLocateRaw();
+    this.deps.shell.syncLocateRaw();
     this.deps.bar.hide();
     const saved = this.suspended;
     this.suspended = null;
@@ -313,9 +296,9 @@ export class ExpressionWorkspace {
       this.showResultRoot({ scrollTopPx: 0 });
     }
     this.deps.tree.setSelected(null);
-    this.deps.view.select(null);
-    this.deps.view.updateStatus();
-    if (!opts.silent) this.deps.view.focusTree();
+    this.deps.shell.select(null);
+    this.deps.shell.updateStatus();
+    if (!opts.silent) this.deps.shell.focusTree();
   }
 
   /* ---------------- 求值 ---------------- */
@@ -410,7 +393,7 @@ export class ExpressionWorkspace {
 
   /** 选中行的原路径缓存刷新（miss 时保留旧缓存；换根 / 离开表达式视图时由调用方清）。 */
   refreshOrigin(): void {
-    const selected = this.deps.view.selected();
+    const selected = this.deps.shell.selected();
     if (!this.exprViewActive || !this.exprView || selected === null) {
       this.origin = null;
       return;
@@ -431,14 +414,14 @@ export class ExpressionWorkspace {
   async jumpFromRow(path: string): Promise<void> {
     if (!this.exprView || !this.exprViewActive) return;
     try {
-      const reply = await this.deps.core.exprLocate({ rootId: this.exprView.rootId, path });
+      const reply = await this.requestLocate(path);
       if (reply.path === null) {
         this.deps.toast(EXPR_COPY.noSource, 2500, 'error');
         return;
       }
       this.back({ silent: true });
-      this.deps.view.setDocPanel();
-      await this.deps.view.jumpToPath(reply.path);
+      this.deps.shell.setDocPanel();
+      await this.deps.shell.jumpToPath(reply.path);
     } catch (error) {
       this.deps.error(error);
     }
@@ -459,9 +442,15 @@ export class ExpressionWorkspace {
   /** 结果行 → 原文档路径（dev hook / 跳转共用）。 */
   async locate(path: string | null): Promise<{ path: Path | null }> {
     if (!this.exprView) return { path: null };
-    const target = path ?? this.deps.view.selected();
+    const target = path ?? this.deps.shell.selected();
     if (!target) return { path: null };
-    return this.deps.core.exprLocate({ rootId: this.exprView.rootId, path: target });
+    return this.requestLocate(target);
+  }
+
+  private requestLocate(path: string): Promise<{ path: Path | null }> {
+    const rootId = this.exprView?.rootId;
+    if (!rootId) return Promise.resolve({ path: null });
+    return this.deps.core.exprLocate({ rootId, path });
   }
 
   /** 示例（ADR-0018 §1）：文档顶层字段动态 3 条 + 通用 2 条；无文档只给通用 2 条。 */
@@ -502,8 +491,9 @@ export class ExpressionWorkspace {
   /** watchdog 重载后的提示（`sessionStorage` 在重载后仍可读）。 */
   consumeWatchdogFlag(): void {
     try {
-      if (sessionStorage.getItem(this.deps.watchdogFlag) !== '1') return;
-      sessionStorage.removeItem(this.deps.watchdogFlag);
+      const flags = this.flags();
+      if (!flags || flags.getItem(this.deps.watchdogFlag) !== '1') return;
+      flags.removeItem(this.deps.watchdogFlag);
       this.deps.toast(EXPR_COPY.watchdog, 6000, 'error');
     } catch {
       /* 隐私模式 */
@@ -521,10 +511,7 @@ export class ExpressionWorkspace {
   ): void {
     // 结果视图只有树形态：当前在原文视图时先切回树视图（此时结果视图尚未激活，
     // 走不到「离开表达式 → 回文档树」的守卫，所以这里自己切）
-    if (!this.exprViewActive) {
-      if (this.deps.view.isRaw()) this.deps.view.setTreeMode();
-      this.suspended = this.deps.session.snapshot;
-    }
+    if (!this.exprViewActive) this.prepareResultView();
     this.exprView = {
       rootId: reply.rootId,
       docRevision: reply.docRevision,
@@ -541,14 +528,33 @@ export class ExpressionWorkspace {
       budget,
       seq: this.seq,
     };
-    this.exprViewActive = true;
-    this.deps.view.syncLocateRaw();
     const plan = this.deps.session.land(reply, { kind: 'expression' });
-    this.deps.view.land(plan);
-    this.renderBar();
-    this.statusState = { count: reply.count, ms: Math.round(reply.ms) };
+    this.deps.shell.land(plan);
+    this.finishEnter(false);
+  }
+
+  /**
+   * 进入结果视图的共同前置（`run()` 与 `enterFromArchive()` 唯一共用点）：
+   * 原文视图先回树、存档文档会话、标记激活、同步「在原文中定位」开关。
+   */
+  private prepareResultView(): void {
+    if (this.deps.shell.isRaw()) this.deps.shell.setTreeMode();
+    this.suspended = this.deps.session.snapshot;
+    this.exprViewActive = true;
+    this.deps.shell.syncLocateRaw();
+  }
+
+  /** 进入结果视图的共同收尾：结果条 / 行内状态行 / 状态栏。 */
+  private finishEnter(stale: boolean): void {
+    this.renderBar(stale);
+    if (this.exprView) this.setStatusLine(this.exprView.count, this.exprView.ms);
+    this.deps.shell.updateStatus();
+  }
+
+  /** 状态行（count / ms）的唯一写点：存档 + 面板文案一起更新（切语言时按存档重算）。 */
+  private setStatusLine(count: number, ms: number): void {
+    this.statusState = { count, ms: Math.round(ms) };
     this.deps.panel.setStatus(EXPR_COPY.status(this.statusState.count, this.statusState.ms));
-    this.deps.view.updateStatus();
   }
 
   /** 把行窗口切到结果根并重取一帧（进入结果视图 / 返回文档树共用）。 */
@@ -621,17 +627,27 @@ export class ExpressionWorkspace {
   /** watchdog 触发：标记重载提示 → 终止 worker → 重载页面（文档必须重新导入；沿用 ReDoS 差距）。 */
   private restartAfterWatchdog(): void {
     try {
-      sessionStorage.setItem(this.deps.watchdogFlag, '1');
+      this.flags()?.setItem(this.deps.watchdogFlag, '1');
     } catch {
       /* 隐私模式 */
     }
     this.deps.terminate();
     this.deps.reload();
   }
+
+  /** watchdog 标记存储：缺省全局 `sessionStorage`（隐私模式/单测都可能拿不到）。 */
+  private flags(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
+    if (this.deps.storage) return this.deps.storage;
+    try {
+      return sessionStorage;
+    } catch {
+      return null;
+    }
+  }
 }
 
 /** 通用语法示例（ADR-0018 §1）：永远可执行，不需要文档特定字段。 */
-export const EXPR_EXAMPLES_GENERIC_LIST = [
+const EXPR_EXAMPLES_GENERIC_LIST = [
   `$?.missing_field ?? 'fallback'`,
   `typeof $ === 'object' ? 'object' : typeof $`,
 ];

@@ -355,11 +355,11 @@ esbuild 三入口（page/worker/sw）+ code splitting；vitest 单测覆盖 core
 7. **兼容（硬约束）**：dev hook 的 `expression` 命名空间（`view/active/stale/budget/statusState` +
    9 个入口）形状与语义逐字不变；`TabViewState` 的四个表达式字段仍经 accessor 表搬运（`mirror` 由本模块提供，
    存档仍归标签）；**17 套冒烟断言零改动**（`git diff -- scripts/` 为空）。
-8. **代价**：`main.ts` 3850 → **3498 行**、`^let ` 51 → **42**；新增模块 637 行（含端口与注释）。
-   单测 1532 → **1555**（+23：stale / 取消迟到回包 / running 闸门 / watchdog 假时钟 / 幂等进入 / LRU 恢复 /
-   版本扇出 / 原路径 / 跳转 / 补全降级 / 示例）；DOM 形状 / 焦点仍归 `smoke-expression`。
+8. **代价**：`main.ts` 3850 → **3499 行**、`^let ` 51 → **42**；新增模块 653 行（含端口与注释）。
+   单测 1532 → **1557**（+25：stale / 取消迟到回包 / running 闸门 / watchdog 假时钟 + 标记存储 / 幂等进入 /
+   LRU 恢复 / 版本扇出 / 原路径 / 跳转 / 补全降级 / 示例）；DOM 形状 / 焦点仍归 `smoke-expression`。
 9. **预算**：`page.js` 55.8 → **56.7KB gz（预算 56 → 57，用户 2026-11-20 拍板，余 0.3）**。
-   **这次重构没有省字节**：+0.9 全部来自 class 边界、端口对象与 accessor 间接层，零新能力；
+   **这次重构没有省字节**：+0.9 全部来自 class 边界、端口对象与 accessor 间接层（评审收口把新增的公开 getter 去掉后又回到 56.7），零新能力；
    `worker.js` 66.3 / `page.css` 9.2 / 语言包 6.4·7.2 / 懒加载 145.9 不变。
 10. **已知偶发**：`smoke-export` 的 `menu:select-restores-focus` 在本机偶发红（本次三轮里两红一绿）；
     已用同一插桩在干净 `97f065c` worktree 复现（选完导出项后焦点落在 `body`、按钮可聚焦），
