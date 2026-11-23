@@ -117,3 +117,22 @@
 **验收结果（2026-11-10，用户拍板）**：用户查看按最终代码重新生成的深/亮两套截图（`.spike/audit/` 19 张）后**验收通过**，**#21 关闭**。
 关票前复测：`npm run check` 29 文件 / **722 单测全绿**；**13 套冒烟串行全绿**（search 94 / extension-search 56 / expand 21 / edit 14 / copy 38 / repair 14 / settings 21 / export 21 / raw 26 / outline 53 / fidelity 24；`smoke` 与 `smoke:ext` 打 OK）；体积 `page.js` 33.7 / `worker.js` 15.3 / `page.css` 7.2 KB gz。
 后续零散观感意见**另开票**（#21 作废）；本轮明确排除的响应式断点另开票跟进。
+
+## 修订（2026-11-23）：初始空态遮罩只铺内容区，工具栏常驻
+
+用户反馈：空态 + 左面板展开时「header 缺一行」、观感很怪。原因：§2.6 原句「遮罩仍铺满」让
+`.empty { inset: 0 }` 连 56px 工具栏一起盖住，而 `.side--left` 是 z-index 31 站在遮罩之上的，
+于是面板头行上方留出一条空带。**新口径**（§2.6 原句保留作为历史，以此段为准）：
+
+- `.empty[data-mode="initial"]` 改为 `inset: var(--toolbar-h) 0 0 var(--activity-w)`，
+  与导入层（replace / pending / new-tab）已有的遮罩口径统一：工具栏常驻，空态卡在「工具栏以下的内容区」居中。
+- 空态工具栏只留「导入」+ 右侧栏开关；导出 / 树·原文 / 展开·收起 / 已修改角标在空态全是禁用态，
+  仅在**初始空态**隐藏（`body:has(#empty[data-mode="initial"]:not(.is-hidden)) .toolbar :is(...)`）；
+  导入层等对话框形态（`data-mode ≠ initial`）仍显示完整工具栏，避免打开导入层时按钮突然多一排。
+- 左面板几何不变：面板头行仍 56–96px、搜索输入框仍 107px（与有文档时逐像素一致），
+  只是上方那条空带换成工具栏；`body[data-panel=…] .empty__inner` 的 `translateX(panel/2)` 无需改
+  （遮罩左边界不变，可见区仍是活动栏右侧 − 面板）。
+- **被否决**：把左面板整体上提、让面板头行顶掉那条空带 —— `.workbench { overflow: hidden }`
+  会把上提的头行裁掉（实测面板标题 / × 消失），要救只能动 overflow，代价大于收益。
+- 验收：`npm run check` 1575 绿；**17 套冒烟串行**全绿；体积 `page.css` 9.2KB gz 不变（原始 +0.2KB）、
+  `page.js` 57.2 / 58 不变；深/亮两套截图见接单记录。

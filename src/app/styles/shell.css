@@ -194,6 +194,16 @@ kbd {
 }
 .toolbar__spacer { flex: 1 1 auto; }
 
+/* 空态里工具栏只留「导入」与右侧栏开关（ADR-0016 §2.6 2026-11-23 修订）：
+   导出 / 树·原文 / 展开·收起 / 已修改角标在空态全是禁用态，摆在 hero 上只是噪音。
+   只在**初始空态**收：导入层等对话框形态（data-mode ≠ initial）仍显示完整工具栏，
+   避免打开导入层时按钮突然多一排；`:has()` 与本文件既有的 `.empty__seg-opt:has(...)` 同源，
+   `minimum_chrome_version: 120` 已够。 */
+body:has(#empty[data-mode="initial"]:not(.is-hidden)) .toolbar
+  :is(#exportBtn, #exportMenuBtn, .segmented, #expandAllBtn, #collapseAllBtn, #editBadge) {
+  display: none;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -361,6 +371,12 @@ body.rail-collapsed .rail { display: none; }
   z-index: 30;
 }
 .empty.is-hidden { display: none; }
+/* 初始空态：遮罩只铺**内容区**（从工具栏下沿开始）。ADR-0016 §2.6（2026-11-23 修订）——
+   旧口径是「遮罩铺满、盖住工具栏」，可左面板是 z-index 31 站在遮罩之上的，
+   于是空态一开面板就出现「工具栏被吃掉、面板头行上方留 56px 空带」的观感（header 缺一行）；
+   改成与导入层（replace / pending / new-tab）同口径后，工具栏常驻，面板头行/空态卡/状态栏
+   落在同一套「工具栏 → 内容 → 状态栏」分段里。 */
+.empty[data-mode="initial"] { inset: var(--toolbar-h) 0 0 var(--activity-w); }
 /* 初始空态 = 居中英雄区；完整层 / 精简确认层 = 同一张卡的对话框形态（head / body 两段，对齐编辑弹层） */
 .empty__inner { width: min(620px, calc(100vw - 120px)); text-align: center; }
 .empty__head { text-align: center; }
