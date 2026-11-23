@@ -136,8 +136,8 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 0 8px;
+  gap: 3px;
+  padding: 8px 0 8px; /* 8 + 40/2 = 28 = 头部中心：首个按钮与品牌标中线对齐 */
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
   z-index: 20;
@@ -148,19 +148,19 @@ kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-sm, 6px);
   color: var(--muted);
   transition: background var(--dur-fast, 110ms) ease, color var(--dur-fast, 110ms) ease;
 }
-.actbtn svg { width: 16px; height: 16px; display: block; }
+.actbtn svg { width: 18px; height: 18px; display: block; }
 .actbtn:hover { background: var(--bg-hover); color: var(--text); }
 .actbtn.is-active { color: var(--accent); background: var(--bg-selected); }
 .actbtn.is-active::before {
   content: "";
   position: absolute;
-  left: -7px; top: 7px; bottom: 7px;
+  left: -8px; top: 9px; bottom: 9px;
   width: 2px; border-radius: 2px;
   background: var(--accent);
 }

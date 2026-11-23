@@ -95,7 +95,7 @@
   --row-h: 24px;           /* 树行高：不随字号涨（信息密度） */
   --row-indent: 16px;
   --type-col-w: 88px;      /* 树行右侧保留带（类型列 + 行尾浮条） */
-  --activity-w: 48px;
+  --activity-w: 56px; /* = --toolbar-h：左轨与头部同厚，第一个按钮的中心才与品牌中线对齐 */
   --left-panel-w: 320px;
   --rail-w: 300px;
   --tree-max: 1280px;

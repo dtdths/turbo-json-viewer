@@ -470,12 +470,12 @@ const checks = {
     report.reloaded?.activeBtn === 'page' &&
     JSON.stringify(report.reloaded?.rows) === JSON.stringify(DEFAULT_KEYS),
 
-  // 响应式断点（ADR-0017 / direction.md §3）：≤1320 收 300/284（树 568 = 1200-48-300-284），1440 回 320/300
+  // 响应式断点（ADR-0017 / direction.md §3）：≤1320 收 300/284（树 560 = 1200-56-300-284），1440 回 320/300
   'breakpoint:narrow-applies':
     report.breakpointNarrow?.vw === 1200 &&
     report.breakpointNarrow?.side === 300 &&
     report.breakpointNarrow?.rail === 284 &&
-    report.breakpointNarrow?.tree === 568,
+    report.breakpointNarrow?.tree === 560,
   'breakpoint:wide-default':
     report.breakpointWide?.vw === 1440 &&
     report.breakpointWide?.side === 320 &&
