@@ -72,10 +72,43 @@ scripts/cws-submit-wizard.sh        # 走一遍：预检 → 注册 → 建 item
 
 ## E. 真机手测清单（发布前建议，非硬阻塞）
 
+> 2026-11-23 在一台 macOS 上跑过一轮：用 **Chrome for Testing 156**（headful 被系统遮挡，见下）
+> + 真实 unpacked 扩展（`dist/`）实测。量到的数字如下，环境限制写在条目里。
+
 - [ ] 真实右键点击（不是 CDP 合成）走完「打开查看 / 下载 JSON」（#63 的 headful 部分）。
-- [ ] 系统缩放 125% / 150% 下行高与对齐（DPR ≠ 1）。
-- [ ] 真实文件选择 / 拖放导入 10 MB 与 50 MB（含截断修复路径）。
-- [ ] 首帧与滚动期间无 >50ms 主线程长任务（DevTools Performance 抽查一次）。
+      **2026-11-23：注册侧 ✅ / 点选侧 ⚠️**。注册侧（真实 unpacked 扩展的 service worker 里查）：
+      三条 id `tjv-open-selection` / `-view` / `-download` 都存在，子项文案走 `_locales`
+      得到「打开查看」/「下载 JSON」，不存在的 id 会报 `Cannot find menu item`（负例有效，说明探针本身有区分力）。
+      点选侧未验证：本机桌面会话里 CfT 窗口始终被判为被遮挡
+      （`document.visibilityState === 'hidden'`、`isOnScreen=false`，activate 后仍如此，屏幕录制权限也未授予），
+      原生右键菜单因此不会弹出；**只能在有人值守的机器上点一次**，不阻塞提交。
+      `manual-context-menu.sh` 会把窗口和扩展准备好、自动检测查看器是否被唤起并回填行数。
+- [x] 系统缩放 125% / 150% 下行高与对齐（DPR ≠ 1）。**✅ 2026-11-23**：`--force-device-scale-factor`
+      实测 DPR 1 / 1.25 / 1.5 / 2 四档，**CSS 像素几何完全一致**：树行高 24px、行间距 0（无 1px 缝或叠行）、
+      行 top 全为整数、标签条 32px、状态栏 26px、标签条与树之间接缝 0px、`innerHeight` 757/758。
+      没有出现半像素行高或行错位。
+- [x] 真实文件选择 / 拖放导入 10 MB 与 50 MB（含截断修复路径）。**✅ 2026-11-23**（真实磁盘文件、
+      走 `#fileInput` change → `importFile` 同一条链路；拖放用带 `files` 的 OS 拖放事件）：
+      10 MB 首行 **114 ms**、状态栏稳定 633 ms；50 MB 首行 **612 ms**、稳定 ~633 ms；
+      两者都无报错、状态栏 `10.0 MB / 50.0 MB · v1 · 只读·原文件不变`，堆 12 MB / 62 MB。
+      截断路径：把 2 MB 样例切在 60% 处当真文件导入 → 顶部修复条
+      「已修复：删除 9 个字符、补 4 个闭合符（仅语法闭合，未修改任何已有值）」，`详情` 可展开逐条定位。
+- [x] 首帧与滚动期间无 >50ms 主线程长任务（DevTools Performance 抽查一次）。**✅ 2026-11-23**：
+      2 MB 文档「全部展开」= 120,118 行（滚动内容 2,882,832 px），60 步滚到底：
+      帧间隔中位 **16.7 ms**、最大 **18.1 ms**、**0 帧 >50ms**、`longtask` 计数 0。
+      10 MB / 50 MB 导入期间 `longtask` 也是 0（解析在 worker，主线程不阻塞）。
+
+复跑方式（量测脚本是 scratch，放在 `.spike/e2e/`，不进版本库；先 `node build.mjs`）：
+
+```bash
+DSF=1 PHASE=layout    node .spike/e2e/3-extension-e2e.mjs   # DPR：DSF=1.25 / 1.5 / 2
+DSF=1 PHASE=import    node .spike/e2e/3-extension-e2e.mjs   # 10MB / 50MB 真实磁盘文件
+DSF=1 PHASE=drop      node .spike/e2e/3-extension-e2e.mjs   # OS 拖放（带 files 的 dragData）
+DSF=1 PHASE=truncated node .spike/e2e/3-extension-e2e.mjs   # 截断修复路径
+DSF=1 PHASE=scroll    node .spike/e2e/3-extension-e2e.mjs   # 12 万行滚动帧/长任务
+node .spike/e2e/menu-registration.mjs                       # 右键菜单注册（SW 侧，可自动）
+.spike/e2e/manual-context-menu.sh                           # 右键菜单点选（需人坐在机器前）
+```
 
 ## F. 版本号怎么改（每次上传都要更大）
 
