@@ -41,6 +41,7 @@ try {
 
     if (!window.__tjv) throw new Error('dev hook missing (chrome API present?)');
     const text = await (await fetch('/${sample}')).text();
+    out.brandTag = document.querySelector('.brand__tag')?.textContent ?? null;
     out.textBytes = text.length;
     const visible = () => [...document.querySelectorAll('.row[data-path]')].filter((el) => !el.hidden);
 
@@ -140,6 +141,7 @@ const profileOk =
   String(report.profilePanelText).includes(report.profile.rootFields[0]);
 const ok =
   report.firstRowMs != null &&
+  /^v\d+\.\d+\.\d+$/.test(String(report.brandTag ?? '')) &&
   report.visibleRows > 0 &&
   report.scrollMoved === true &&
   report.afterUiCollapse?.rowVersion > report.expanded?.rowVersion &&

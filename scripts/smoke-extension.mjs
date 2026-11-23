@@ -34,6 +34,8 @@ try {
     const out = {};
     out.hasChromeRuntime = Boolean(globalThis.chrome && chrome.runtime && chrome.runtime.id);
     out.hasDevHook = Boolean(window.__tjv);
+    out.brandTag = document.querySelector('.brand__tag')?.textContent ?? null;
+    out.manifestVersion = out.hasChromeRuntime ? chrome.runtime.getManifest().version : null;
     out.workerUrl = out.hasChromeRuntime ? chrome.runtime.getURL('worker.js') : null;
 
     const longTasks = [];
@@ -200,6 +202,7 @@ const inc = report.incoming || {};
 const incErr = report.incomingError || {};
 const ok =
   r.hasChromeRuntime &&
+  r.brandTag === 'v' + r.manifestVersion &&
   !r.hasDevHook &&
   r.firstRowMs != null &&
   r.rows > 0 &&

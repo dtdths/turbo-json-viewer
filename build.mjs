@@ -43,9 +43,17 @@ const options = {
 
 async function copyStatic() {
   await mkdir(DIST, { recursive: true });
+  // 版本号单一来源 = manifest.version：页面 brand 上的 `{{TJV_VERSION}}` 在拷贝时替换成 `v<version>`。
+  // （2026-11-23：原本是手写的 `BETA` 标签，必然与 manifest 漂移；发布前换成真实版本号。）
+  const { version } = JSON.parse(await readFile(path.join(SRC, 'app/manifest.json'), 'utf8'));
   for (const [from, to] of staticFiles) {
     const target = path.join(DIST, to);
     await mkdir(path.dirname(target), { recursive: true });
+    if (to === 'page.html') {
+      const html = await readFile(path.join(ROOT, from), 'utf8');
+      await writeFile(target, html.replaceAll('{{TJV_VERSION}}', `v${version}`));
+      continue;
+    }
     await cp(path.join(ROOT, from), target, { recursive: true });
   }
 }

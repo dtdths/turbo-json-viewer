@@ -24,7 +24,9 @@
     "smoke:order": "node scripts/smoke-order.mjs",
     "smoke:expression": "node scripts/smoke-expression.mjs",
     "smoke:workspace": "node scripts/smoke-workspace.mjs",
-    "smoke:i18n": "node scripts/smoke-i18n.mjs"
+    "smoke:i18n": "node scripts/smoke-i18n.mjs",
+    "package": "node build.mjs && node scripts/package.mjs",
+    "assets": "node scripts/store-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

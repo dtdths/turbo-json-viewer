@@ -1,0 +1,133 @@
+{
+  "_note": "Chrome Web Store 提交文案的单一来源（英文 = 商店默认语言，中文 = zh-CN listing）。docs/release/listing.md 解释字段，scripts/cws-submit-wizard.sh 直接朗读这里的值。改文案只改这个文件；摘要硬上限 132 字符（`npm run assets` 不校验它，提交前用 wizard 的预检）。",
+  "category": "Developer Tools",
+  "defaultLocale": "en",
+  "locales": {
+    "en": {
+      "name": "Turbo JSON Viewer",
+      "summary": "Fast, local JSON viewer for large files: worker-resident parsing, search, JS expressions and temporary edits. Nothing is uploaded.",
+      "description": [
+        "Turbo JSON Viewer is a fast, fully local JSON viewer. Open a JSON file, paste JSON, or select JSON text on a page and open it in the viewer — everything is parsed and rendered on your own machine. No uploads, no accounts, no network requests.",
+        "",
+        "BUILT FOR LARGE FILES",
+        "• Documents live in a background worker; the page only ever holds the rows on screen.",
+        "• 10 MB opens in a fraction of a second; the same pipeline is tested with 50 MB / ~3M nodes.",
+        "• Fixed-height row virtualization keeps scrolling smooth on huge arrays.",
+        "",
+        "FIND WHAT MATTERS",
+        "• Search keys, values and JSON paths, with case-sensitive, regular-expression and whole-word modes.",
+        "• Filter results by keys / values / paths, hide individual hits, jump between them with Enter or ⌘G.",
+        "• Outline panel for structure navigation, plus a raw source view with two-way jump to the tree.",
+        "",
+        "QUERY WITH EXPRESSIONS",
+        "• Filter or project with a JavaScript expression such as $.orders.filter(o => o.total > 100), evaluated by a safe built-in interpreter — no eval, no remote code.",
+        "• Results open as their own view; click a row to jump back to the original document.",
+        "",
+        "WORK WITH SEVERAL DOCUMENTS",
+        "• Up to 8 documents in tabs, each with its own selection, scroll position and search.",
+        "",
+        "EDIT AND EXPORT",
+        "• Edit any subtree as JSON in a temporary, in-memory draft; the source file is never modified.",
+        "• Export or copy with lossless big integers, configurable indentation, and a system Save dialog.",
+        "",
+        "PRIVACY",
+        "• No data collection, no telemetry, no network access. Documents never leave this device.",
+        "• Only the storage permission (for your preferences) and a right-click menu for selected text.",
+        "",
+        "NOTES",
+        "• Read-only by design: the viewer never writes to your files, and exports go through a Save dialog you control.",
+        "• The expression language is a JavaScript subset (filter/map/etc.), not full JavaScript."
+      ],
+      "singlePurpose": "Open, browse, search and filter a JSON document locally, and export or copy parts of it.",
+      "permissions": {
+        "storage": "Stores only interface preferences (theme, language, indentation, import destination). Document content is never stored.",
+        "contextMenus": "Adds one right-click submenu (Open in viewer / Download JSON) for the text you selected. The extension does not read pages and has no host permissions."
+      },
+      "remoteCode": "No. All code ships inside the package; the app makes no network requests.",
+      "dataUsage": {
+        "collects": "No. JSON you open is parsed and rendered in memory on your device; nothing is transmitted, sold or shared.",
+        "disclosure": "The extension processes document content locally only, stores interface preferences with chrome.storage.local, and has no remote endpoints.",
+        "limitedUse": "Certify: data is not sold or transferred to third parties, is not used for unrelated purposes, and is not used to determine creditworthiness."
+      },
+      "testInstructions": [
+        "1) Click the extension icon (or the toolbar action) to open the full-page viewer in a new tab.",
+        "2) Paste any JSON with ⌘V / Ctrl+V, or drop a .json file onto the page. The tree appears immediately.",
+        "3) Try the search box (magnifier in the left rail): type a key or value, then Enter to jump to hits.",
+        "4) Try the expression panel ({ } icon): run $.data.filter(x => x != null) against a document with a $.data array.",
+        "5) Right-click a row to copy a subtree, or use the Edit action to open the temporary subtree editor.",
+        "6) To test the context menu: select JSON text on a normal web page, right-click, choose Turbo JSON Viewer → Open in viewer.",
+        "",
+        "Notes for reviewers: the package contains no remote code and no network calls. The expression evaluator is a JavaScript-subset interpreter built on acorn; the only identifier named eval in the bundle is an internal RPC method (core.eval), not the global eval, and no dynamic code execution is used."
+      ],
+      "screenshotCaptions": [
+        "Tree view: every value, type column, selected node and document profile",
+        "Search: keys, values and paths with hits highlighted in the tree",
+        "Expression filter: results open as their own view, still linked to the source",
+        "Multiple documents: up to 8 tabs, each with its own state",
+        "Temporary subtree editing: edit JSON in memory, the source file is never touched"
+      ]
+    },
+    "zh": {
+      "name": "Turbo JSON Viewer",
+      "summary": "本地 JSON 查看器：Worker 常驻解析超大文件，搜索、JS 表达式过滤与临时编辑，数据不上传。",
+      "description": [
+        "Turbo JSON Viewer 是一个快速、完全本地的 JSON 查看器。打开 JSON 文件、粘贴 JSON，或在网页上选中 JSON 文本直接打开——解析与渲染全部在你自己的机器上完成。不上传、不注册、不发任何网络请求。",
+        "",
+        "为超大文件而生",
+        "• 文档常驻后台 Worker，页面只持有屏幕上那几十行。",
+        "• 10 MB 几乎秒开；同一条管线已用 50 MB / 约 300 万节点验证。",
+        "• 固定行高虚拟化，巨大数组里滚动依然跟手。",
+        "",
+        "快速定位",
+        "• 搜索键名、值与 JSON 路径，支持区分大小写、正则与全字匹配。",
+        "• 结果可按 键名 / 值 / 路径 过滤，逐条隐藏，Enter 或 ⌘G 上下跳转。",
+        "• 大纲面板做结构导航；原文视图与树视图双向跳转。",
+        "",
+        "表达式筛选",
+        "• 用 JS 表达式过滤或投影，例如 $.orders.filter(o => o.total > 100)；内置安全解释器，无 eval、无远程代码。",
+        "• 结果作为独立视图打开，点任意一行回到原文档对应位置。",
+        "",
+        "多文档",
+        "• 最多 8 个文档标签，每个标签各自保留选中、滚动与搜索状态。",
+        "",
+        "编辑与导出",
+        "• 任意子树可当 JSON 临时编辑（只在内存里），原文件永不修改。",
+        "• 导出/复制支持无损大整数、可配缩进，文件导出走系统「另存为」。",
+        "",
+        "隐私",
+        "• 不收集数据、无遥测、无网络访问；文档不离开本机。",
+        "• 只用 storage 权限（存你的偏好）与一个针对选中文本的右键菜单。",
+        "",
+        "说明",
+        "• 设计上只读：查看器不写你的文件，导出由你在系统框里确认。",
+        "• 表达式语言是 JavaScript 子集（filter/map 等），不是完整 JS。"
+      ],
+      "singlePurpose": "在本地打开、浏览、搜索与过滤一份 JSON 文档，并导出或复制其中一部分。",
+      "permissions": {
+        "storage": "只存界面偏好（主题、语言、缩进、导入落点），不存文档内容。",
+        "contextMenus": "为选中的文本增加一个右键子菜单（在查看器中打开 / 下载 JSON）。扩展不读取网页内容，也没有 host 权限。"
+      },
+      "remoteCode": "否。所有代码都在包内，应用不发任何网络请求。",
+      "dataUsage": {
+        "collects": "否。打开的 JSON 只在本机内存中解析与渲染，不上传、不出售、不共享。",
+        "disclosure": "文档内容仅本地处理；界面偏好存在 chrome.storage.local；没有任何远端服务。",
+        "limitedUse": "勾选：数据不出售、不转交第三方、不用于无关用途、不用于判定信用。"
+      },
+      "testInstructions": [
+        "1) 点扩展图标，在新的整页标签里打开查看器。",
+        "2) ⌘V / Ctrl+V 粘贴任意 JSON，或把 .json 文件拖到页面上，树立刻出现。",
+        "3) 用左侧放大镜打开搜索：输入键名或值，Enter 跳到命中。",
+        "4) 用 { } 打开表达式面板：对含 $.data 数组的文档运行 $.data.filter(x => x != null)。",
+        "5) 右键任意行可复制子树，或用「编辑」打开临时子树编辑器。",
+        "6) 右键菜单：在普通网页上选中 JSON 文本 → 右键 → Turbo JSON Viewer → 在查看器中打开。"
+      ],
+      "screenshotCaptions": [
+        "树视图：值、类型列、选中节点与文档概要",
+        "搜索：键名 / 值 / 路径命中，树上同步高亮",
+        "表达式筛选：结果作为独立视图，仍可跳回原文档",
+        "多文档：最多 8 个标签，各自保留状态",
+        "临时子树编辑：只在内存中改，原文件不动"
+      ]
+    }
+  }
+}

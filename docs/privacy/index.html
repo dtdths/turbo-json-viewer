@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer — Privacy Policy</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #14181f;
+    --muted: #5b6472;
+    --rule: #e3e7ee;
+    --accent: #4b5be0;
+    --code-bg: #f3f5f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d12;
+      --fg: #e8ecf6;
+      --muted: #9aa4bb;
+      --rule: #232937;
+      --accent: #8e9cff;
+      --code-bg: #161a23;
+    }
+  }
+  html { background: var(--bg); }
+  body {
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    max-width: 720px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 40px 0 10px; }
+  p, li { color: var(--fg); }
+  .lede { color: var(--muted); margin: 0 0 28px; }
+  .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 44px 0; }
+  code {
+    font: 13.5px ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .zh h1 { font-size: 27px; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy — Turbo JSON Viewer</h1>
+<p class="lede">A local JSON viewer. Your documents never leave your computer.</p>
+<p class="meta">Effective 2026-11-23 · applies to Turbo JSON Viewer 0.1.x (Chrome extension) · <a href="#zh">中文版见下</a></p>
+
+<h2>Short version</h2>
+<p>
+  Turbo JSON Viewer does not collect, transmit, sell or share any personal data. There is no
+  account, no analytics, no telemetry and no network access. JSON you open is parsed and
+  rendered in memory on your own device.
+</p>
+
+<h2>What the extension processes</h2>
+<p>
+  The extension processes the JSON you choose to open (pasted, dropped, picked from disk, or sent
+  from the right-click menu) and the interface preferences you change. Processing happens entirely
+  inside the extension page and its background worker on your machine. The extension makes no
+  outbound requests: it has no servers, no remote endpoints and loads no remote code.
+</p>
+
+<h2>What is stored, and where</h2>
+<table>
+  <thead><tr><th>Data</th><th>Where</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Interface preferences (theme, language, indentation, import destination, export mode, and other viewer settings)</td>
+      <td><code>chrome.storage.local</code> on this device</td>
+      <td>So your settings survive a page reload</td>
+    </tr>
+    <tr>
+      <td>Document content (the JSON you open)</td>
+      <td>Memory only — never written to storage or disk</td>
+      <td>To render, search and filter it</td>
+    </tr>
+    <tr>
+      <td>Selected text you send from the right-click menu</td>
+      <td>One-time <code>chrome.storage.session</code> entry, deleted as soon as the viewer opens it</td>
+      <td>To hand the selection to the viewer tab</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  Uninstalling the extension removes its local storage. Because documents are never persisted,
+  there is no stored copy of your data to delete beyond the preferences above.
+</p>
+
+<h2>Permissions and why they exist</h2>
+<ul>
+  <li><strong><code>storage</code></strong> — remembers interface preferences locally. It is not used to store documents.</li>
+  <li><strong><code>contextMenus</code></strong> — adds a single right-click submenu (“Open in viewer” / “Download JSON”)
+    for text you have selected. The extension does not read page content on its own, does not inject scripts,
+    and requests no host permissions (no “read and change all your data on websites”).</li>
+</ul>
+
+<h2>Data sharing</h2>
+<p>
+  None. No data is sold, transferred or disclosed to third parties, and none is used for advertising,
+  profiling, or creditworthiness decisions. The extension has no third-party SDKs and no remote code.
+</p>
+
+<h2>Children and sensitive data</h2>
+<p>
+  The extension is a developer utility with no user accounts and no data collection. It is not directed
+  at children, and there is nothing to opt out of.
+</p>
+
+<h2>Changes</h2>
+<p>
+  If this policy changes, the updated version will be published at this URL with a new effective date.
+  Any change that affects what is processed will also be noted in the extension’s release notes.
+</p>
+
+<h2>Contact</h2>
+<p>
+  Questions or concerns: open an issue at
+  <a href="https://github.com/dtdths/turbo-json-viewer/issues">github.com/dtdths/turbo-json-viewer/issues</a>.
+</p>
+
+<hr>
+
+<div class="zh" id="zh" lang="zh-CN">
+<h1>隐私政策 — Turbo JSON Viewer</h1>
+<p class="lede">本地 JSON 查看器。你的文档不会离开这台电脑。</p>
+<p class="meta">生效日期 2026-11-23 · 适用于 Turbo JSON Viewer 0.1.x（Chrome 扩展）</p>
+
+<h2>一句话</h2>
+<p>
+  Turbo JSON Viewer 不收集、不上传、不出售、不共享任何个人数据。没有账号、没有统计、没有遥测，
+  也不发起任何网络请求。你打开的 JSON 只在本机内存中解析与渲染。
+</p>
+
+<h2>扩展处理哪些数据</h2>
+<p>
+  扩展处理你主动打开的 JSON（粘贴、拖放、从磁盘选择，或经右键菜单送入），以及你修改的界面偏好。
+  处理全部发生在你机器上的扩展页面与后台 Worker 内。扩展没有服务器、没有远端接口，也不加载任何远程代码。
+</p>
+
+<h2>存了什么，存在哪</h2>
+<table>
+  <thead><tr><th>数据</th><th>位置</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>界面偏好（主题、语言、缩进、导入落点、导出方式等查看设置）</td>
+      <td>本机的 <code>chrome.storage.local</code></td>
+      <td>刷新页面后仍保留你的设置</td>
+    </tr>
+    <tr>
+      <td>文档内容（你打开的 JSON）</td>
+      <td>仅内存——从不写入 storage 或磁盘</td>
+      <td>用于渲染、搜索与过滤</td>
+    </tr>
+    <tr>
+      <td>你从右键菜单送出的选中文本</td>
+      <td><code>chrome.storage.session</code> 的一次性条目，查看器读取后立即删除</td>
+      <td>把选区交给查看器标签页</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  卸载扩展会清除它的本地存储。由于文档从不持久化，除上述偏好外没有留存的数据副本需要删除。
+</p>
+
+<h2>权限与用途</h2>
+<ul>
+  <li><strong><code>storage</code></strong> — 在本地记住界面偏好；不用于存储文档。</li>
+  <li><strong><code>contextMenus</code></strong> — 为你选中的文本增加一个右键子菜单（「在查看器中打开」/「下载 JSON」）。
+    扩展不会自行读取网页内容、不注入脚本，也不申请任何 host 权限（没有「读取和更改你在网站上的所有数据」）。</li>
+</ul>
+
+<h2>数据共享</h2>
+<p>
+  没有任何共享。数据不出售、不转交、不披露给第三方，也不用于广告、画像或信用评估。
+  扩展不含第三方 SDK，也不加载远程代码。
+</p>
+
+<h2>未成年人 / 敏感数据</h2>
+<p>
+  本扩展是开发者工具，没有账号体系，也不收集数据；不面向未成年人，也没有需要退出的选项。
+</p>
+
+<h2>政策变更</h2>
+<p>
+  若政策变更，更新版本会发布在同一 URL 并标注新的生效日期；涉及处理方式的变化也会写进版本说明。
+</p>
+
+<h2>联系方式</h2>
+<p>
+  问题或疑虑：请在
+  <a href="https://github.com/dtdths/turbo-json-viewer/issues">github.com/dtdths/turbo-json-viewer/issues</a> 提 issue。
+</p>
+</div>
+
+</body>
+</html>
