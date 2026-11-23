@@ -52,7 +52,6 @@ import {
   sanitizeDocName,
   type ExportNameFlags,
 } from '../shared/doc-name';
-import { displayTitle } from '../view/doc-title';
 import type {
   CopyFormat,
   DocumentMeta,
@@ -125,9 +124,6 @@ const statusSize = el('statusSize');
 const statusPath = el('statusPath');
 const statusState = el('statusState');
 const statusTheme = el('statusTheme');
-const fileChip = el<HTMLButtonElement>('fileChip');
-const fileName = el('fileName');
-const fileMeta = el('fileMeta');
 const exportBtn = el<HTMLButtonElement>('exportBtn');
 const exportMenuBtn = el<HTMLButtonElement>('exportMenuBtn');
 const exportMenu = el('exportMenu');
@@ -513,17 +509,10 @@ function syncLocateRaw(): void {
   tree.setLocateRaw(!expression.active && meta?.repair === undefined);
 }
 
-/** 工具栏 / 文件 chip / 三条常驻提示条 / 状态栏按活动标签重画。 */
+/** 工具栏 / 三条常驻提示条 / 状态栏按活动标签重画（文档名与字节数分别由标签条、状态栏承担）。 */
 function renderTabChrome(): void {
   const tab = activeTab();
   const hasDoc = tab !== null;
-  fileChip.hidden = !hasDoc;
-  if (tab) {
-    // 显示名 = 标签名（默认 = 导入文件名；改名见 ADR-0021），原名只用于悬停追溯
-    fileName.textContent = tab.name;
-    fileChip.title = displayTitle(tab.name, tab.meta.name);
-    fileMeta.textContent = formatBytes(tab.meta.bytes);
-  }
   setExportButtonsDisabled(!hasDoc);
   syncExportUi();
   expandAllBtn.disabled = !hasDoc;
@@ -682,7 +671,6 @@ function enterEmptyState(): void {
   viewRawBtn.setAttribute('aria-pressed', 'false');
   // 导入层回初始空态（渲染 + 显示；入场自动重播）
   importLayer.showInitial();
-  fileChip.hidden = true;
   setExportButtonsDisabled(true);
   expandAllBtn.disabled = true;
   collapseAllBtn.disabled = true;
@@ -1133,7 +1121,7 @@ function layerContext(): LayerContext {
 
 /**
  * 导入入口层：状态机在 `./import/layer-state`（纯策略），DOM / 动效 / 焦点在
- * `./import/layer`（adapter）。外部入口（导入按钮 / file chip / ⌘O / 拖放 / 粘贴）
+ * `./import/layer`（adapter）。外部入口（导入按钮 / ⌘O / 拖放 / 粘贴）
  * 仍在本文件——它们还要管「初始空态直接导入」「拖放落点分流」这些不属于层的事。
  */
 const importLayer = new ImportLayer({
@@ -1466,10 +1454,6 @@ dropzone.addEventListener('click', (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (target?.closest('button')) return;
   if (!pickBtn.disabled) fileInput.click();
-});
-fileChip.addEventListener('click', () => {
-  if (session.rootId) importLayer.open();
-  else fileInput.click();
 });
 // 层内交互（关闭 / 遮罩 / 落点 radio / pending 两个按钮 / 出场收尾）由 ./import/layer 接线
 fileInput.addEventListener('change', () => {
@@ -3159,7 +3143,7 @@ function rerenderChrome(): void {
   // 选中节点提示 / 状态栏主题文案也随语言（setTheme 同时写 dataset.theme，幂等）
   setTheme(settings.get('theme'));
   setSelection(selected);
-  // 有文档：工具栏/文件 chip/三条提示条/原文头/状态栏；无文档：空态 + 状态栏
+  // 有文档：工具栏/三条提示条/原文头/状态栏；无文档：空态 + 状态栏
   renderTabChrome();
   renderEditBadge();
   renderProfile();

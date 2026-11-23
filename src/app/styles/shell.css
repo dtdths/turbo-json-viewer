@@ -193,25 +193,6 @@ kbd {
   padding: 2px 4px;
 }
 .toolbar__spacer { flex: 1 1 auto; }
-.file-chip {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  max-width: 320px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-panel-2);
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-mono, 12.5px);
-  overflow: hidden;
-  white-space: nowrap;
-}
-.file-chip[hidden] { display: none; }
-.file-chip:hover { border-color: var(--border); background: var(--bg-elevated); }
-.file-chip__meta { color: var(--faint); font-size: var(--text-caption); }
 
 .btn {
   display: inline-flex;

@@ -213,17 +213,31 @@ describe('WorkspaceState — 软上限 max', () => {
 });
 
 describe('WorkspaceState — view 隐藏规则', () => {
-  it('hidden === (size < 2)：单标签隐藏、双标签显示、删回一个再隐藏', () => {
+  it('hidden === (size === 0)：空态隐藏，单文档起就显示、删回一个仍显示、关最后一个才隐藏', () => {
     const { ws } = makeWorkspace();
     expect(ws.view().hidden).toBe(true);
 
     ws.add(tabInput({ rootId: 'doc:1' }));
-    expect(ws.view().hidden).toBe(true);
+    // 2026-11-23 修订（ADR-0009 §1）：单文档也显示标签条（文档名由标签条承担）
+    expect(ws.view().hidden).toBe(false);
 
     ws.add(tabInput({ rootId: 'doc:2' }));
     expect(ws.view().hidden).toBe(false);
 
     ws.remove('tab:2');
+    expect(ws.view().hidden).toBe(false);
+
+    ws.remove('tab:1');
+    expect(ws.view().hidden).toBe(true);
+  });
+
+  it('满 8 个文档仍显示；全部关掉后回到隐藏', () => {
+    const { ws } = makeWorkspace(8);
+    for (let i = 1; i <= 8; i += 1) ws.add(tabInput({ rootId: `doc:${i}` }));
+    expect(ws.view().tabs).toHaveLength(8);
+    expect(ws.view().hidden).toBe(false);
+
+    for (let i = 8; i >= 1; i -= 1) ws.remove(`tab:${i}`);
     expect(ws.view().hidden).toBe(true);
   });
 });

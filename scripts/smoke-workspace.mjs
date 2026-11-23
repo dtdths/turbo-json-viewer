@@ -9,14 +9,14 @@
  *      （32px、role=tablist、文件名 + aria-selected、活动标签正确），树视口少 32px；
  *   3) 每标签独立视图态：展开态 / 滚动位置 / 选中 / 搜索命中集互不串味，切回来原样恢复；
  *   4) 替换当前标签：标签数不变、rootId 换新、标签名更新，另一个标签完全不受影响；
- *   5) 关标签：关活动标签 → 相邻标签接管；关到只剩 1 个 → 标签条重新隐藏；
- *      关最后一个 → 回空态（导入层、文件 chip 隐藏、状态栏「未打开文档」）；
+ *   5) 关标签：关活动标签 → 相邻标签接管；关到只剩 1 个 → 标签条仍显示（2026-11-23 修订）；
+ *      关最后一个 → 回空态（导入层、标签条隐藏、状态栏「未打开文档」）；
  *   6) 软上限 8：满 8 后 `＋` 禁用且 title 变提示；第 9 个开不出来；
  *   7) 内存提示：第 2+ 份大文档（合计 ≥ 50 MB）导入后给一次性 toast；小文档不给；
  *   8) 0 page 异常 / 0 console error。
  *   9) 标签就地改名（#29 / ADR-0021）：双击标题出输入框（全选、禁拖拽）、Esc 取消、
- *      F2 键盘入口、Enter 提交后标签/文件 chip 同步并把原名写进悬停 title、空白提交保持原名。
- * 截图落 .spike/smoke/workspace-{two-tabs,light,empty,rename,rename-light}.png；走 HTTP + `window.__tjv`。
+ *      F2 键盘入口、Enter 提交后标签标题同步并把原名写进悬停 title、空白提交保持原名。
+ * 截图落 .spike/smoke/workspace-{single,two-tabs,light,empty,rename,rename-light}.png；走 HTTP + `window.__tjv`。
  */
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -100,7 +100,7 @@ try {
     await chrome.browser.send('Emulation.setEmulatedMedia', { features: [] }, page.sessionId);
   }
 
-  /* ---- phase 1：单文档（标签条必须隐藏、零视觉变化）---- */
+  /* ---- phase 1：单文档（标签条必须可见、高 32px：文档名由标签条承担）---- */
   await runPhase(
     'single',
     `(async () => {
@@ -113,12 +113,14 @@ try {
       out.single = h.workspaceState();
       out.singleState = h.state();
       out.singleViewport = document.querySelector('.tjv-tree')?.clientHeight ?? 0;
-      out.singleChipHidden = document.getElementById('fileChip').hidden;
+      out.singleStripHiddenAttr = document.getElementById('tabStrip').hidden;
       out.singleTab1Id = h.workspaceState().tabs[0]?.id ?? null;
       out.singleRoot = h.workspaceState().tabs[0]?.rootId ?? null;
       return out;
     })()`,
   );
+  // 单文档带 32px 标签条的样子（2026-11-23 修订：文档名由标签条承担）
+  await page.screenshot(path.join(SHOTS, 'workspace-single.png'));
 
   /* ---- phase 2：开第 2 个标签（＋ → 新标签入口层 → 导入）---- */
   await runPhase(
@@ -127,7 +129,7 @@ try {
       const out = {};
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      // 单文档下标签条隐藏 → 走可见入口：导入 → 替换层 → 「在新标签中打开」切换。
+      // 单文档下标签条只有一个标签 → 新标签走可见入口：导入 → 替换层 → 「在新标签中打开」切换。
       // 先打开左面板（搜索），验证模态入口层真的把左面板一起遮住（用户 2026-11-11 反馈的 bug）
       document.querySelector('[data-panel-btn="search"]').click();
       await sleep(200);
@@ -182,7 +184,8 @@ try {
       }));
       out.tab2Id = h.workspaceState().tabs[1]?.id ?? null;
       out.tab2Root = h.workspaceState().tabs[1]?.rootId ?? null;
-      out.activeTitleEl = document.getElementById('fileName').textContent;
+      out.activeTitleEl =
+        document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null;
       return out;
     })()`,
   );
@@ -321,7 +324,6 @@ try {
       out.replaced = h.workspaceState();
       out.replacedState = h.state();
       out.replacedLabels = [...document.querySelectorAll('#tabStrip .tabstrip__title')].map((el) => el.textContent);
-      out.replacedChip = document.getElementById('fileName').textContent;
       // tab1 完全不受影响
       h.tabSwitch(ws.tabs[0].id);
       await sleep(400);
@@ -330,7 +332,7 @@ try {
     })()`,
   );
 
-  /* ---- phase 5：关标签（活动 → 相邻接管；只剩 1 个 → 隐藏；关最后 → 空态）---- */
+  /* ---- phase 5：关标签（活动 → 相邻接管；只剩 1 个 → 标签条仍显示；关最后 → 空态并隐藏）---- */
   await runPhase(
     'close',
     `(async () => {
@@ -350,7 +352,6 @@ try {
       out.emptyState = h.state();
       out.emptyLayerVisible = !document.getElementById('empty').classList.contains('is-hidden');
       out.emptyLayerMode = document.getElementById('empty').dataset.mode ?? null;
-      out.emptyChipHidden = document.getElementById('fileChip').hidden;
       out.emptyStatus = document.getElementById('statusRows').textContent;
       out.emptyExportDisabled = document.getElementById('exportBtn').disabled;
       out.emptyStripHiddenAttr = document.getElementById('tabStrip').hidden;
@@ -561,7 +562,6 @@ try {
         size: h.workspaceState().size,
         layerOpen: !document.getElementById('empty').classList.contains('is-hidden'),
         activeLabel: document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null,
-        chip: document.getElementById('fileName').textContent,
         names: h.workspaceState().tabs.map((tab) => tab.name),
       };
       return out;
@@ -628,7 +628,6 @@ try {
       const tabAfter = document.querySelector(tabSel);
       out.renameCommit = {
         name: h.workspaceState().tabs.find((tab) => tab.id === activeId)?.name ?? null,
-        chip: document.getElementById('fileName').textContent,
         label: tabAfter?.querySelector('.tabstrip__title')?.textContent ?? null,
         tabTitle: tabAfter?.getAttribute('title') ?? null,
       };
@@ -685,6 +684,45 @@ try {
     })()`,
   );
 
+  // ---- 单文档改名（2026-11-23 修订 / ADR-0021）：标签条常驻 ⇒ 唯一标签也能双击 / F2 改名 ----
+  await runPhase(
+    'single-rename',
+    `(async () => {
+      const out = {};
+      const h = window.__tjv;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      // 先清空到空态，再导入一份 → 单文档（标签条仍可见）
+      for (const tab of [...h.workspaceState().tabs]) await h.tabClose(tab.id);
+      await sleep(300);
+      await h.loadText(JSON.stringify({ solo: 1 }), 'solo.json');
+      await sleep(400);
+      const tabCount = h.workspaceState().size;
+      const stripHidden = document.getElementById('tabStrip').hidden;
+      const beforeName = h.workspaceState().tabs[0]?.name ?? null;
+      document
+        .querySelector('#tabStrip .tabstrip__tab')
+        ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await sleep(150);
+      const input = document.querySelector('#tabStrip .tabstrip__rename');
+      const dblOpened = input?.tagName === 'INPUT';
+      if (input) {
+        input.value = '独档';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      }
+      await sleep(200);
+      // 重绘会换掉标签 DOM：提交后必须重新查询（不能复用旧的 tabEl 引用）
+      out.singleRename = {
+        tabCount,
+        stripHidden,
+        beforeName,
+        dblOpened,
+        afterName: h.workspaceState().tabs[0]?.name ?? null,
+        afterLabel: document.querySelector('#tabStrip .tabstrip__tab .tabstrip__title')?.textContent ?? null,
+      };
+      return out;
+    })()`,
+  );
+
   report.consoleErrors = page.exceptions.slice(errorsBefore);
   report.consoleErrorLogs = page.logs
     .filter((entry) => entry.type === 'error')
@@ -725,21 +763,21 @@ const checks = {
     report.closeSettled?.mode === 'initial' &&
     report.closeSettled?.ariaHidden === null,
 
-  // 单文档：标签条必须隐藏、零视觉变化
+  // 单文档：标签条必须可见并占 32px（文档名由它承担，工具栏已无文件 chip）
   'single:one-tab':
     report.single?.size === 1 &&
-    report.single?.hidden === true &&
-    report.single?.strip?.hidden === true &&
+    report.single?.hidden === false &&
+    report.single?.strip?.hidden === false &&
     report.single?.strip?.rendered === 1,
-  'single:zero-height':
-    report.single?.strip?.heightPx === 0 &&
-    report.single?.strip?.hidden === true &&
+  'single:strip-32':
+    report.single?.strip?.heightPx === 32 &&
+    report.single?.strip?.hidden === false &&
     report.single?.strip?.styleHeightPx === 32,
   'single:doc-loaded':
     typeof report.singleRoot === 'string' &&
     /^doc:\d+$/.test(report.singleRoot) &&
     report.singleState?.rootId === report.singleRoot &&
-    report.singleChipHidden === false,
+    report.singleStripHiddenAttr === false,
   'single:tree-viewport': report.singleViewport > 0,
 
   // 第 2 个标签
@@ -781,8 +819,9 @@ const checks = {
     report.twoState?.rootId === report.tab2Root &&
     report.tab2Root !== report.singleRoot &&
     report.activeTitleEl === 'b.json',
-  'tab-add:tree-viewport-shrinks':
-    report.twoViewport > 0 && report.singleViewport - report.twoViewport === 32,
+  // 单文档起标签条就占 32px，所以第 2 个标签不再改变树视口高度
+  'tab-add:tree-viewport-stable':
+    report.twoViewport > 0 && report.twoViewport === report.singleViewport,
 
   // 每标签独立视图态
   'per-tab:tab1-expanded': (report.tab1Expanded?.totalRows ?? 0) > 500,
@@ -837,14 +876,14 @@ const checks = {
   'replace:new-root-and-name':
     /^doc:\d+$/.test(report.replaced?.tabs?.[1]?.rootId ?? '') &&
     report.replacedLabels?.[1] === 'c.json' &&
-    report.replacedChip === 'c.json' &&
     report.replacedState?.rootId === report.replaced?.tabs?.[1]?.rootId,
   'replace:other-tab-untouched':
     report.replaced?.tabs?.[0]?.rootId === report.beforeReplace?.tabs?.[0]?.rootId &&
     report.tab1AfterReplace?.rootId === report.beforeReplace?.tabs?.[0]?.rootId,
 
   // 关标签
-  'close:inactive-stays-active': report.closeInactive?.size === 1 && report.closeInactive?.hidden === true,
+  'close:inactive-stays-active':
+    report.closeInactive?.size === 1 && report.closeInactive?.hidden === false,
   'close:last-to-empty':
     report.closeLast?.size === 0 &&
     report.closeLast?.activeId === null &&
@@ -852,7 +891,6 @@ const checks = {
   'close:empty-ui':
     report.emptyLayerVisible === true &&
     report.emptyLayerMode === 'initial' &&
-    report.emptyChipHidden === true &&
     report.emptyExportDisabled === true &&
     report.emptyStripHiddenAttr === true &&
     report.emptyStatus === '未打开文档',
@@ -921,7 +959,6 @@ const checks = {
     report.dropped?.layerOpen === false &&
     report.dropped?.size === (report.before?.length ?? 0) + 1 &&
     report.dropped?.activeLabel === 'dropped.json' &&
-    report.dropped?.chip === 'dropped.json' &&
     (report.dropped?.names ?? []).includes('dropped.json'),
 
   // 标签就地改名（#29 / ADR-0021）
@@ -933,10 +970,9 @@ const checks = {
   'rename:esc-cancels':
     report.renameCancel?.inputGone === true && report.renameCancel?.name === report.nameBefore,
   'rename:f2-opens': report.renameF2?.isInput === true,
-  'rename:commit-syncs-chip-and-tab':
+  'rename:commit-syncs-tab':
     report.renameCommit?.name === '订单 2024' &&
     report.renameCommit?.label === '订单 2024' &&
-    report.renameCommit?.chip === '订单 2024' &&
     report.renameCommit?.tabTitle === '订单 2024（原名：' + report.nameBefore + '）',
   'rename:blank-keeps-name':
     report.renameBlank?.name === '订单 2024' && report.renameBlank?.label === '订单 2024',
@@ -945,6 +981,15 @@ const checks = {
     report.renameNonActive?.isInput === true &&
     report.renameNonActive?.value === report.renameNonActive?.name &&
     report.renameNonActive?.restored === true,
+
+  // 单文档改名（2026-11-23 修订 / ADR-0021）：标签条常驻，唯一标签双击即可就地改名
+  'single-rename:dblclick-opens':
+    report.singleRename?.tabCount === 1 &&
+    report.singleRename?.stripHidden === false &&
+    report.singleRename?.beforeName === 'solo.json' &&
+    report.singleRename?.dblOpened === true,
+  'single-rename:committed':
+    report.singleRename?.afterName === '独档' && report.singleRename?.afterLabel === '独档',
 
   'console:no-exception-no-error':
     report.consoleErrors?.length === 0 && report.consoleErrorLogs?.length === 0,

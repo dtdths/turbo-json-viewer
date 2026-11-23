@@ -63,7 +63,7 @@ try {
     out.firstRowMs = firstRowMs;
     out.rows = document.querySelectorAll('.row[data-path]:not([hidden])').length;
     out.status = document.querySelector('#statusRows')?.textContent ?? '';
-    out.fileName = document.querySelector('#fileName')?.textContent ?? '';
+    out.fileName = document.querySelector('#tabStrip [aria-selected=true] .tabstrip__title')?.textContent ?? '';
     // 展开两层拿到可滚动的树，供截图与滚动验证
     const clickCaret = async (p) => {
       const row = document.querySelector('.row[data-path="' + p + '"]');
@@ -128,13 +128,13 @@ try {
     await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=1#incoming=smoke-incoming-0001`, {
       timeoutMs: 30000,
     });
-    await intake.waitFor("document.querySelector('#fileName')?.textContent === 'selection.json'", {
+    await intake.waitFor("document.querySelector('#tabStrip [aria-selected=true] .tabstrip__title')?.textContent === 'selection.json'", {
       timeoutMs: 15000,
     });
     await new Promise((r) => setTimeout(r, 300));
     Object.assign(report.incoming, {
       imported: true,
-      name: await intake.eval("document.querySelector('#fileName')?.textContent ?? null"),
+      name: await intake.eval("document.querySelector('#tabStrip [aria-selected=true] .tabstrip__title')?.textContent ?? null"),
       rows: await intake.eval("document.querySelectorAll('.row[data-path]:not([hidden])').length"),
       hashCleared: await intake.eval('location.hash === ""'),
       tokenRemoved: await intake.eval(`chrome.storage.session.get('${KEY_OK}').then((b) => !('${KEY_OK}' in b))`),
@@ -169,7 +169,7 @@ try {
     await intake.goto(`${extensionUrl('dist', 'page.html')}?smoke=3#incoming=smoke-incoming-0003`, {
       timeoutMs: 30000,
     });
-    await intake.waitFor("document.querySelector('#fileName')?.textContent === 'selection.json'", {
+    await intake.waitFor("document.querySelector('#tabStrip [aria-selected=true] .tabstrip__title')?.textContent === 'selection.json'", {
       timeoutMs: 15000,
     });
     // 等下载真正落盘（.crdownload 会重命名成 .json）
@@ -181,7 +181,7 @@ try {
       began: began.length > 0,
       suggested: began[0]?.suggestedFilename ?? null,
       files: readdirSync(dlDir),
-      tabOpen: await intake.eval("document.visibilityState !== 'unloaded' && Boolean(document.getElementById('fileName'))"),
+      tabOpen: await intake.eval("document.visibilityState !== 'unloaded' && Boolean(document.querySelector('#tabStrip [aria-selected=true] .tabstrip__title')?.textContent)"),
       hashCleared: await intake.eval('location.hash === ""'),
       tokenRemoved: await intake.eval(`chrome.storage.session.get('${KEY_DL}').then((b) => !('${KEY_DL}' in b))`),
       rows: await intake.eval("document.querySelectorAll('.row[data-path]:not([hidden])').length"),

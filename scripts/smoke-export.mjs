@@ -16,8 +16,8 @@
  *   8) 0 page 异常 / 0 console error
  *   9) 菜单交互契约（ADR-0015）：Tab 关闭并焦点回箭头、外部 pointerdown/resize 关闭、
  *      定位不越出视口且锚在箭头下方、选中项后焦点回箭头（动作完成、按钮恢复可聚焦后）
- *  10) 另存为改名联动（ADR-0021）：桩返回 `报告-2024.json` → 文件 chip 与标签名变 `报告-2024`；
- *      取消另存为 → 不导出、不改名（lastAction/chip 不变）
+ *  10) 另存为改名联动（ADR-0021）：桩返回 `报告-2024.json` → 标签标题与标签名变 `报告-2024`；
+ *      取消另存为 → 不导出、不改名（lastAction/标签名不变）
  *  11) JSON 格式化配置（#34 / ADR-0022）：默认档 ≡ JSON.stringify(v,null,2)；紧凑档 ≡
  *      JSON.stringify(v)；转义档非 ASCII → \\uXXXX 且仍是合法 JSON；整份复制与文件导出跟随设置。
  * 截图落 .spike/smoke/export-{menu,toast}.png。
@@ -277,7 +277,7 @@ try {
       const out = {};
       const h = window.__tjv;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      // 用户在系统框里改名 → 保存后按最终文件名反推基名，写回文件 chip / 标签名
+      // 用户在系统框里改名 → 保存后按最终文件名反推基名，写回标签名（工具栏文件 chip 已删）
       window.__saveCalls.length = 0;
       window.__saveMode = 'custom';
       window.__saveCustomName = '报告-2024.json';
@@ -285,7 +285,8 @@ try {
       await sleep(400);
       out.renamePhase = {
         export: h.exportState(),
-        chipName: document.getElementById('fileName')?.textContent ?? null,
+        tabTitle:
+          document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null,
         tabName: h.workspaceState?.().tabs?.[0]?.name ?? null,
         saveCalls: window.__saveCalls.slice(),
       };
@@ -296,7 +297,8 @@ try {
       await sleep(300);
       out.cancelPhase = {
         export: h.exportState(),
-        chipName: document.getElementById('fileName')?.textContent ?? null,
+        tabTitle:
+          document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null,
         saveCalls: window.__saveCalls.slice(),
       };
       // 系统框 API 存在但被策略拒绝（NotAllowedError）→ 回落普通下载，不中断、不改名
@@ -306,7 +308,8 @@ try {
       await sleep(300);
       out.fallbackPhase = {
         export: h.exportState(),
-        chipName: document.getElementById('fileName')?.textContent ?? null,
+        tabTitle:
+          document.querySelector('#tabStrip [aria-selected="true"] .tabstrip__title')?.textContent ?? null,
         saveCalls: window.__saveCalls.slice(),
       };
       return out;
@@ -550,17 +553,17 @@ const checks = {
   'file:save-dialog-prefill': report.file?.saveCalls?.[0]?.name === 'sample.json',
   'file:save-written-text': report.file?.saveCalls?.[0]?.text === EXPECTED_TEXT,
   'rename:from-save-dialog':
-    report.renamePhase?.chipName === '报告-2024' &&
+    report.renamePhase?.tabTitle === '报告-2024' &&
     report.renamePhase?.tabName === '报告-2024' &&
     report.renamePhase?.export?.lastAction?.mode === 'file' &&
     report.renamePhase?.export?.lastAction?.name === '报告-2024.json' &&
     report.renamePhase?.saveCalls?.[0]?.name === 'sample.json',
   'rename:cancel-no-side-effect':
-    report.cancelPhase?.chipName === '报告-2024' &&
+    report.cancelPhase?.tabTitle === '报告-2024' &&
     report.cancelPhase?.export?.lastAction?.name === '报告-2024.json' &&
     (report.cancelPhase?.saveCalls ?? []).length === 1,
   'file:policy-blocked-fallback':
-    report.fallbackPhase?.chipName === '报告-2024' &&
+    report.fallbackPhase?.tabTitle === '报告-2024' &&
     report.fallbackPhase?.export?.lastAction?.mode === 'file' &&
     report.fallbackPhase?.export?.lastAction?.name === '报告-2024.json' &&
     (report.fallbackPhase?.saveCalls ?? []).length === 1,

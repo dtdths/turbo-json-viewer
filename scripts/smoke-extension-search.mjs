@@ -15,11 +15,11 @@
  *
  * 导入层交互回归（grill-with-docs 收口：Q8=A′ / Q9=A / Q10=A / Q11=B / Q12=A / Q13=A）：
  *   - 文档已打开 + 层关闭：body/树粘贴合法 JSON **不导入**（defaultPrevented=false、文档不变）；
- *   - replace 层入口：`#importBtn` / `#fileChip` / `⌘O`；层结构：`data-mode="replace"`、
+ *   - replace 层入口：`#importBtn` / `⌘O`；层结构：`data-mode="replace"`、
  *     `#emptyTitle`「打开新文档」、`#emptyWarn` 含当前文档名、`role=dialog`+`aria-modal`、
  *     不盖住工具栏、背景半透明；
  *   - 取消：`#emptyClose` / `Escape` → 层隐藏、文档完全不变；
- *   - 层内粘贴合法 JSON → 立即替换（`#fileName`≈剪贴板.json）+ 层隐藏；
+ *   - 层内粘贴合法 JSON → 立即替换（活动标签标题 ≈ 剪贴板.json）+ 层隐藏；
  *   - 层内 drop 文件 → 直接导入（无二次确认）；
  *   - 层内粘贴非法文本 `min_price_` → 层保持打开、`#emptyError` 含 PARSE、原文档不变；
  *   - 外部 drop → `#emptyPending` 二次确认（文档不变）→ Esc 取消不导入 → 再次 drop +
@@ -260,18 +260,16 @@ async function extSetup() {
     },
     /** 文档态快照：导入是否发生以此为准。 */
     docState() {
-      const name = document.getElementById('fileName');
+      const title = document.querySelector('#tabStrip [aria-selected=true] .tabstrip__title');
       const status = document.getElementById('statusRows');
       const path = document.getElementById('statusPath');
       const toast = document.getElementById('toast');
       const rows = [...document.querySelectorAll('.row[data-path]:not([hidden])')];
-      const chip = document.getElementById('fileChip');
       return {
-        fileName: name ? name.textContent.trim() : null,
+        fileName: title ? title.textContent.trim() : null,
         statusRows: status ? status.textContent.trim() : null,
         statusPath: path ? path.textContent.trim() : null,
         visibleRows: rows.length,
-        fileChipHidden: chip ? chip.hidden : null,
         toastHidden: toast ? toast.hidden : null,
         toastText: toast ? toast.textContent.trim() : null,
         activeId: document.activeElement ? document.activeElement.id || document.activeElement.tagName : null,
@@ -581,7 +579,7 @@ async function extImportLayerOpenPhase() {
   return out;
 }
 
-/** 入口 2/3 + 取消：#emptyClose / #fileChip / Escape / ⌘O。起始状态：replace 层已打开。 */
+/** 入口 2/3 + 取消：#emptyClose / Escape / ⌘O（含再打开）。起始状态：replace 层已打开。 */
 async function extImportLayerCancelPhase() {
   const out = {};
   out.startLayer = window.__extSmoke.layer();
@@ -599,28 +597,7 @@ async function extImportLayerCancelPhase() {
   out.layerAfterClose = window.__extSmoke.layer();
   out.afterClose = window.__extSmoke.docState();
 
-  // 2) #fileChip 打开
-  const chip = document.getElementById('fileChip');
-  out.hasFileChip = Boolean(chip) && chip.hidden === false;
-  const t1 = performance.now();
-  if (chip) chip.click();
-  out.openedByFileChip = await window.__extSmoke.waitUntil(() => {
-    const layer = window.__extSmoke.layer();
-    return layer.visible && layer.mode === 'new-tab';
-  }, 5000, 40);
-  out.fileChipMs = Math.round(performance.now() - t1);
-  await window.__extSmoke.settle(120);
-  out.layerViaFileChip = window.__extSmoke.layer();
-  out.docViaFileChip = window.__extSmoke.docState();
-
-  // 3) Escape 取消
-  out.escape1 = window.__extSmoke.pressKey('Escape');
-  out.closedByEscape = await window.__extSmoke.waitUntil(() => !window.__extSmoke.layer().visible, 5000, 40);
-  await window.__extSmoke.settle(180);
-  out.layerAfterEscape = window.__extSmoke.layer();
-  out.afterEscape = window.__extSmoke.docState();
-
-  // 4) ⌘O 打开
+  // 2) ⌘O 打开（入口 2：键盘）
   const t2 = performance.now();
   out.cmdO = window.__extSmoke.pressKey('o', { metaKey: true });
   out.openedByShortcut = await window.__extSmoke.waitUntil(() => {
@@ -632,6 +609,17 @@ async function extImportLayerCancelPhase() {
   out.layerViaShortcut = window.__extSmoke.layer();
   out.docViaShortcut = window.__extSmoke.docState();
 
+  // 3) Escape 取消
+  out.escape1 = window.__extSmoke.pressKey('Escape');
+  out.closedByEscape = await window.__extSmoke.waitUntil(() => !window.__extSmoke.layer().visible, 5000, 40);
+  await window.__extSmoke.settle(180);
+  out.layerAfterEscape = window.__extSmoke.layer();
+  out.afterEscape = window.__extSmoke.docState();
+
+  // 4) ⌘O 再打开
+  out.cmdO2 = window.__extSmoke.pressKey('o', { metaKey: true });
+  out.reopenedByShortcut = await window.__extSmoke.waitUntil(() => window.__extSmoke.layer().visible, 5000, 40);
+  await window.__extSmoke.settle(120);
   // 5) Escape 再取消
   out.escape2 = window.__extSmoke.pressKey('Escape');
   out.closedByEscape2 = await window.__extSmoke.waitUntil(() => !window.__extSmoke.layer().visible, 5000, 40);
@@ -1245,15 +1233,14 @@ try {
     report.screenshots = (report.screenshots || []).concat(path.join(SHOTS, 'extension-import-layer.png'));
   }
 
-  // 4c) 取消：emptyClose / Escape；入口：fileChip / ⌘O
+  // 4c) 取消：emptyClose / Escape；入口：⌘O（打开 / 再打开）
   const layerCancelPhase = layerOpenPhase ? await runPhase('import-layer-cancel', extImportLayerCancelPhase) : null;
   if (layerCancelPhase) {
     report.importLayerCancel = layerCancelPhase;
     const before = layerCancelPhase.before || {};
     metrics.importLayerCancel = {
       hasCloseBtn: layerCancelPhase.hasCloseBtn,
-      hasFileChip: layerCancelPhase.hasFileChip,
-      fileChipMs: layerCancelPhase.fileChipMs,
+      reopenedByShortcut: layerCancelPhase.reopenedByShortcut,
       shortcutMs: layerCancelPhase.shortcutMs,
       closedByButton: layerCancelPhase.closedByButton,
       closedByEscape: layerCancelPhase.closedByEscape,
@@ -1267,16 +1254,6 @@ try {
         layerCancelPhase.layerAfterClose.classIsHidden === true &&
         docSame(before, layerCancelPhase.afterClose),
       { closedByButton: layerCancelPhase.closedByButton, layerAfterClose: layerCancelPhase.layerAfterClose, before, afterClose: layerCancelPhase.afterClose },
-    );
-    check(
-      'il:entry-fileChip',
-      layerCancelPhase.hasFileChip === true &&
-        layerCancelPhase.openedByFileChip === true &&
-        Boolean(layerCancelPhase.layerViaFileChip) &&
-        layerCancelPhase.layerViaFileChip.visible === true &&
-        layerCancelPhase.layerViaFileChip.mode === 'new-tab' &&
-        docSame(before, layerCancelPhase.docViaFileChip),
-      { openedByFileChip: layerCancelPhase.openedByFileChip, layerViaFileChip: layerCancelPhase.layerViaFileChip },
     );
     check(
       'il:cancel-escape',

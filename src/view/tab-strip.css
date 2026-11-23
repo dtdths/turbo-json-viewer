@@ -1,6 +1,6 @@
 /* ==========================================================================
    view/tab-strip — 多文档标签条（#18 / ADR-0009 §1、direction.md §11）
-   工具栏正下方 32px 最简条：文件名 + ×，可选 ＋ 新标签；仅 ≥2 个文档时显示。
+   工具栏正下方 32px 最简条：文件名 + ×，可选 ＋ 新标签；有文档就显示（单文档也是）。
 
    视觉口径（direction.md §11 例外修订）：
    - 1px 边框 + --bg-panel 底、无阴影；活动标签只多 --bg-selected 底 + 2px 靛蓝下划线；
@@ -20,7 +20,7 @@
   border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
-/* hidden 时不占高度（单文档界面与 C 形态完全一致）：本文件声明了 display:flex，
+/* hidden 时不占高度（只有空态 0 文档才 hidden）：本文件声明了 display:flex，
    必须显式压回 UA 的 [hidden] 语义（沿用 shell 里 .noticebar[hidden] 的写法） */
 .tabstrip[hidden] { display: none; }
 

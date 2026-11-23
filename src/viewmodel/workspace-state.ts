@@ -67,7 +67,7 @@ export interface TabView {
 }
 
 export interface WorkspaceView {
-  /** tabs.length < 2 → 标签条隐藏（单文档完全保持 C 形态） */
+  /** tabs.length === 0 → 标签条隐藏（空态）；单文档也显示（2026-11-23 修订，ADR-0009 §1） */
   hidden: boolean;
   tabs: TabView[];
   activeId: string | null;
@@ -248,7 +248,7 @@ export class WorkspaceState {
   /** 只读快照：每次调用都是新对象 / 新数组，外部改不到内部状态。 */
   view(): WorkspaceView {
     return {
-      hidden: this.tabs.length < 2,
+      hidden: this.tabs.length === 0,
       tabs: this.tabs.map((tab) => ({
         id: tab.id,
         name: tab.name,
