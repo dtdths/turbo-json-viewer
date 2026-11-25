@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Turbo JSON Viewer — a fast, fully local JSON viewer for large files</title>
+<meta name="description" content="A fast, fully local JSON viewer for large files: worker-resident parsing, search, JS expressions and temporary edits. Nothing is uploaded.">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #14181f;
+    --muted: #5b6472;
+    --rule: #e3e7ee;
+    --accent: #4b5be0;
+    --code-bg: #f3f5f9;
+    --note-bg: #f6f7fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d12;
+      --fg: #e8ecf6;
+      --muted: #9aa4bb;
+      --rule: #232937;
+      --accent: #8e9cff;
+      --code-bg: #161a23;
+      --note-bg: #11151d;
+    }
+  }
+  html { background: var(--bg); }
+  body {
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    max-width: 720px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 { font-size: 34px; line-height: 1.15; margin: 0 0 10px; letter-spacing: -0.02em; }
+  h2 { font-size: 19px; margin: 44px 0 12px; }
+  p, li { color: var(--fg); }
+  .lede { font-size: 18px; color: var(--muted); margin: 0 0 18px; max-width: 60ch; }
+  .meta { color: var(--muted); font-size: 14px; margin: 0 0 30px; }
+  .note {
+    background: var(--note-bg);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 0 0 8px;
+    font-size: 15px;
+  }
+  .note strong { font-weight: 600; }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 8px; }
+  code {
+    font: 13.5px ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font: 13px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+    margin: 10px 0 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul.features { list-style: none; padding: 0; margin: 0; }
+  ul.features li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 15.5px;
+  }
+  ul.features li:first-child { padding-top: 0; }
+  ul.features li:last-child { border-bottom: 0; }
+  ul.features b { font-weight: 600; }
+  ul.features span { color: var(--muted); }
+  ol { padding-left: 22px; margin: 4px 0 0; }
+  ol li { margin: 8px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 8px; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .footnote { color: var(--muted); font-size: 13.5px; margin: 0; }
+  ul.links { list-style: none; padding: 0; margin: 0; }
+  ul.links li { padding: 7px 0; border-bottom: 1px solid var(--rule); font-size: 15.5px; }
+  ul.links li:last-child { border-bottom: 0; }
+  ul.links span { color: var(--muted); }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 56px 0; }
+  footer { color: var(--muted); font-size: 13.5px; margin-top: 48px; }
+  .zh h1 { font-size: 30px; line-height: 1.25; }
+  .zh .lede { font-size: 17px; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+
+<h1>Turbo JSON Viewer</h1>
+<p class="lede">A fast, fully local JSON viewer for large files — worker-resident parsing, search, JS expressions and temporary edits. Nothing is uploaded.</p>
+<p class="meta">Chrome extension (Manifest V3) · v0.1.0 · Chrome 120+ · <a href="https://github.com/dtdths/turbo-json-viewer">source on GitHub</a> · <a href="#zh">中文版见下</a></p>
+
+<div class="note">
+  <p><strong>Not on the Chrome Web Store yet.</strong> The developer account registration is still being sorted out, so there is no store link for the moment.</p>
+  <p>The unpacked build in the repository is complete and testable — see <a href="#install">Install now</a>.</p>
+</div>
+
+<h2>What it does</h2>
+<ul class="features">
+  <li><b>Opens big documents.</b> <span>Documents live in a background worker; the page only ever holds the rows on screen, so a 50 MB file does not lock up the tab.</span></li>
+  <li><b>Finds things.</b> <span>Search keys, values and JSON paths — case-sensitive, regular expression and whole-word modes, with hit filtering and jumping.</span></li>
+  <li><b>Queries with expressions.</b> <span>Filter or project with a JavaScript subset such as <code>$.orders.filter(o =&gt; o.total &gt; 100)</code>, evaluated by a built-in interpreter — no <code>eval</code>, no remote code.</span></li>
+  <li><b>Shows structure and source.</b> <span>An outline panel for navigation, plus a raw source view with two-way jumps between tree and text.</span></li>
+  <li><b>Handles several documents.</b> <span>Up to 8 documents in tabs, each keeping its own selection, scroll position and search.</span></li>
+  <li><b>Edits nothing on disk.</b> <span>Subtree edits are temporary and in-memory; export and copy go through a Save dialog you control, with big integers preserved.</span></li>
+</ul>
+
+<h2>Built for large files</h2>
+<table>
+  <thead><tr><th>Measured</th><th class="num">Result</th></tr></thead>
+  <tbody>
+    <tr><td>First paint, 10 MB file</td><td class="num">~0.11 s</td></tr>
+    <tr><td>First paint, 50 MB / ~3M nodes</td><td class="num">~0.61 s</td></tr>
+    <tr><td>Scroll, 2 MB fully expanded (120,118 rows)</td><td class="num">0 frames over 50 ms</td></tr>
+  </tbody>
+</table>
+<p class="footnote">Measured on the development machine with the unpacked extension in Chrome for Testing 156; your numbers depend on hardware and document shape.</p>
+
+<h2>Privacy</h2>
+<ul class="features">
+  <li><b>No network access.</b> <span>No servers, no remote endpoints, no remote code, no analytics, no telemetry.</span></li>
+  <li><b>Documents never leave the device.</b> <span>They are parsed and rendered in memory and never written to storage or disk.</span></li>
+  <li><b>Two permissions.</b> <span><code>storage</code> for your interface preferences, and a <code>contextMenus</code> submenu for text you select. No host permissions, no page injection.</span></li>
+</ul>
+<p>The full policy is at <a href="./privacy/">Privacy Policy</a>.</p>
+
+<h2 id="install">Install now (unpacked)</h2>
+<ol>
+  <li>Build the extension:
+    <pre><code>git clone https://github.com/dtdths/turbo-json-viewer.git
+cd turbo-json-viewer
+npm install
+npm run build</code></pre>
+  </li>
+  <li>Open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and select the <code>dist/</code> folder.</li>
+  <li>Click the toolbar icon to open the viewer, then drop a <code>.json</code> file onto the page or paste JSON with <code>⌘V</code> / <code>Ctrl+V</code>.</li>
+</ol>
+
+<h2>Links</h2>
+<ul class="links">
+  <li><a href="https://github.com/dtdths/turbo-json-viewer">Source code and releases</a> <span>— GitHub</span></li>
+  <li><a href="https://github.com/dtdths/turbo-json-viewer/issues">Issues and feature requests</a> <span>— GitHub</span></li>
+  <li><a href="./privacy/">Privacy policy</a> <span>— English and 中文</span></li>
+</ul>
+
+<hr>
+
+<div class="zh" id="zh" lang="zh-CN">
+<h1>Turbo JSON Viewer</h1>
+<p class="lede">本地 JSON 查看器：Worker 常驻解析超大文件，搜索、JS 表达式过滤与临时编辑，数据不上传。</p>
+<p class="meta">Chrome 扩展（Manifest V3）· v0.1.0 · Chrome 120+ · <a href="https://github.com/dtdths/turbo-json-viewer">GitHub 源码</a></p>
+
+<div class="note">
+  <p><strong>尚未上架 Chrome 应用商店。</strong> 开发者账号注册还在处理中，所以暂时没有商店链接。</p>
+  <p>仓库里的未打包版本功能完整、可直接试用——见下面的<a href="#zh-install">立即安装</a>。</p>
+</div>
+
+<h2>它能做什么</h2>
+<ul class="features">
+  <li><b>打得开大文件。</b> <span>文档常驻后台 Worker，页面只持有屏幕上那几行，50MB 的文件不会把标签页卡死。</span></li>
+  <li><b>找得到东西。</b> <span>搜索键名、值与 JSON 路径——支持区分大小写、正则与全词匹配，可过滤命中并在命中间跳转。</span></li>
+  <li><b>用表达式查。</b> <span>用 JavaScript 子集过滤或投影，例如 <code>$.orders.filter(o =&gt; o.total &gt; 100)</code>，由内置解释器执行——不用 <code>eval</code>，不加载远程代码。</span></li>
+  <li><b>结构与原文都在。</b> <span>大纲面板用于结构导航，原文视图支持树与文本双向跳转。</span></li>
+  <li><b>多文档并存。</b> <span>最多 8 个文档标签，各自保留选中行、滚动位置与搜索态。</span></li>
+  <li><b>不碰你的文件。</b> <span>子树编辑是内存里的临时稿；导出与复制走你自己控制的保存对话框，大整数不丢精度。</span></li>
+</ul>
+
+<h2>为超大文件而生</h2>
+<table>
+  <thead><tr><th>实测项</th><th class="num">结果</th></tr></thead>
+  <tbody>
+    <tr><td>首帧，10MB 文件</td><td class="num">~0.11 秒</td></tr>
+    <tr><td>首帧，50MB / 约 300 万节点</td><td class="num">~0.61 秒</td></tr>
+    <tr><td>滚动，2MB 全展开（120,118 行）</td><td class="num">0 帧超过 50ms</td></tr>
+  </tbody>
+</table>
+<p class="footnote">数据在开发机上用未打包扩展 + Chrome for Testing 156 实测；你的数字取决于硬件与文档形状。</p>
+
+<h2>隐私</h2>
+<ul class="features">
+  <li><b>没有网络访问。</b> <span>没有服务器、没有远端接口、没有远程代码，也没有统计与遥测。</span></li>
+  <li><b>文档不出这台机器。</b> <span>只在内存中解析与渲染，从不写入 storage 或磁盘。</span></li>
+  <li><b>只有两个权限。</b> <span><code>storage</code> 存界面偏好，<code>contextMenus</code> 为你选中的文本加一个右键子菜单；没有任何 host 权限，不向网页注入脚本。</span></li>
+</ul>
+<p>完整政策见<a href="./privacy/">隐私政策</a>。</p>
+
+<h2 id="zh-install">立即安装（未打包）</h2>
+<ol>
+  <li>构建扩展：
+    <pre><code>git clone https://github.com/dtdths/turbo-json-viewer.git
+cd turbo-json-viewer
+npm install
+npm run build</code></pre>
+  </li>
+  <li>打开 <code>chrome://extensions</code>，开启<b>开发者模式</b>，点<b>加载已解压的扩展程序</b>，选择 <code>dist/</code> 目录。</li>
+  <li>点扩展图标打开查看器，把 <code>.json</code> 文件拖到页面上，或用 <code>⌘V</code> / <code>Ctrl+V</code> 粘贴 JSON。</li>
+</ol>
+
+<h2>链接</h2>
+<ul class="links">
+  <li><a href="https://github.com/dtdths/turbo-json-viewer">源码与发布</a> <span>— GitHub</span></li>
+  <li><a href="https://github.com/dtdths/turbo-json-viewer/issues">问题与功能请求</a> <span>— GitHub</span></li>
+  <li><a href="./privacy/">隐私政策</a> <span>— 中文与 English</span></li>
+</ul>
+</div>
+
+<footer>
+  Turbo JSON Viewer is a local read-only JSON viewer. It never writes to your files.
+</footer>
+
+</body>
+</html>
